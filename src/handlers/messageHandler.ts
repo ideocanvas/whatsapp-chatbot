@@ -51,7 +51,21 @@ export class MessageHandler {
         mediaType
       );
 
-      return this.mediaService.getMediaInfoResponse(mediaInfo);
+      if (mediaType === 'audio') {
+        try {
+          // Try to transcribe audio
+          const transcribedText = await this.mediaService.transcribeAudio(mediaInfo.filepath);
+          return this.mediaService.getTranscriptionResponse(transcribedText, mediaInfo);
+        } catch (transcriptionError) {
+          console.error('Audio transcription failed, falling back to basic info:', transcriptionError);
+          // Fall back to basic media info if transcription fails
+          return this.mediaService.getMediaInfoResponse(mediaInfo) +
+                 '\n\n❌ Audio transcription is not available at the moment.';
+        }
+      } else {
+        // For images, just return basic info
+        return this.mediaService.getMediaInfoResponse(mediaInfo);
+      }
     } catch (error) {
       console.error('Error processing media message:', error);
       return `Sorry, I couldn't process the ${mediaType} file. Please try again.`;

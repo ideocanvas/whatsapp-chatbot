@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
+import FormData from 'form-data';
 import { WhatsAppAPIConfig } from '../types/whatsapp';
 
 export interface MediaInfo {
@@ -81,17 +82,31 @@ export class MediaService {
 
   private getExtensionFromMimeType(mimeType: string): string {
     const mimeToExt: { [key: string]: string } = {
+      // Image types
       'image/jpeg': 'jpg',
       'image/jpg': 'jpg',
       'image/png': 'png',
       'image/gif': 'gif',
       'image/webp': 'webp',
+
+      // Audio types - WhatsApp commonly uses these
       'audio/mpeg': 'mp3',
       'audio/mp3': 'mp3',
       'audio/ogg': 'ogg',
       'audio/wav': 'wav',
       'audio/aac': 'aac',
-      'audio/m4a': 'm4a'
+      'audio/m4a': 'm4a',
+      'audio/mp4': 'm4a', // WhatsApp often sends audio as MP4 container
+      'audio/x-m4a': 'm4a',
+      'audio/flac': 'flac',
+      'audio/x-wav': 'wav',
+      'audio/amr': 'amr', // WhatsApp voice messages often use AMR
+      'audio/3gpp': '3gp', // Common mobile audio format
+
+      // Video types (for future expansion)
+      'video/mp4': 'mp4',
+      'video/3gpp': '3gp',
+      'video/quicktime': 'mov'
     };
 
     return mimeToExt[mimeType] || 'bin';
@@ -114,5 +129,71 @@ export class MediaService {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
 
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  async transcribeAudio(audioFilePath: string, language?: string): Promise<string> {
+    try {
+      const apiUrl = process.env.AUDIO_SERVICE_API_URL;
+      const apiKey = process.env.AUDIO_SERVICE_API_KEY;
+
+      if (!apiUrl || !apiKey) {
+        throw new Error('Audio transcription service not configured');
+      }
+
+      // Read the audio file
+      const audioBuffer = fs.readFileSync(audioFilePath);
+      const fileName = path.basename(audioFilePath);
+
+      // Determine content type based on file extension
+      const extension = fileName.split('.').pop()?.toLowerCase();
+      let contentType = 'audio/wav';
+      if (extension === 'mp3') contentType = 'audio/mpeg';
+      else if (extension === 'm4a') contentType = 'audio/mp4';
+      else if (extension === 'flac') contentType = 'audio/flac';
+      else if (extension === 'ogg') contentType = 'audio/ogg';
+
+      // Create form data
+      const form = new FormData();
+      form.append('audio_file', audioBuffer, {
+        filename: fileName,
+        contentType: contentType,
+      });
+
+      if (language) {
+        form.append('language', language);
+      }
+
+      // Make API request to audio service
+      const response = await axios.post(`${apiUrl}transcribe`, form, {
+        headers: {
+          'X-API-Key': apiKey,
+          ...form.getHeaders(),
+        },
+      });
+      console.log('response', response);
+      // Handle different response formats from audio service
+      if (response.data.text) {
+        // Direct text response format: { text: "transcribed text" }
+        return response.data.text;
+      } else if (response.data.success && response.data.text) {
+        // Success-based response format: { success: true, text: "transcribed text" }
+        return response.data.text;
+      } else {
+        throw new Error(response.data.error || response.data.detail || 'Transcription failed');
+      }
+
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to transcribe audio: ${errorMessage}`);
+    }
+  }
+
+  getTranscriptionResponse(transcribedText: string, mediaInfo: MediaInfo): string {
+    return `🎤 Audio transcribed!\n\n` +
+           `📁 File: ${mediaInfo.filename}\n` +
+           `📏 Size: ${this.formatFileSize(mediaInfo.size)}\n` +
+           `🔤 Transcription:\n"${transcribedText}"\n\n` +
+           `Note: This transcription was generated automatically and may contain errors.`;
   }
 }
