@@ -1,13 +1,24 @@
 import { WhatsAppService } from '../services/whatsappService';
 import { MediaService, MediaInfo } from '../services/mediaService';
+import { OpenAIService, createOpenAIServiceFromEnv } from '../services/openaiService';
 
 export class MessageHandler {
   private whatsappService: WhatsAppService;
   private mediaService: MediaService;
+  private openaiService: OpenAIService | null;
 
   constructor(whatsappService: WhatsAppService, mediaService: MediaService) {
     this.whatsappService = whatsappService;
     this.mediaService = mediaService;
+
+    // Initialize OpenAI service if API key is available
+    try {
+      this.openaiService = createOpenAIServiceFromEnv();
+      console.log('OpenAI service initialized successfully');
+    } catch (error) {
+      console.warn('OpenAI service not available:', error instanceof Error ? error.message : 'Unknown error');
+      this.openaiService = null;
+    }
   }
 
   async processMessage(
@@ -63,8 +74,16 @@ export class MessageHandler {
                  '\n\n❌ Audio transcription is not available at the moment.';
         }
       } else {
-        // For images, just return basic info
-        return this.mediaService.getMediaInfoResponse(mediaInfo);
+        // For images, try to analyze with OpenAI if available
+        try {
+          const analysis = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
+          return this.mediaService.getEnhancedMediaInfoResponse(mediaInfo, analysis);
+        } catch (analysisError) {
+          console.error('Image analysis failed, falling back to basic info:', analysisError);
+          // Fall back to basic media info if analysis fails
+          return this.mediaService.getMediaInfoResponse(mediaInfo) +
+                 '\n\n❌ Image analysis is not available at the moment.';
+        }
       }
     } catch (error) {
       console.error('Error processing media message:', error);
@@ -73,6 +92,16 @@ export class MessageHandler {
   }
 
   private async generateResponse(messageText: string): Promise<string> {
+    // Use OpenAI for intelligent responses if available
+    if (this.openaiService?.isConfigured()) {
+      try {
+        return await this.openaiService.generateTextResponse(messageText);
+      } catch (error) {
+        console.error('OpenAI response generation failed, falling back to basic responses:', error);
+        // Fall back to basic responses
+      }
+    }
+
     const lowerMessage = messageText.toLowerCase().trim();
 
     // Simple chatbot responses

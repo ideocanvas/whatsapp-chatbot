@@ -12,6 +12,8 @@ A TypeScript-based WhatsApp chat bot that integrates with Facebook's WhatsApp Bu
 - ✅ Express.js HTTP server
 - ✅ Environment configuration
 - ✅ Basic chatbot responses
+- ✅ **OpenAI Integration** - Intelligent text responses using GPT models
+- ✅ **AI Image Analysis** - Detailed image content analysis using OpenAI Vision
 - ✅ Image file support (download and info)
 - ✅ Audio file support (download and transcription)
 - ✅ Media file storage and management
@@ -48,6 +50,14 @@ Edit the `.env` file with your WhatsApp Business API credentials:
 # WhatsApp Business API Configuration
 WHATSAPP_ACCESS_TOKEN=your_access_token_here
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
+
+# OpenAI-Compatible API Configuration (Optional - for AI features)
+OPENAI_API_KEY=your_openai_compatible_api_key_here
+OPENAI_BASE_URL=https://api.openai.com/v1  # Use your provider's URL
+OPENAI_MODEL=gpt-4o
+OPENAI_VISION_MODEL=gpt-4o
+OPENAI_TEMPERATURE=0.7
+OPENAI_MAX_TOKENS=1000
 WHATSAPP_VERIFY_TOKEN=your_verify_token_here
 WHATSAPP_APP_SECRET=your_app_secret_here
 
@@ -59,6 +69,55 @@ WEBHOOK_URL=https://your-domain.com/webhook
 AUDIO_SERVICE_API_URL=https://api.example.com/audio/
 AUDIO_SERVICE_API_KEY=your_audio_service_api_key_here
 ```
+
+## OpenAI Features
+
+The bot now includes advanced AI capabilities powered by OpenAI:
+
+### Intelligent Text Responses
+- Uses GPT models to generate natural, contextual responses to text messages
+- Falls back to basic responses if OpenAI is not configured or fails
+- Handles a wide variety of questions and conversations
+
+### AI Image Analysis
+- Uses OpenAI Vision to analyze image content
+- Provides detailed descriptions of images including objects, people, text, colors, and context
+- Automatically processes images sent to the bot via WhatsApp
+
+### Configuration
+To enable AI features, you can use any OpenAI-compatible API provider:
+
+**Supported Providers:**
+- [OpenAI](https://platform.openai.com/api-keys) - Official OpenAI API
+- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) - Microsoft Azure OpenAI
+- [Anthropic Claude](https://console.anthropic.com/) - Anthropic's Claude models
+- [Google Gemini](https://aistudio.google.com/) - Google's Gemini models
+- Any other OpenAI-compatible API endpoint
+
+**Setup Steps:**
+1. Get an API key from your chosen provider
+2. Update your `.env` file with:
+   ```env
+   OPENAI_API_KEY=your_actual_api_key_here
+   OPENAI_BASE_URL=https://api.openai.com/v1  # Replace with your provider's URL
+   OPENAI_MODEL=gpt-4o  # Replace with your model name
+   OPENAI_VISION_MODEL=gpt-4o  # Replace with your vision model
+   ```
+3. Optional: Configure temperature and max tokens as needed
+
+### Testing OpenAI Integration
+
+**Test Configuration:**
+```bash
+npm run test:openai:config
+```
+
+**Full Integration Test (requires valid API credentials):**
+```bash
+npm run test:openai
+```
+
+The bot will automatically fall back to basic responses if OpenAI is not configured or encounters errors.
 
 ## Development Setup
 
@@ -159,7 +218,8 @@ whatsapp-chatbot/
 │   │   └── whatsapp.ts         # TypeScript interfaces
 │   ├── services/
 │   │   ├── whatsappService.ts  # WhatsApp API client
-│   │   └── mediaService.ts     # Media download and processing
+│   │   ├── mediaService.ts     # Media download and processing
+│   │   └── openaiService.ts    # OpenAI integration for AI responses
 │   ├── handlers/
 │   │   └── messageHandler.ts   # Message processing logic
 │   ├── utils/
@@ -171,7 +231,8 @@ whatsapp-chatbot/
 │   └── media/                  # Storage for received media files
 ├── scripts/
 │   ├── test-audio-service.ts   # Audio service testing
-│   └── test-audio-integration.ts # Integration testing
+│   ├── test-audio-integration.ts # Integration testing
+│   └── test-openai-integration.ts # OpenAI integration testing
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
@@ -217,15 +278,23 @@ PORT=3000
 WEBHOOK_URL=https://your-production-domain.com
 ```
 
-## Testing Audio Service
+## Testing
 
-### Basic Testing
+### Testing Audio Service
+
+### Testing OpenAI Integration
+```bash
+npm run test:openai
+```
+Tests OpenAI text response generation and embedding creation. Requires OPENAI_API_KEY to be configured.
+
+### Basic Audio Testing
 ```bash
 npm run test:audio
 ```
 Tests the audio service functionality including file formatting, MIME type detection, and response formatting.
 
-### Integration Testing
+### Audio Integration Testing
 ```bash
 npm run test:audio:integration
 ```
