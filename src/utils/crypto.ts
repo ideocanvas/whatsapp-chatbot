@@ -7,7 +7,7 @@ export class CryptoUtils {
     signatureHeader?: string
   ): boolean {
     if (!signatureHeader) {
-      console.warn('No signature header provided');
+      console.log('No signature header provided');
       return false;
     }
 
@@ -17,13 +17,14 @@ export class CryptoUtils {
       .digest();
 
     const signatureParts = signatureHeader.split('=');
+    console.log('verifySignature()', {signatureHeader, signatureParts})
     if (signatureParts.length !== 2 || signatureParts[0] !== 'sha256') {
-      console.warn('Invalid signature format');
+      console.log('Invalid signature format');
       return false;
     }
 
     const providedSignature = Buffer.from(signatureParts[1], 'hex');
-
+    console.log('verifySignature()', {expectedSignature, providedSignature})
     return crypto.timingSafeEqual(expectedSignature, providedSignature);
   }
 }

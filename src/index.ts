@@ -33,7 +33,8 @@ const whatsappService = new WhatsAppService(whatsappConfig);
 const webhookRoutes = new WebhookRoutes(
   whatsappService,
   process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
-  process.env.WHATSAPP_APP_SECRET || ''
+  process.env.WHATSAPP_APP_SECRET || '',
+  whatsappConfig
 );
 
 // Use routes

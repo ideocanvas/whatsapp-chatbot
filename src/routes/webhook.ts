@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { WhatsAppService } from '../services/whatsappService';
 import { MessageHandler } from '../handlers/messageHandler';
+import { MediaService } from '../services/mediaService';
 import { CryptoUtils } from '../utils/crypto';
 import { WhatsAppMessage } from '../types/whatsapp';
 
@@ -10,9 +11,10 @@ export class WebhookRoutes {
   private verifyToken: string;
   private appSecret: string;
 
-  constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string) {
+  constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string, whatsappConfig: any) {
     this.router = Router();
-    this.messageHandler = new MessageHandler(whatsappService);
+    const mediaService = new MediaService(whatsappConfig);
+    this.messageHandler = new MessageHandler(whatsappService, mediaService);
     this.verifyToken = verifyToken;
     this.appSecret = appSecret;
     this.setupRoutes();
@@ -39,7 +41,7 @@ export class WebhookRoutes {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
+    console.log("verify body", {mode, token, challenge});
     if (mode && token) {
       if (mode === 'subscribe' && token === this.verifyToken) {
         console.log('Webhook verified successfully!');
@@ -56,9 +58,10 @@ export class WebhookRoutes {
       // Verify signature if app secret is provided
       if (this.appSecret) {
         const signature = req.headers['x-hub-signature-256'] as string;
-        const body = JSON.stringify(req.body);
-
-        if (!CryptoUtils.verifySignature(this.appSecret, body, signature)) {
+        // Use raw body for signature verification (stored by body-parser middleware)
+        const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
+        console.log("handleWebhookMessage()", {rawBody})
+        if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
           console.warn('Invalid webhook signature');
           res.sendStatus(401);
           return;
@@ -66,6 +69,7 @@ export class WebhookRoutes {
       }
 
       const data: WhatsAppMessage = req.body;
+      console.log("message body", data);
 
       // Process each entry
       for (const entry of data.entry) {
@@ -79,8 +83,37 @@ export class WebhookRoutes {
                   await this.messageHandler.processMessage(
                     message.from,
                     message.text.body,
-                    message.id
+                    message.id,
+                    'text'
                   );
+                } else if (message.type === 'image' && message.image) {
+                  await this.messageHandler.processMessage(
+                    message.from,
+                    '',
+                    message.id,
+                    'image',
+                    {
+                      id: message.image.id,
+                      mimeType: message.image.mime_type,
+                      sha256: message.image.sha256,
+                      type: 'image'
+                    }
+                  );
+                } else if (message.type === 'audio' && message.audio) {
+                  await this.messageHandler.processMessage(
+                    message.from,
+                    '',
+                    message.id,
+                    'audio',
+                    {
+                      id: message.audio.id,
+                      mimeType: message.audio.mime_type,
+                      sha256: message.audio.sha256,
+                      type: 'audio'
+                    }
+                  );
+                } else {
+                  console.log(`Unsupported message type: ${message.type}`);
                 }
               }
             }
