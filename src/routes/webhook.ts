@@ -2,12 +2,14 @@ import { Router, Request, Response } from 'express';
 import { WhatsAppService } from '../services/whatsappService';
 import { MessageHandler } from '../handlers/messageHandler';
 import { MediaService } from '../services/mediaService';
+import { ProcessedMessageService } from '../services/processedMessageService';
 import { CryptoUtils } from '../utils/crypto';
 import { WhatsAppMessage } from '../types/whatsapp';
 
 export class WebhookRoutes {
   private router: Router;
   private messageHandler: MessageHandler;
+  private processedMessageService: ProcessedMessageService;
   private verifyToken: string;
   private appSecret: string;
 
@@ -15,6 +17,7 @@ export class WebhookRoutes {
     this.router = Router();
     const mediaService = new MediaService(whatsappConfig);
     this.messageHandler = new MessageHandler(whatsappService, mediaService);
+    this.processedMessageService = new ProcessedMessageService();
     this.verifyToken = verifyToken;
     this.appSecret = appSecret;
     this.setupRoutes();
@@ -76,6 +79,21 @@ export class WebhookRoutes {
 
             if (messages && messages.length > 0) {
               for (const message of messages) {
+                // Check if this message has already been processed
+                const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
+
+                if (alreadyProcessed) {
+                  console.log(`Skipping duplicate message: ${message.id} (already processed)`);
+                  continue;
+                }
+
+                // Mark message as processed immediately to prevent race conditions
+                await this.processedMessageService.markMessageAsProcessed(
+                  message.id,
+                  message.from,
+                  message.type
+                );
+
                 if (message.type === 'text' && message.text) {
                   await this.messageHandler.processMessage(
                     message.from,
