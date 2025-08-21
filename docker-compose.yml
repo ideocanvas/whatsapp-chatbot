@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  whatsapp-chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whatsapp-chatbot:latest
+    container_name: whatsapp-chatbot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      # Optional: Audio transcription service
+      - AUDIO_SERVICE_API_URL=${AUDIO_SERVICE_API_URL:-}
+      - AUDIO_SERVICE_API_KEY=${AUDIO_SERVICE_API_KEY:-}
+      # Optional: OpenAI configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENAI_VISION_MODEL=${OPENAI_VISION_MODEL:-gpt-4o}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-ada-002}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-1000}
+    volumes:
+      - ./data:/app/data:rw
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - whatsapp-net
+
+networks:
+  whatsapp-net:
+    driver: bridge
+
+volumes:
+  data:
+    driver: local
