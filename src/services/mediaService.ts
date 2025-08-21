@@ -244,16 +244,18 @@ export class MediaService {
     try {
       const prompt = `Based on this detailed image analysis: "${analysis}"
 
-Generate a helpful, engaging, and conversational response. Provide contextual suggestions based on what you see:
+Generate a helpful, engaging, and conversational response with specific contextual awareness:
 
-- If it's a food menu or restaurant scene, suggest popular dishes or what to order
-- If it's a building, street view, or location, suggest where it might be or interesting facts about the area
-- If it's a product, provide recommendations or usage suggestions
-- If it's a document or text-heavy image, summarize key information helpfully
-- If it's nature or scenery, provide interesting facts or travel suggestions
-- If it's people or events, provide appropriate commentary or suggestions
+- If it's a food menu: suggest popular dishes, recommend what to order based on cuisine type, mention any specials or pricing
+- If it's a building or landmark: suggest where it might be located, provide architectural details, historical context, and nearby attractions
+- If it's a hand holding an object: identify what the object is, suggest its purpose or how to use it, provide related recommendations
+- If it's a product: provide recommendations, usage tips, where to buy it, or similar alternatives
+- If it's a document or text-heavy: summarize key information clearly, highlight important details, suggest next steps
+- If it's nature or scenery: provide interesting facts, travel suggestions, best times to visit, or photography tips
+- If it's people or events: provide appropriate commentary, suggest related activities or social context
+- If it's artwork or creative content: discuss the style, possible meaning, or artistic techniques
 
-Keep the response natural, conversational, and focused on being helpful rather than just describing the image.`;
+Keep the response natural, conversational, and focused on being genuinely helpful with practical suggestions.`;
 
       return await this.openaiService.generateTextResponse(prompt);
     } catch (error) {

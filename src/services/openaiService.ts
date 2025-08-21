@@ -78,7 +78,18 @@ export class OpenAIService {
       const extension = path.extname(imagePath).toLowerCase().substring(1);
       const mimeType = this.getMimeTypeFromExtension(extension);
 
-      const visionPrompt = prompt || 'Analyze this image in detail. Describe what you see, including objects, people, text, colors, and any other relevant information. If there is any text in the image, please include all text content exactly as it appears.';
+      const visionPrompt = prompt || `Analyze this image comprehensively with context awareness. Describe what you see in detail, including:
+
+- Objects, people, animals, text, colors, and environment
+- If it's a food menu or restaurant scene: focus on menu items, prices, cuisine type, and popular dishes
+- If it's a building, landmark, or location: provide architectural details, possible location clues, and historical context if recognizable
+- If it's a product or object: identify the item, brand, purpose, and key features
+- If it's a hand holding something: identify the object being held and its potential use
+- If it's a document or text-heavy: transcribe all text accurately and note the document type
+- If it's nature or scenery: describe the landscape, weather conditions, and geographical features
+- If it's people or events: note activities, emotions, and social context
+
+Include any text content exactly as it appears. Provide specific details that would help understand the context and purpose of the image.`;
 
       const response = await this.openai.chat.completions.create({
         model: this.config.visionModel!,
