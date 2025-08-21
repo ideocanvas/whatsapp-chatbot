@@ -66,7 +66,7 @@ export class MessageHandler {
         try {
           // Try to transcribe audio
           const transcribedText = await this.mediaService.transcribeAudio(mediaInfo.filepath);
-          return this.mediaService.getTranscriptionResponse(transcribedText, mediaInfo);
+          return await this.mediaService.getTranscriptionResponse(transcribedText, mediaInfo);
         } catch (transcriptionError) {
           console.error('Audio transcription failed, falling back to basic info:', transcriptionError);
           // Fall back to basic media info if transcription fails

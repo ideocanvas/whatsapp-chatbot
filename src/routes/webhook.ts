@@ -41,7 +41,6 @@ export class WebhookRoutes {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-    console.log("verify body", {mode, token, challenge});
     if (mode && token) {
       if (mode === 'subscribe' && token === this.verifyToken) {
         console.log('Webhook verified successfully!');
@@ -60,7 +59,6 @@ export class WebhookRoutes {
         const signature = req.headers['x-hub-signature-256'] as string;
         // Use raw body for signature verification (stored by body-parser middleware)
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
-        console.log("handleWebhookMessage()", {rawBody})
         if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
           console.warn('Invalid webhook signature');
           res.sendStatus(401);
@@ -69,7 +67,6 @@ export class WebhookRoutes {
       }
 
       const data: WhatsAppMessage = req.body;
-      console.log("message body", data);
 
       // Process each entry
       for (const entry of data.entry) {

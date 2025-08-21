@@ -24,7 +24,6 @@ export class OpenAIService {
       apiKey: config.apiKey,
       baseURL: config.baseURL || process.env.OPENAI_BASE_URL
     };
-    console.log("OpenAI config", this.config);
 
     this.openai = new OpenAI({
       apiKey: this.config.apiKey,
@@ -77,7 +76,7 @@ export class OpenAIService {
       const extension = path.extname(imagePath).toLowerCase().substring(1);
       const mimeType = this.getMimeTypeFromExtension(extension);
 
-      const visionPrompt = prompt || 'What is in this image? Describe it in detail.';
+      const visionPrompt = prompt || 'Analyze this image in detail. Describe what you see, including objects, people, text, colors, and any other relevant information. If there is any text in the image, please include all text content exactly as it appears.';
 
       const response = await this.openai.chat.completions.create({
         model: this.config.visionModel!,
