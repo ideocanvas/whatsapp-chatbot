@@ -12,7 +12,8 @@
     "test:audio:integration": "ts-node scripts/test-audio-integration.ts",
     "test:transcription": "ts-node scripts/test-transcription-only.ts",
     "test:openai": "ts-node scripts/test-openai-integration.ts",
-    "test:openai:config": "ts-node scripts/test-openai-config.ts"
+    "test:openai:config": "ts-node scripts/test-openai-config.ts",
+    "test:response-cleaner": "ts-node scripts/test-response-cleaner.ts"
   },
   "keywords": [
     "whatsapp",
