@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
+import { cleanLLMResponse } from '../utils/responseCleaner';
 
 export interface OpenAIConfig {
   apiKey: string;
@@ -56,7 +57,8 @@ export class OpenAIService {
         max_tokens: this.config.maxTokens,
       });
 
-      return response.choices[0]?.message?.content?.trim() || 'I apologize, but I could not generate a response. Please try again.';
+      const rawResponse = response.choices[0]?.message?.content?.trim() || 'I apologize, but I could not generate a response. Please try again.';
+      return cleanLLMResponse(rawResponse);
     } catch (error) {
       console.error('Error generating text response:', error);
       throw new Error('Failed to generate response from OpenAI');
@@ -101,7 +103,8 @@ export class OpenAIService {
         max_tokens: this.config.maxTokens,
       });
 
-      return response.choices[0]?.message?.content?.trim() || 'I could not analyze this image. Please try again.';
+      const rawResponse = response.choices[0]?.message?.content?.trim() || 'I could not analyze this image. Please try again.';
+      return cleanLLMResponse(rawResponse);
     } catch (error) {
       console.error('Error analyzing image:', error);
       throw new Error('Failed to analyze image with OpenAI');

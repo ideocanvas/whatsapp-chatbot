@@ -34,7 +34,13 @@ async function testOpenAIIntegration() {
     const textResponse = await openaiService.generateTextResponse(testMessage);
     console.log(`Input: ${testMessage}`);
     console.log(`Response: ${textResponse}`);
-    console.log('✅ Text response test passed');
+
+    // Test that the response doesn't contain thinking tags
+    if (textResponse.includes('<think>') || textResponse.includes('</think>')) {
+      console.log('❌ Response contains thinking tags - cleaner not working');
+    } else {
+      console.log('✅ Text response test passed (thinking tags removed)');
+    }
 
     // Test embedding creation
     console.log('\nTesting embedding creation...');
