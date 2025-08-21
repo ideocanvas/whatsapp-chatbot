@@ -37,13 +37,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    networks:
-      - whatsapp-net
 
 networks:
-  whatsapp-net:
-    driver: bridge
-
-volumes:
-  data:
-    driver: local
+  default:
+    external: true
+    name: docker-public
