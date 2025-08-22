@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { cleanLLMResponse } from '../utils/responseCleaner';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import { executeTool } from '../tools';
 
 export interface OpenAIConfig {
   apiKey: string;
@@ -76,6 +77,15 @@ export class OpenAIService {
       const response = await this.openai.chat.completions.create(requestOptions);
 
       const rawResponse = response.choices[0]?.message?.content?.trim() || 'I apologize, but I could not generate a response. Please try again.';
+
+      // Log AI response
+      console.log('🤖 AI Response:', {
+        message: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
+        rawResponse: rawResponse.substring(0, 200) + (rawResponse.length > 200 ? '...' : ''),
+        hasContext: !!context,
+        model: this.config.model
+      });
+
       return cleanLLMResponse(rawResponse);
     } catch (error) {
       console.error('Error generating text response:', error);
@@ -121,6 +131,14 @@ export class OpenAIService {
         throw new Error('No response from OpenAI');
       }
 
+      // Log tool calling round
+      console.log('🔄 Tool Calling Round:', {
+        round: toolCallRound,
+        hasToolCalls: !!message.tool_calls && message.tool_calls.length > 0,
+        toolCallCount: message.tool_calls?.length || 0,
+        responseContent: message.content?.substring(0, 100) || 'No content'
+      });
+
       currentMessages.push(message);
 
       // If no tool calls, return the final response
@@ -128,13 +146,60 @@ export class OpenAIService {
         return cleanLLMResponse(message.content || '');
       }
 
-      // Process tool calls (this would be handled by the message handler)
-      // For now, we'll just return a message indicating tool calls were requested
-      console.log('Tool calls requested:', message.tool_calls);
-      return 'I need to search for more information to answer your question properly.';
+      // Process tool calls
+      const toolResults = await this.processToolCalls(message.tool_calls);
+
+      // Add tool results to the conversation
+      currentMessages.push({
+        role: 'tool',
+        content: JSON.stringify(toolResults),
+        tool_call_id: message.tool_calls![0].id
+      });
     }
 
     return 'I tried to find information but reached the maximum number of search attempts. Please try again.';
+  }
+
+  /**
+   * Process tool calls by executing the appropriate tools
+   */
+  private async processToolCalls(toolCalls: any[]): Promise<any[]> {
+    const results: any[] = [];
+
+    for (const toolCall of toolCalls) {
+      try {
+        console.log('🛠️ Processing tool call:', {
+          toolName: toolCall.function.name,
+          arguments: toolCall.function.arguments
+        });
+
+        const args = JSON.parse(toolCall.function.arguments);
+        const result = await executeTool(toolCall.function.name, args);
+
+        results.push({
+          tool_call_id: toolCall.id,
+          result: result
+        });
+
+        console.log('✅ Tool execution completed:', {
+          toolName: toolCall.function.name,
+          resultLength: typeof result === 'string' ? result.length : 'object'
+        });
+
+      } catch (error) {
+        console.error('❌ Tool execution failed:', {
+          toolName: toolCall.function.name,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+
+        results.push({
+          tool_call_id: toolCall.id,
+          error: error instanceof Error ? error.message : 'Tool execution failed'
+        });
+      }
+    }
+
+    return results;
   }
 
   /**

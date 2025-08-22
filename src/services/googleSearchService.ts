@@ -23,6 +23,12 @@ export class GoogleSearchService {
    */
   async search(query: string, numResults: number = 5): Promise<SearchResult[]> {
     try {
+      console.log('🌐 Making Google API Request:', {
+        query: query,
+        numResults: numResults,
+        engineId: this.config.searchEngineId.substring(0, 10) + '...'
+      });
+
       const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
         params: {
           key: this.config.apiKey,
@@ -32,8 +38,20 @@ export class GoogleSearchService {
         },
       });
 
-      if (response.data.items && response.data.items.length > 0) {
-        return response.data.items.map((item: any) => ({
+      const items = response.data.items || [];
+
+      console.log('📊 Google API Response:', {
+        query: query,
+        totalResults: response.data.searchInformation?.totalResults || 0,
+        itemsFound: items.length,
+        items: items.map((item: any) => ({
+          title: item.title?.substring(0, 30) + (item.title?.length > 30 ? '...' : ''),
+          link: item.link?.substring(0, 30) + (item.link?.length > 30 ? '...' : '')
+        }))
+      });
+
+      if (items.length > 0) {
+        return items.map((item: any) => ({
           title: item.title,
           link: item.link,
           snippet: item.snippet,
@@ -42,7 +60,10 @@ export class GoogleSearchService {
 
       return [];
     } catch (error) {
-      console.error('Google search error:', error);
+      console.error('❌ Google search error:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query: query
+      });
       throw new Error('Failed to perform Google search');
     }
   }

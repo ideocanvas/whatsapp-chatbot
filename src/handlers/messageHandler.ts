@@ -139,7 +139,17 @@ export class MessageHandler {
         }
 
         // Use tool calling if available and the message seems to require search
-        if (this.toolsAvailable && this.shouldUseSearch(messageText)) {
+        const shouldUseSearch = this.toolsAvailable && this.shouldUseSearch(messageText);
+
+        console.log('🧠 Response Generation Decision:', {
+          message: messageText.substring(0, 50) + (messageText.length > 50 ? '...' : ''),
+          hasContext: !!context,
+          toolsAvailable: this.toolsAvailable,
+          shouldUseSearch: shouldUseSearch,
+          searchKeywords: this.getSearchKeywords(messageText)
+        });
+
+        if (shouldUseSearch) {
           return await this.generateResponseWithTools(messageText, context, senderNumber);
         }
 
@@ -238,6 +248,21 @@ export class MessageHandler {
     ];
 
     return searchKeywords.some(keyword => lowerMessage.includes(keyword));
+  }
+
+  /**
+   * Get matching search keywords for logging
+   */
+  private getSearchKeywords(messageText: string): string[] {
+    const lowerMessage = messageText.toLowerCase();
+    const searchKeywords = [
+      'current', 'latest', 'news', 'today', 'recent', 'update',
+      'what is', 'who is', 'when is', 'where is', 'how to',
+      'search', 'find', 'look up', 'information about',
+      'weather', 'stock', 'price', 'score', 'results'
+    ];
+
+    return searchKeywords.filter(keyword => lowerMessage.includes(keyword));
   }
 
  private async storeIncomingMessage(

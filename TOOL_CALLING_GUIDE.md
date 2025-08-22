@@ -136,12 +136,48 @@ You can test the complete tool calling flow by sending messages that trigger sea
 3. **Search Results Empty**: Check if your search engine is configured to search the entire web
 4. **Tool Calling Not Working**: Ensure `OPENAI_ENABLE_TOOL_CALLING=true` is set
 
-### Debug Mode
+### Logging and Monitoring
 
-Enable debug logging by setting environment variables:
+The system includes comprehensive logging for all AI responses and tool calling activities:
 
+#### Log Types:
+- **🤖 AI Response**: Logs all AI-generated responses with context information
+- **🛠️ Tool Call**: Logs tool execution requests and results
+- **🔍 Search**: Logs Google search API requests and responses
+- **🧠 Decision**: Logs response generation decisions and search triggers
+- **❌ Error**: Logs errors and failures
+
+#### Log Output Example:
+```
+🤖 [AI_RESPONSE] Generated response for user query
+🛠️ [TOOL_CALL] Executing Google Search: {query: "latest news", numResults: 5}
+🔍 [SEARCH] Google API Response: {query: "latest news", itemsFound: 8}
+🧠 [DECISION] Using search for message: "what's the latest news about..."
+```
+
+#### Accessing Logs:
+The logging system maintains an in-memory log buffer (1000 entries) that can be accessed programmatically:
+
+```typescript
+import { logger } from '../src/utils/logger';
+
+// Get recent logs
+const recentLogs = logger.getLogs({ limit: 50 });
+
+// Get error logs only
+const errorLogs = logger.getLogs({ type: 'error' });
+
+// Clear logs
+logger.clearLogs();
+```
+
+#### Environment Variables for Debugging:
 ```bash
-DEBUG=tools,search
+# Enable detailed logging (default: enabled)
+LOG_LEVEL=debug
+
+# Disable logging
+LOG_LEVEL=silent
 ```
 
 ## Performance Considerations
