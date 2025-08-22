@@ -34,16 +34,10 @@ export class NewsScrapeService {
       searchQuery: config.searchQuery || 'latest news',
       timeout: config.timeout || 30000,
       newsSources: config.newsSources || [
-        'reuters.com',
-        'bloomberg.com',
-        'cnn.com',
+        'hk.yahoo.com',
         'bbc.com',
-        'apnews.com',
-        'theguardian.com',
         'nytimes.com',
         'wsj.com',
-        'aljazeera.com',
-        'npr.org'
       ]
     };
   }
@@ -197,13 +191,15 @@ export class NewsScrapeService {
       return 'No news articles found.';
     }
 
-    return articles.map((article, index) =>
+    const formattedText = articles.map((article, index) =>
       `📰 ${index + 1}. ${article.title}\n` +
       `   Source: ${article.source}\n` +
       `   Category: ${article.category}\n` +
       `   Content: ${article.content.substring(0, 200)}${article.content.length > 200 ? '...' : ''}\n` +
       `   Read more: ${article.url}\n`
     ).join('\n');
+    console.log("formattedText", formattedText);
+    return formattedText;
   }
 
   /**

@@ -1,4 +1,4 @@
-import { chromium, Browser, Page } from 'playwright';
+import { webkit, Browser, Page } from 'playwright';
 
 export interface WebScrapeResult {
   title: string;
@@ -36,9 +36,8 @@ export class WebScrapeService {
    */
   async initialize(): Promise<void> {
     if (!this.browser) {
-      this.browser = await chromium.launch({
+      this.browser = await webkit.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
     }
   }

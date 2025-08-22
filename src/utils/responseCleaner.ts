@@ -59,30 +59,6 @@ export function shortenForWhatsApp(response: string, maxLength: number = 320): s
     .replace(/\.\s+Furthermore,/g, ', plus') // Make transitions more casual
     .trim();
 
-  // If still too long, truncate at the last sentence before maxLength
-  if (shortened.length > maxLength) {
-    // Find the last sentence ending before maxLength
-    const lastPeriod = shortened.lastIndexOf('.', maxLength - 1);
-    const lastQuestion = shortened.lastIndexOf('?', maxLength - 1);
-    const lastExclamation = shortened.lastIndexOf('!', maxLength - 1);
-
-    const lastPunctuation = Math.max(lastPeriod, lastQuestion, lastExclamation);
-
-    if (lastPunctuation > 0 && lastPunctuation > shortened.length * 0.3) {
-      // Truncate at the last natural sentence break
-      shortened = shortened.substring(0, lastPunctuation + 1);
-    } else {
-      // Truncate at word boundary near maxLength
-      const spaceIndex = shortened.lastIndexOf(' ', maxLength - 1);
-      if (spaceIndex > 0 && spaceIndex > shortened.length * 0.3) {
-        shortened = shortened.substring(0, spaceIndex) + '...';
-      } else {
-        // Fallback: hard truncate with ellipsis
-        shortened = shortened.substring(0, maxLength - 3) + '...';
-      }
-    }
-  }
-
   return shortened;
 }
 

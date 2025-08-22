@@ -1,9 +1,10 @@
 # WhatsApp ChatBot (TypeScript)
 
-A TypeScript-based WhatsApp chat bot that integrates with Facebook's WhatsApp Business API to receive and respond to messages.
+A TypeScript-based WhatsApp chat bot that integrates with Facebook's WhatsApp Business API to receive and respond to messages with advanced AI capabilities.
 
 ## Features
 
+### Core Functionality
 - ✅ Receive WhatsApp messages via webhooks
 - ✅ Send automated responses to users
 - ✅ Message read receipts
@@ -11,12 +12,23 @@ A TypeScript-based WhatsApp chat bot that integrates with Facebook's WhatsApp Bu
 - ✅ TypeScript support with proper type definitions
 - ✅ Express.js HTTP server
 - ✅ Environment configuration
-- ✅ Basic chatbot responses
+
+### AI Capabilities
 - ✅ **OpenAI Integration** - Intelligent text responses using GPT models
 - ✅ **AI Image Analysis** - Detailed image content analysis using OpenAI Vision
+- ✅ **Response Cleaning** - Automatic removal of internal thinking tags
+- ✅ **Tool Calling** - OpenAI function calling for external tool integration
+
+### Media Support
 - ✅ Image file support (download and info)
 - ✅ Audio file support (download and transcription)
 - ✅ Media file storage and management
+
+### Advanced Features
+- ✅ **Google Search Integration** - Real-time information retrieval
+- ✅ **Web Scraping** - Direct content extraction from websites
+- ✅ **Comprehensive Logging** - Detailed monitoring of AI responses and tool usage
+- ✅ **Error Handling** - Robust error handling and fallback mechanisms
 
 ## Prerequisites
 
@@ -119,6 +131,90 @@ npm run test:openai
 
 The bot will automatically fall back to basic responses if OpenAI is not configured or encounters errors.
 
+### Response Cleaning
+The bot automatically removes internal thinking tags (`<think>...</think>`) from OpenAI responses before sending them to users, ensuring clean and professional output.
+
+**Example:**
+```
+Before: <think>User asked about weather...</think>Hello!<think>Preparing response...</think>The weather is sunny.
+After: Hello! The weather is sunny.
+```
+
+**Features:**
+- Automatic removal of thinking tags and internal AI thought processes
+- Whitespace cleanup and formatting
+- Graceful handling of responses without thinking tags
+- No additional configuration required
+
+## Tool Calling and Google Search Integration
+
+The bot includes advanced tool calling capabilities with Google Search integration for real-time information retrieval.
+
+### Features
+- **Web Search**: Perform Google searches using Custom Search API
+- **Tool Calling**: OpenAI function calling for intelligent tool selection
+- **Real-time Information**: Access current news, facts, and updates
+- **Automatic Integration**: Search results automatically incorporated into responses
+
+### Setup Requirements
+
+**Google Custom Search API:**
+1. Create a Google Cloud project at https://console.cloud.google.com/
+2. Enable Custom Search API
+3. Create API key and Search Engine ID
+4. Add to `.env`:
+```env
+GOOGLE_SEARCH_API_KEY=your_api_key_here
+GOOGLE_SEARCH_ENGINE_ID=your_engine_id_here
+OPENAI_ENABLE_TOOL_CALLING=true
+```
+
+### Search Trigger Keywords
+The bot automatically triggers search for messages containing:
+- Current/latest information requests
+- News and updates
+- "What is", "Who is", "When is", "Where is", "How to"
+- Search/find/look up requests
+- Weather, stock prices, scores, results
+
+### Usage Examples
+- **User**: "What's the latest news about AI?" → Bot performs Google search
+- **User**: "Who won the last World Cup?" → Bot searches for factual information
+- **User**: "What's the weather in Tokyo?" → Bot provides current weather info
+
+### Web Scraping Tool
+The bot includes a powerful web scraping tool using Playwright for direct content extraction from websites:
+
+**Features:**
+- Real-time content extraction from specific URLs
+- JavaScript support for modern websites
+- CSS selector targeting for precise content extraction
+- Multiple URL support in single operations
+- Automatic content cleaning and formatting
+
+**Tool Schema:**
+```json
+{
+  "name": "web_scrape",
+  "description": "Scrape content from URLs to get real-time information",
+  "parameters": {
+    "urls": ["https://example.com"],
+    "selector": "article"  // Optional CSS selector
+  }
+}
+```
+
+**Usage Patterns:**
+1. **Search + Scrape**: Use Google search to find URLs, then scrape content
+2. **Direct URL**: Scrape specific URLs provided by users
+3. **Multi-source**: Scrape multiple sources for comprehensive information
+
+**Common Selectors:**
+- `article` - Main article content
+- `main` - Main content area
+- `.content` - Content container
+- `#content` - Content container by ID
+
 ## Development Setup
 
 ### Using ngrok for local development
@@ -215,28 +311,78 @@ The bot will attempt to transcribe audio files and include the transcribed text 
 whatsapp-chatbot/
 ├── src/
 │   ├── types/
-│   │   └── whatsapp.ts         # TypeScript interfaces
+│   │   ├── whatsapp.ts         # WhatsApp API type definitions
+│   │   └── conversation.ts     # Conversation management types
 │   ├── services/
 │   │   ├── whatsappService.ts  # WhatsApp API client
 │   │   ├── mediaService.ts     # Media download and processing
-│   │   └── openaiService.ts    # OpenAI integration for AI responses
+│   │   ├── openaiService.ts    # OpenAI integration for AI responses
+│   │   ├── googleSearchService.ts # Google Search API integration
+│   │   ├── webScrapeService.ts # Web scraping with Playwright
+│   │   ├── conversationStorageService.ts # Conversation management
+│   │   ├── processedMessageService.ts # Message processing state
+│   │   └── newsScrapeService.ts # News scraping functionality
 │   ├── handlers/
 │   │   └── messageHandler.ts   # Message processing logic
 │   ├── utils/
-│   │   └── crypto.ts           # Signature verification
+│   │   ├── crypto.ts           # Signature verification
+│   │   ├── logger.ts           # Comprehensive logging system
+│   │   └── responseCleaner.ts  # Response cleaning utilities
+│   ├── tools/
+│   │   └── index.ts            # Tool calling system
 │   ├── routes/
 │   │   └── webhook.ts          # Express routes
 │   └── index.ts                # Main entry point
 ├── data/
 │   └── media/                  # Storage for received media files
-├── scripts/
-│   ├── test-audio-service.ts   # Audio service testing
-│   ├── test-audio-integration.ts # Integration testing
-│   └── test-openai-integration.ts # OpenAI integration testing
+├── test/                       # Test files
+├── test-data/                  # Test data
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
 └── README.md
+```
+
+## Logging and Monitoring
+
+The bot includes comprehensive logging for all AI responses and tool calling activities:
+
+### Log Types
+- **🤖 AI Response**: Logs all AI-generated responses with model information and token counts
+- **🛠️ Tool Call**: Logs tool execution requests, results, and timing information
+- **🔍 Search**: Logs Google search API requests and responses with timing
+- **🧠 Decision**: Logs response generation decisions and search triggers
+- **❌ Error**: Logs errors and failures with context information
+
+### Log Features
+- **Structured Logging**: Consistent log format with timestamps and emoji indicators
+- **Real-time Console Output**: Immediate feedback during development
+- **In-memory Storage**: Configurable log retention (default: 1000 entries)
+- **Programmatic Access**: Filter and retrieve logs by type or limit
+
+### Usage Examples
+```typescript
+import { logger } from './utils/logger';
+
+// Log AI responses
+logger.logAIResponse('Response generated', {
+  model: 'gpt-4',
+  tokens: 150,
+  tool_calls: 1
+});
+
+// Get filtered logs
+const searchLogs = logger.getLogs({ type: 'search' });
+const recentLogs = logger.getLogs({ limit: 10 });
+```
+
+### Environment Variables for Logging
+```env
+# Enable detailed logging (default: enabled)
+LOG_LEVEL=debug
+
+# Disable logging
+LOG_LEVEL=silent
 ```
 
 ## Security Features
