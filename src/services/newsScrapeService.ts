@@ -1,4 +1,3 @@
-import { GoogleSearchService } from './googleSearchService';
 import { WebScrapeService, WebScrapeResult } from './webScrapeService';
 
 export interface NewsArticle {
@@ -19,16 +18,14 @@ export interface NewsScrapeConfig {
 }
 
 export class NewsScrapeService {
-  private googleSearchService: GoogleSearchService;
   private webScrapeService: WebScrapeService;
   private config: NewsScrapeConfig;
+  private hardcodedNewsUrls: string[];
 
   constructor(
-    googleSearchService: GoogleSearchService,
     webScrapeService: WebScrapeService,
     config: NewsScrapeConfig = {}
   ) {
-    this.googleSearchService = googleSearchService;
     this.webScrapeService = webScrapeService;
     this.config = {
       maxArticles: config.maxArticles || 5,
@@ -36,115 +33,73 @@ export class NewsScrapeService {
       searchQuery: config.searchQuery || 'latest news',
       timeout: config.timeout || 30000,
       newsSources: config.newsSources || [
-        'hk.news.yahoo.com',
-        'bbc.com',
-        'nytimes.com',
-        'wsj.com',
+        'www.scmp.com',
       ]
     };
+
+    // Hardcoded news URLs from popular news sources
+    this.hardcodedNewsUrls = [
+      'https://www.scmp.com/news/hong-kong',
+      'https://www.scmp.com/news/china',
+      'https://www.scmp.com/business',
+      'https://www.scmp.com/tech',
+      'https://www.scmp.com/sport',
+      'https://www.bbc.com/news',
+      'https://www.bbc.com/news/world',
+      'https://www.bbc.com/news/business',
+      'https://www.bbc.com/news/technology',
+      'https://www.bbc.com/news/science_and_environment',
+      'https://edition.cnn.com/world',
+      'https://edition.cnn.com/business',
+      'https://edition.cnn.com/tech',
+      'https://edition.cnn.com/health',
+      'https://edition.cnn.com/entertainment',
+      'https://www.reuters.com/news/world',
+      'https://www.reuters.com/news/technology',
+      'https://www.reuters.com/news/business',
+      'https://www.reuters.com/news/markets',
+      'https://www.reuters.com/news/sports'
+    ];
   }
 
   /**
    * Scrape news articles based on a query
    */
   async scrapeNews(query?: string): Promise<NewsArticle[]> {
-    const searchQuery = query || this.config.searchQuery!;
     const maxArticles = this.config.maxArticles!;
     const maxArticlesPerSite = this.config.maxArticlesPerSite!;
 
-    console.log('📰 Starting news scrape:', {
-      query: searchQuery,
+    console.log('📰 Starting news scrape from hardcoded URLs:', {
       maxArticles,
       maxArticlesPerSite,
-      sources: this.config.newsSources
+      totalHardcodedUrls: this.hardcodedNewsUrls.length
     });
 
     try {
-      // Step 1: Search for news articles from each site individually
-      const allSearchResults: any[] = [];
+      // Step 1: Use hardcoded URLs directly instead of Google search
+      const newsUrls = this.hardcodedNewsUrls.slice(0, maxArticles);
 
-      // Search each news site separately to get maximum articles per site
-      for (const source of this.config.newsSources!) {
-        try {
-          const siteQuery = `${searchQuery} site:${source}`;
-          const siteResults = await this.googleSearchService.searchMultiple(
-            siteQuery,
-            maxArticlesPerSite * 2 // Get more to account for potential failures
-          );
-
-          console.log(`🔍 Found ${siteResults.length} results for ${source}`);
-          allSearchResults.push(...siteResults);
-
-          // Add small delay between site searches to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (error) {
-          console.warn(`⚠️ Failed to search ${source}:`, {
-            error: error instanceof Error ? error.message : `${error}`
-          });
-          // Continue with other sites
-        }
-      }
-
-      if (allSearchResults.length === 0) {
-        console.warn('⚠️ No news search results found from any site');
-        return [];
-      }
-
-      // Step 2: Extract URLs from search results and group by site
-      const siteUrlMap = new Map<string, string[]>();
-
-      for (const result of allSearchResults) {
-        if (this.isNewsSource(result.link)) {
-          const hostname = new URL(result.link).hostname;
-          if (!siteUrlMap.has(hostname)) {
-            siteUrlMap.set(hostname, []);
-          }
-          siteUrlMap.get(hostname)!.push(result.link);
-        }
-      }
-
-      // Step 3: Limit URLs per site and flatten
-      const newsUrls: string[] = [];
-      for (const [site, urls] of siteUrlMap.entries()) {
-        const limitedUrls = urls.slice(0, maxArticlesPerSite);
-        newsUrls.push(...limitedUrls);
-        console.log(`📊 ${site}: ${limitedUrls.length}/${urls.length} articles selected`);
-      }
-
-      if (newsUrls.length === 0) {
-        console.warn('⚠️ No valid news URLs found in search results');
-        return [];
-      }
-
-      // Apply overall max articles limit
-      const finalUrls = newsUrls.slice(0, maxArticles);
-
-      console.log('🔍 Final news URLs selected:', {
-        totalSelected: finalUrls.length,
-        bySite: Array.from(siteUrlMap.entries()).map(([site, urls]) => ({
-          site,
-          selected: Math.min(urls.length, maxArticlesPerSite),
-          total: urls.length
-        }))
+      console.log('🔍 Selected hardcoded URLs:', {
+        totalSelected: newsUrls.length,
+        urls: newsUrls.map(url => new URL(url).hostname)
       });
 
-      // Step 4: Scrape content from news URLs
-      const scrapeResults = await this.webScrapeService.scrapeUrls(finalUrls);
+      // Step 2: Scrape content from hardcoded URLs
+      const scrapeResults = await this.webScrapeService.scrapeUrls(newsUrls);
 
-      // Step 5: Convert to NewsArticle format
+      // Step 3: Convert to NewsArticle format
       const newsArticles = scrapeResults.map(result => this.convertToNewsArticle(result));
 
       console.log('✅ News scrape completed:', {
         successfulArticles: newsArticles.length,
-        totalAttempted: finalUrls.length,
+        totalAttempted: newsUrls.length,
         distribution: this.getArticleDistribution(newsArticles)
       });
 
       return newsArticles;
     } catch (error) {
       console.error('❌ News scrape error:', {
-        error: error instanceof Error ? error.message : `${error}`,
-        query: searchQuery
+        error: error instanceof Error ? error.message : `${error}`
       });
       throw new Error(`Failed to scrape news: ${error instanceof Error ? error.message : `${error}`}`);
     }
@@ -241,22 +196,57 @@ export class NewsScrapeService {
   }
 
   /**
-   * Format news articles for display
+   * Format news articles for WhatsApp display - concise and easy to read
    */
   formatNewsArticles(articles: NewsArticle[]): string {
     if (articles.length === 0) {
-      return 'No news articles found.';
+      return '📰 No news articles found at the moment.';
     }
 
-    const formattedText = articles.map((article, index) =>
-      `📰 ${index + 1}. ${article.title}\n` +
-      `   Source: ${article.source}\n` +
-      `   Category: ${article.category}\n` +
-      `   Content: ${article.content.substring(0, 200)}${article.content.length > 200 ? '...' : ''}\n` +
-      `   Read more: ${article.url}\n`
-    ).join('\n');
-    console.log("formattedText", formattedText);
-    return formattedText;
+    // WhatsApp-friendly format with emojis and concise information
+    const header = `📰 *Today's Top ${articles.length} News Updates* 📰\n\n`;
+
+    const formattedText = articles.map((article, index) => {
+      // Extract the main domain for cleaner source display
+      const sourceDomain = article.source.replace('www.', '').split('.')[0];
+      const sourceEmoji = this.getSourceEmoji(article.source);
+
+      // Create a concise summary from the content (first 2-3 sentences)
+      const summary = this.extractSummary(article.content);
+
+      return `*${index + 1}. ${article.title}*\n` +
+             `${sourceEmoji} ${sourceDomain} • ${article.category}\n` +
+             `📝 ${summary}\n`;
+    }).join('\n');
+
+    const footer = `\n💬 *Reply with the number* for more details on any story!`;
+
+    return header + formattedText + footer;
+  }
+
+  /**
+   * Get appropriate emoji for news source
+   */
+  private getSourceEmoji(source: string): string {
+    if (source.includes('scmp')) return '🇭🇰';
+    if (source.includes('bbc')) return '🇬🇧';
+    if (source.includes('cnn')) return '🇺🇸';
+    if (source.includes('reuters')) return '🌍';
+    return '📰';
+  }
+
+  /**
+   * Extract a concise summary from article content (2-3 sentences)
+   */
+  private extractSummary(content: string, maxSentences: number = 2): string {
+    if (!content) return 'No summary available';
+
+    // Split into sentences and take first few
+    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const summary = sentences.slice(0, maxSentences).join('. ') + '.';
+
+    // Ensure it's not too long for WhatsApp
+    return summary.length > 120 ? summary.substring(0, 117) + '...' : summary;
   }
 
   /**
@@ -276,9 +266,8 @@ export class NewsScrapeService {
 
 // Helper function to create NewsScrapeService instance
 export function createNewsScrapeService(
-  googleSearchService: GoogleSearchService,
   webScrapeService: WebScrapeService,
   config?: NewsScrapeConfig
 ): NewsScrapeService {
-  return new NewsScrapeService(googleSearchService, webScrapeService, config);
+  return new NewsScrapeService(webScrapeService, config);
 }
