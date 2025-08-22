@@ -1,0 +1,24 @@
+{
+  "watch": [
+    "src/**/*.ts",
+    ".env"
+  ],
+  "ext": "ts,js,json,env",
+  "ignore": [
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "dist/**",
+    "node_modules/**"
+  ],
+  "exec": "ts-node src/index.ts",
+  "execMap": {
+    "ts": "ts-node"
+  },
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": 1000,
+  "verbose": true,
+  "stdin": false,
+  "restartable": "rs"
+}

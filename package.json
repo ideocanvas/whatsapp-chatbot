@@ -6,8 +6,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "watch": "nodemon --exec ts-node src/index.ts",
+    "dev": "npm run watch",
+    "watch": "nodemon",
+    "watch:verbose": "nodemon --verbose",
+    "dev:debug": "nodemon --inspect",
     "test:audio": "ts-node scripts/test-audio-service.ts",
     "test:audio:integration": "ts-node scripts/test-audio-integration.ts",
     "test:transcription": "ts-node scripts/test-transcription-only.ts",
