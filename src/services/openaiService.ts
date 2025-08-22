@@ -47,8 +47,8 @@ export class OpenAIService {
   ): Promise<string> {
     try {
       const systemPrompt = context
-        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Context: ${context}`
-        : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language.';
+        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message. Context: ${context}`
+        : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.';
 
       const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         {

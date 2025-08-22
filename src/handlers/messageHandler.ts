@@ -208,7 +208,7 @@ export class MessageHandler {
 
     try {
       const systemPrompt = context
-        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences.
+        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
 
 CRITICAL: When users ask about news, current events, or latest updates, ALWAYS use the scrape_news tool FIRST to get real-time information from major news websites. This provides the most accurate and up-to-date news coverage.
 
@@ -231,7 +231,7 @@ Use google_search + web_scrape for:
 - Information from non-news websites
 
 Context: ${context}`
-        : `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences.
+        : `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
 
 CRITICAL: When users ask about news, current events, or latest updates, ALWAYS use the scrape_news tool FIRST to get real-time information from major news websites. This provides the most accurate and up-to-date news coverage.
 

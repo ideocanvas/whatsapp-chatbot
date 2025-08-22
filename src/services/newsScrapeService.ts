@@ -39,26 +39,7 @@ export class NewsScrapeService {
 
     // Hardcoded news URLs from popular news sources
     this.hardcodedNewsUrls = [
-      'https://www.scmp.com/news/hong-kong',
-      'https://www.scmp.com/news/china',
-      'https://www.scmp.com/business',
-      'https://www.scmp.com/tech',
-      'https://www.scmp.com/sport',
-      'https://www.bbc.com/news',
-      'https://www.bbc.com/news/world',
-      'https://www.bbc.com/news/business',
-      'https://www.bbc.com/news/technology',
-      'https://www.bbc.com/news/science_and_environment',
-      'https://edition.cnn.com/world',
-      'https://edition.cnn.com/business',
-      'https://edition.cnn.com/tech',
-      'https://edition.cnn.com/health',
-      'https://edition.cnn.com/entertainment',
-      'https://www.reuters.com/news/world',
-      'https://www.reuters.com/news/technology',
-      'https://www.reuters.com/news/business',
-      'https://www.reuters.com/news/markets',
-      'https://www.reuters.com/news/sports'
+      'https://news.google.com/search?q=Hong%20Kong&hl=en-US&gl=US&ceid=US%3Aen',
     ];
   }
 
