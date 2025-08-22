@@ -68,20 +68,20 @@ export const toolSchemas = [
     type: 'function' as const,
     function: {
       name: 'scrape_news',
-      description: 'Scrape current news articles from major news websites. Use this when users ask for news, current events, or latest updates.',
+      description: 'Scrape current news articles from hardcoded major news websites. Use this when users ask for news, current events, or latest updates.',
       parameters: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
-            description: 'The news topic or query to search for (e.g., "technology news", "politics", "sports updates")',
+            description: 'The news topic or query (optional - currently uses hardcoded URLs)',
           },
           max_articles: {
             type: 'number',
             description: 'Maximum number of news articles to return (default: 3)',
           }
         },
-        required: ['query'],
+        required: [],
         additionalProperties: false,
       },
     },
@@ -119,7 +119,7 @@ export function initializeTools(searchService: GoogleSearchService) {
   webScrapeService = createWebScrapeService();
 
   // Initialize news scrape service
-  newsScrapeService = createNewsScrapeService(searchService, webScrapeService);
+  newsScrapeService = createNewsScrapeService(webScrapeService);
 
   availableTools.web_scrape = {
     name: 'web_scrape',
@@ -178,11 +178,10 @@ export async function executeTool(toolName: string, args: any): Promise<any> {
 
 availableTools.scrape_news = {
   name: 'scrape_news',
-  description: 'Scrape current news articles from major news websites',
+  description: 'Scrape current news articles from hardcoded major news websites',
   parameters: toolSchemas[2].function.parameters,
-  execute: async (args: { query: string; max_articles?: number }) => {
-    console.log('📰 Executing News Scrape:', {
-      query: args.query,
+  execute: async (args: { query?: string; max_articles?: number }) => {
+    console.log('📰 Executing News Scrape from hardcoded URLs:', {
       maxArticles: args.max_articles || 3
     });
 
@@ -193,7 +192,6 @@ availableTools.scrape_news = {
       const executionTime = Date.now() - startTime;
 
       console.log('✅ News Scrape Completed:', {
-        query: args.query,
         articlesCount: articles.length,
         executionTime: `${executionTime}ms`,
         firstArticle: articles[0] ? articles[0].title.substring(0, 50) + '...' : 'No articles'
@@ -203,7 +201,6 @@ availableTools.scrape_news = {
     } catch (error) {
       console.error('❌ News scrape execution error:', {
         error: error instanceof Error ? error.message : `${error}`,
-        query: args.query
       });
       throw new Error('Failed to scrape news articles');
     }
