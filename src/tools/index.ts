@@ -1,5 +1,6 @@
 import { GoogleSearchService } from '../services/googleSearchService';
 import { WebScrapeService, createWebScrapeService } from '../services/webScrapeService';
+import { NewsScrapeService, createNewsScrapeService, NewsArticle } from '../services/newsScrapeService';
 
 // Tool function definitions
 export interface ToolFunction {
@@ -12,6 +13,7 @@ export interface ToolFunction {
 // Available tools
 export const availableTools: { [key: string]: ToolFunction } = {};
 let webScrapeService: WebScrapeService;
+let newsScrapeService: NewsScrapeService;
 
 // Tool schemas for OpenAI function calling
 export const toolSchemas = [
@@ -62,10 +64,32 @@ export const toolSchemas = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'scrape_news',
+      description: 'Scrape current news articles from major news websites. Use this when users ask for news, current events, or latest updates.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The news topic or query to search for (e.g., "technology news", "politics", "sports updates")',
+          },
+          max_articles: {
+            type: 'number',
+            description: 'Maximum number of news articles to return (default: 3)',
+          }
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 // Initialize tools with dependencies
-export function initializeTools(googleSearchService: GoogleSearchService) {
+export function initializeTools(searchService: GoogleSearchService) {
   availableTools.google_search = {
     name: 'google_search',
     description: 'Perform a web search using Google',
@@ -77,7 +101,7 @@ export function initializeTools(googleSearchService: GoogleSearchService) {
       });
 
       const startTime = Date.now();
-      const results = await googleSearchService.search(args.query, args.num_results || 5);
+      const results = await searchService.search(args.query, args.num_results || 5);
       const executionTime = Date.now() - startTime;
 
       console.log('✅ Google Search Completed:', {
@@ -87,12 +111,15 @@ export function initializeTools(googleSearchService: GoogleSearchService) {
         firstResult: results[0] ? results[0].title.substring(0, 50) + '...' : 'No results'
       });
 
-      return googleSearchService.formatSearchResults(results);
+      return searchService.formatSearchResults(results);
     }
   };
 
   // Initialize web scrape service
   webScrapeService = createWebScrapeService();
+
+  // Initialize news scrape service
+  newsScrapeService = createNewsScrapeService(searchService, webScrapeService);
 
   availableTools.web_scrape = {
     name: 'web_scrape',
@@ -148,6 +175,40 @@ export async function executeTool(toolName: string, args: any): Promise<any> {
   }
   return tool.execute(args);
 }
+
+availableTools.scrape_news = {
+  name: 'scrape_news',
+  description: 'Scrape current news articles from major news websites',
+  parameters: toolSchemas[2].function.parameters,
+  execute: async (args: { query: string; max_articles?: number }) => {
+    console.log('📰 Executing News Scrape:', {
+      query: args.query,
+      maxArticles: args.max_articles || 3
+    });
+
+    const startTime = Date.now();
+
+    try {
+      const articles = await newsScrapeService.scrapeNews(args.query);
+      const executionTime = Date.now() - startTime;
+
+      console.log('✅ News Scrape Completed:', {
+        query: args.query,
+        articlesCount: articles.length,
+        executionTime: `${executionTime}ms`,
+        firstArticle: articles[0] ? articles[0].title.substring(0, 50) + '...' : 'No articles'
+      });
+
+      return newsScrapeService.formatNewsArticles(articles);
+    } catch (error) {
+      console.error('❌ News scrape execution error:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query: args.query
+      });
+      throw new Error('Failed to scrape news articles');
+    }
+  }
+};
 
 // Cleanup function to close browser instances
 export async function cleanupTools(): Promise<void> {

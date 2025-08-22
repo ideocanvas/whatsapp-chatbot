@@ -20,7 +20,8 @@
     "test:google-search": "ts-node scripts/test-google-search.ts",
     "test:web-scrape": "ts-node scripts/test-web-scrape.ts",
     "test:web-scrape-tool": "ts-node scripts/test-web-scrape-tool.ts",
-    "test:tool-calling": "ts-node scripts/test-tool-calling.ts"
+    "test:tool-calling": "ts-node scripts/test-tool-calling.ts",
+    "test:news-scrape": "ts-node scripts/test-news-scrape.ts"
   },
   "keywords": [
     "whatsapp",
