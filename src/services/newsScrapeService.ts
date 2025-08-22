@@ -12,6 +12,7 @@ export interface NewsArticle {
 
 export interface NewsScrapeConfig {
   maxArticles?: number;
+  maxArticlesPerSite?: number;
   searchQuery?: string;
   timeout?: number;
   newsSources?: string[];
@@ -30,11 +31,12 @@ export class NewsScrapeService {
     this.googleSearchService = googleSearchService;
     this.webScrapeService = webScrapeService;
     this.config = {
-      maxArticles: config.maxArticles || 3,
+      maxArticles: config.maxArticles || 5,
+      maxArticlesPerSite: config.maxArticlesPerSite || 3,
       searchQuery: config.searchQuery || 'latest news',
       timeout: config.timeout || 30000,
       newsSources: config.newsSources || [
-        'hk.yahoo.com',
+        'hk.news.yahoo.com',
         'bbc.com',
         'nytimes.com',
         'wsj.com',
@@ -48,50 +50,94 @@ export class NewsScrapeService {
   async scrapeNews(query?: string): Promise<NewsArticle[]> {
     const searchQuery = query || this.config.searchQuery!;
     const maxArticles = this.config.maxArticles!;
+    const maxArticlesPerSite = this.config.maxArticlesPerSite!;
 
     console.log('📰 Starting news scrape:', {
       query: searchQuery,
       maxArticles,
+      maxArticlesPerSite,
       sources: this.config.newsSources
     });
 
     try {
-      // Step 1: Search for news articles using Google
-      const searchResults = await this.googleSearchService.search(
-        `${searchQuery} site:${this.config.newsSources!.join(' OR site:')}`,
-        maxArticles * 2 // Get more results to account for potential failures
-      );
+      // Step 1: Search for news articles from each site individually
+      const allSearchResults: any[] = [];
 
-      if (searchResults.length === 0) {
-        console.warn('⚠️ No news search results found');
+      // Search each news site separately to get maximum articles per site
+      for (const source of this.config.newsSources!) {
+        try {
+          const siteQuery = `${searchQuery} site:${source}`;
+          const siteResults = await this.googleSearchService.searchMultiple(
+            siteQuery,
+            maxArticlesPerSite * 2 // Get more to account for potential failures
+          );
+
+          console.log(`🔍 Found ${siteResults.length} results for ${source}`);
+          allSearchResults.push(...siteResults);
+
+          // Add small delay between site searches to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (error) {
+          console.warn(`⚠️ Failed to search ${source}:`, {
+            error: error instanceof Error ? error.message : `${error}`
+          });
+          // Continue with other sites
+        }
+      }
+
+      if (allSearchResults.length === 0) {
+        console.warn('⚠️ No news search results found from any site');
         return [];
       }
 
-      // Step 2: Extract URLs from search results
-      const newsUrls = searchResults
-        .filter(result => this.isNewsSource(result.link))
-        .slice(0, maxArticles)
-        .map(result => result.link);
+      // Step 2: Extract URLs from search results and group by site
+      const siteUrlMap = new Map<string, string[]>();
+
+      for (const result of allSearchResults) {
+        if (this.isNewsSource(result.link)) {
+          const hostname = new URL(result.link).hostname;
+          if (!siteUrlMap.has(hostname)) {
+            siteUrlMap.set(hostname, []);
+          }
+          siteUrlMap.get(hostname)!.push(result.link);
+        }
+      }
+
+      // Step 3: Limit URLs per site and flatten
+      const newsUrls: string[] = [];
+      for (const [site, urls] of siteUrlMap.entries()) {
+        const limitedUrls = urls.slice(0, maxArticlesPerSite);
+        newsUrls.push(...limitedUrls);
+        console.log(`📊 ${site}: ${limitedUrls.length}/${urls.length} articles selected`);
+      }
 
       if (newsUrls.length === 0) {
         console.warn('⚠️ No valid news URLs found in search results');
         return [];
       }
 
-      console.log('🔍 Found news URLs:', {
-        count: newsUrls.length,
-        urls: newsUrls.map(url => new URL(url).hostname)
+      // Apply overall max articles limit
+      const finalUrls = newsUrls.slice(0, maxArticles);
+
+      console.log('🔍 Final news URLs selected:', {
+        totalSelected: finalUrls.length,
+        bySite: Array.from(siteUrlMap.entries()).map(([site, urls]) => ({
+          site,
+          selected: Math.min(urls.length, maxArticlesPerSite),
+          total: urls.length
+        }))
       });
 
-      // Step 3: Scrape content from news URLs
-      const scrapeResults = await this.webScrapeService.scrapeUrls(newsUrls);
+      // Step 4: Scrape content from news URLs
+      const scrapeResults = await this.webScrapeService.scrapeUrls(finalUrls);
 
-      // Step 4: Convert to NewsArticle format
+      // Step 5: Convert to NewsArticle format
       const newsArticles = scrapeResults.map(result => this.convertToNewsArticle(result));
 
       console.log('✅ News scrape completed:', {
         successfulArticles: newsArticles.length,
-        totalAttempted: newsUrls.length
+        totalAttempted: finalUrls.length,
+        distribution: this.getArticleDistribution(newsArticles)
       });
 
       return newsArticles;
@@ -181,6 +227,17 @@ export class NewsScrapeService {
     } else {
       return 'General';
     }
+  }
+
+  /**
+   * Get distribution of articles by source
+   */
+  private getArticleDistribution(articles: NewsArticle[]): Record<string, number> {
+    const distribution: Record<string, number> = {};
+    for (const article of articles) {
+      distribution[article.source] = (distribution[article.source] || 0) + 1;
+    }
+    return distribution;
   }
 
   /**
