@@ -11,6 +11,10 @@ export interface WebScrapeConfig {
   timeout?: number;
   userAgent?: string;
   viewport?: { width: number; height: number };
+  maxRetries?: number;
+  retryDelay?: number;
+  navigationTimeout?: number;
+  loadStateTimeout?: number;
 }
 
 export class WebScrapeService {
@@ -22,6 +26,10 @@ export class WebScrapeService {
       timeout: config.timeout || 30000,
       userAgent: config.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
       viewport: config.viewport || { width: 1280, height: 720 },
+      maxRetries: config.maxRetries || 2,
+      retryDelay: config.retryDelay || 2000,
+      navigationTimeout: config.navigationTimeout || 15000,
+      loadStateTimeout: config.loadStateTimeout || 10000,
     };
   }
 
@@ -47,78 +55,118 @@ export class WebScrapeService {
       throw new Error('Browser not initialized');
     }
 
-    const page = await this.browser.newPage();
+    let retryCount = 0;
+    const maxRetries = this.config.maxRetries!;
 
-    try {
-      // Set viewport and user agent
-      await page.setViewportSize(this.config.viewport!);
-      await page.setExtraHTTPHeaders({
-        'User-Agent': this.config.userAgent!,
-      });
+    while (retryCount <= maxRetries) {
+      const page = await this.browser.newPage();
 
-      console.log('🌐 Navigating to URL:', { url });
+      try {
+        // Set viewport and user agent
+        await page.setViewportSize(this.config.viewport!);
+        await page.setExtraHTTPHeaders({
+          'User-Agent': this.config.userAgent!,
+        });
 
-      // Navigate to the URL with timeout
-      await page.goto(url, {
-        timeout: this.config.timeout,
-        waitUntil: 'domcontentloaded',
-      });
+        console.log('🌐 Navigating to URL:', {
+          url,
+          attempt: retryCount + 1,
+          maxRetries
+        });
 
-      // Wait for the page to be fully loaded
-      await page.waitForLoadState('networkidle', { timeout: this.config.timeout });
+        // Navigate to the URL with separate timeouts for navigation and loading
+        await page.goto(url, {
+          timeout: this.config.navigationTimeout,
+          waitUntil: 'domcontentloaded',
+        });
 
-      // Get page title
-      const title = await page.title();
+        // Wait for the page to be fully loaded with a separate timeout
+        // Use 'load' instead of 'networkidle' for more reliable loading
+        await page.waitForLoadState('load', {
+          timeout: this.config.loadStateTimeout
+        });
 
-      // Extract content based on selector or entire page
-      let content: string;
-      if (selector) {
-        // Extract specific element content
-        const element = await page.$(selector);
-        if (element) {
-          content = await element.textContent() || '';
+        // Handle website-specific challenges
+        await this.handleWebsiteSpecificChallenges(page, url);
+
+        // Additional wait for dynamic content
+        await this.waitForDynamicContent(page, url);
+
+        // Get page title
+        const pageTitle = await page.title();
+
+        // Extract content based on selector or entire page
+        let extractedContent: string;
+        if (selector) {
+          // Extract specific element content
+          const element = await page.$(selector);
+          if (element) {
+            extractedContent = await element.textContent() || '';
+          } else {
+            throw new Error(`Selector "${selector}" not found on page`);
+          }
         } else {
-          throw new Error(`Selector "${selector}" not found on page`);
+          // Extract main content (try to get article or main content)
+          const articleContent = await page.$('article, main, .content, #content');
+          if (articleContent) {
+            extractedContent = await articleContent.textContent() || '';
+          } else {
+            // Fallback to body content
+            const body = await page.$('body');
+            extractedContent = await body?.textContent() || '';
+          }
         }
-      } else {
-        // Extract main content (try to get article or main content)
-        const articleContent = await page.$('article, main, .content, #content');
-        if (articleContent) {
-          content = await articleContent.textContent() || '';
-        } else {
-          // Fallback to body content
-          const body = await page.$('body');
-          content = await body?.textContent() || '';
+
+        // Clean up content
+        extractedContent = this.cleanContent(extractedContent);
+
+        const scrapeResult: WebScrapeResult = {
+          title: pageTitle,
+          url,
+          content: extractedContent.substring(0, 4000), // Limit content length
+          extractedAt: new Date().toISOString(),
+        };
+
+        console.log('✅ Web scrape completed:', {
+          url,
+          title: pageTitle.substring(0, 50) + (pageTitle.length > 50 ? '...' : ''),
+          contentLength: extractedContent.length,
+          attempt: retryCount + 1,
+        });
+
+        await page.close();
+        return scrapeResult;
+
+      } catch (error) {
+        await page.close();
+
+        // Check if we should retry
+        if (retryCount < maxRetries && this.shouldRetry(error)) {
+          retryCount++;
+          console.warn('⚠️ Web scrape attempt failed, retrying:', {
+            url,
+            attempt: retryCount,
+            maxRetries,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            retryDelay: `${this.config.retryDelay}ms`
+          });
+
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, this.config.retryDelay!));
+          continue;
         }
+
+        console.error('❌ Web scrape error:', {
+          url,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          finalAttempt: retryCount + 1,
+        });
+
+        throw new Error(`Failed to scrape URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
-
-      // Clean up content
-      content = this.cleanContent(content);
-
-      const result: WebScrapeResult = {
-        title,
-        url,
-        content: content.substring(0, 4000), // Limit content length
-        extractedAt: new Date().toISOString(),
-      };
-
-      console.log('✅ Web scrape completed:', {
-        url,
-        title: title.substring(0, 50) + (title.length > 50 ? '...' : ''),
-        contentLength: content.length,
-      });
-
-      return result;
-
-    } catch (error) {
-      console.error('❌ Web scrape error:', {
-        url,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      throw new Error(`Failed to scrape URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      await page.close();
     }
+
+    throw new Error(`Failed to scrape URL after ${maxRetries + 1} attempts`);
   }
 
   /**
@@ -172,9 +220,117 @@ export class WebScrapeService {
       this.browser = null;
     }
   }
+
+  /**
+   * Determine if a scrape error should be retried
+   */
+  private shouldRetry(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const errorMessage = error.message.toLowerCase();
+
+    // Retry on timeout and network-related errors
+    const retryableErrors = [
+      'timeout',
+      'network',
+      'navigation',
+      'load',
+      'connection',
+      'socket',
+      'econnreset',
+      'econnrefused',
+      'econnaborted',
+      'etimedout'
+    ];
+
+    return retryableErrors.some(keyword => errorMessage.includes(keyword));
+  }
+
+  /**
+   * Handle website-specific scraping challenges
+   */
+  private async handleWebsiteSpecificChallenges(page: Page, url: string): Promise<void> {
+    const domain = new URL(url).hostname;
+
+    // Yahoo Finance specific handling
+    if (domain.includes('yahoo.com') || domain.includes('finance.yahoo')) {
+      console.log('🔧 Applying Yahoo Finance specific handling...');
+
+      // Wait for specific elements that indicate the page is loaded
+      try {
+        await page.waitForSelector('[data-test="quote-header"]', { timeout: 5000 });
+      } catch {
+        // Fallback to waiting for any price-related element
+        try {
+          await page.waitForSelector('[data-symbol]', { timeout: 5000 });
+        } catch {
+          // If neither selector works, just continue
+          console.log('⚠️ Yahoo Finance specific selectors not found, continuing...');
+        }
+      }
+    }
+
+    // News websites often have dynamic content
+    if (domain.includes('news.') || domain.includes('reuters') || domain.includes('bloomberg')) {
+      console.log('🔧 Applying news website handling...');
+
+      // Wait a bit longer for news content to load
+      await page.waitForTimeout(1000);
+    }
+
+    // Financial websites often have complex JavaScript
+    if (domain.includes('finance.') || domain.includes('yahoo.com/finance') || domain.includes('bloomberg.com')) {
+      console.log('🔧 Applying financial website handling...');
+
+      // Wait for financial data to load
+      await page.waitForTimeout(2000);
+
+      // Try to wait for common financial data elements
+      try {
+        await page.waitForSelector('[data-test*="price"], [data-symbol], .quote-header', {
+          timeout: 5000
+        });
+      } catch {
+        console.log('⚠️ Financial data selectors not found, continuing...');
+      }
+    }
+  }
+
+  /**
+   * Wait for dynamic content to load
+   */
+  private async waitForDynamicContent(page: Page, url: string): Promise<void> {
+    const domain = new URL(url).hostname;
+
+    // For JavaScript-heavy sites, wait for additional content
+    if (domain.includes('yahoo.com') || domain.includes('finance.')) {
+      console.log('⏳ Waiting for dynamic content on financial site...');
+      await page.waitForTimeout(3000);
+
+      // Scroll down a bit to trigger lazy loading using mouse wheel
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(1000);
+    }
+  }
 }
 
-// Helper function to create WebScrapeService instance
+// Helper function to create WebScrapeService instance with environment configuration
 export function createWebScrapeService(): WebScrapeService {
-  return new WebScrapeService();
+  const config: WebScrapeConfig = {
+    timeout: process.env.WEB_SCRAPE_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_TIMEOUT) : undefined,
+    maxRetries: process.env.WEB_SCRAPE_MAX_RETRIES ? parseInt(process.env.WEB_SCRAPE_MAX_RETRIES) : undefined,
+    retryDelay: process.env.WEB_SCRAPE_RETRY_DELAY ? parseInt(process.env.WEB_SCRAPE_RETRY_DELAY) : undefined,
+    navigationTimeout: process.env.WEB_SCRAPE_NAVIGATION_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_NAVIGATION_TIMEOUT) : undefined,
+    loadStateTimeout: process.env.WEB_SCRAPE_LOAD_STATE_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_LOAD_STATE_TIMEOUT) : undefined,
+  };
+
+  console.log('🌐 Web Scrape Service Configuration:', {
+    timeout: config.timeout || 'default',
+    maxRetries: config.maxRetries || 'default',
+    retryDelay: config.retryDelay || 'default',
+    navigationTimeout: config.navigationTimeout || 'default',
+    loadStateTimeout: config.loadStateTimeout || 'default',
+  });
+
+  return new WebScrapeService(config);
 }

@@ -113,6 +113,7 @@ export class OpenAIService {
 
     let currentMessages = [...messages];
     let toolCallRound = 0;
+    let partialResults: any[] = [];
 
     while (toolCallRound < maxToolRounds) {
       toolCallRound++;
@@ -149,15 +150,38 @@ export class OpenAIService {
       // Process tool calls
       const toolResults = await this.processToolCalls(message.tool_calls);
 
-      // Add tool results to the conversation
-      currentMessages.push({
-        role: 'tool',
-        content: JSON.stringify(toolResults),
-        tool_call_id: message.tool_calls![0].id
-      });
+      // Store successful results for potential partial response
+      const successfulResults = toolResults.filter(result => !result.error);
+      partialResults.push(...successfulResults.map(result => result.result));
+
+      // Add tool results to the conversation - each result needs its own message
+      for (const result of toolResults) {
+        currentMessages.push({
+          role: 'tool',
+          content: typeof result.result === 'string' ? result.result : JSON.stringify(result.result),
+          tool_call_id: result.tool_call_id
+        });
+      }
     }
 
-    return 'I tried to find information but reached the maximum number of search attempts. Please try again.';
+    // Get the last user message to provide context
+    const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
+    const userQuery = lastUserMessage?.content || 'your query';
+
+    // Use LLM to generate a contextual final response
+    const finalResponsePrompt = partialResults.length > 0
+      ? `I reached the maximum search limit while researching "${userQuery}". Here's what I found so far:\n\n${partialResults.map((result: any) => typeof result === 'string' ? result : JSON.stringify(result)).join('\n\n')}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings, explains I hit the search limit, and suggests next steps. Keep it conversational and short.`
+      : `I reached the maximum search attempts while trying to find information for "${userQuery}" but couldn't find any relevant results. Please create a helpful WhatsApp-style response explaining this situation and suggesting the user try a more specific query or different wording. Keep it conversational and short.`;
+
+    // Generate final response using LLM
+    const finalResponse = await this.generateTextResponse(
+      finalResponsePrompt,
+      'You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.',
+      undefined,
+      'none' // Don't use tools for this final response
+    );
+
+    return finalResponse;
   }
 
   /**
