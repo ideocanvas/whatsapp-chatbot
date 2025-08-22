@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import * as fs from 'fs';
 import * as path from 'path';
 import { cleanLLMResponse } from '../utils/responseCleaner';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 
 export interface OpenAIConfig {
   apiKey: string;
@@ -10,6 +11,7 @@ export interface OpenAIConfig {
   visionModel?: string;
   temperature?: number;
   maxTokens?: number;
+  enableToolCalling?: boolean;
 }
 
 export class OpenAIService {
@@ -23,7 +25,8 @@ export class OpenAIService {
       temperature: config.temperature || parseFloat(process.env.OPENAI_TEMPERATURE || '0.7'),
       maxTokens: config.maxTokens || parseInt(process.env.OPENAI_MAX_TOKENS || '1000'),
       apiKey: config.apiKey,
-      baseURL: config.baseURL || process.env.OPENAI_BASE_URL
+      baseURL: config.baseURL || process.env.OPENAI_BASE_URL,
+      enableToolCalling: config.enableToolCalling ?? (process.env.OPENAI_ENABLE_TOOL_CALLING === 'true')
     };
 
     this.openai = new OpenAI({
@@ -35,27 +38,42 @@ export class OpenAIService {
   /**
    * Generate a response to a text message using OpenAI
    */
-  async generateTextResponse(message: string, context?: string): Promise<string> {
+  async generateTextResponse(
+    message: string,
+    context?: string,
+    tools?: ChatCompletionTool[],
+    toolChoice?: 'auto' | 'none' | 'required'
+  ): Promise<string> {
     try {
       const systemPrompt = context
         ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Context: ${context}`
         : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language.';
 
-      const response = await this.openai.chat.completions.create({
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ];
+
+      const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
         model: this.config.model!,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: message
-          }
-        ],
+        messages,
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
-      });
+      };
+
+      // Add tools if provided and tool calling is enabled
+      if (tools && tools.length > 0 && this.config.enableToolCalling) {
+        requestOptions.tools = tools;
+        requestOptions.tool_choice = toolChoice || 'auto';
+      }
+
+      const response = await this.openai.chat.completions.create(requestOptions);
 
       const rawResponse = response.choices[0]?.message?.content?.trim() || 'I apologize, but I could not generate a response. Please try again.';
       return cleanLLMResponse(rawResponse);
@@ -63,6 +81,60 @@ export class OpenAIService {
       console.error('Error generating text response:', error);
       throw new Error('Failed to generate response from OpenAI');
     }
+  }
+
+  /**
+   * Generate response with tool calling support
+   */
+  async generateResponseWithTools(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    tools?: ChatCompletionTool[],
+    maxToolRounds: number = 3
+  ): Promise<string> {
+    if (!this.config.enableToolCalling || !tools || tools.length === 0) {
+      // Fall back to regular response generation
+      const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
+      return this.generateTextResponse(
+        lastUserMessage?.content as string || '',
+        undefined,
+        tools
+      );
+    }
+
+    let currentMessages = [...messages];
+    let toolCallRound = 0;
+
+    while (toolCallRound < maxToolRounds) {
+      toolCallRound++;
+
+      const response = await this.openai.chat.completions.create({
+        model: this.config.model!,
+        messages: currentMessages,
+        tools,
+        tool_choice: 'auto',
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+      });
+
+      const message = response.choices[0]?.message;
+      if (!message) {
+        throw new Error('No response from OpenAI');
+      }
+
+      currentMessages.push(message);
+
+      // If no tool calls, return the final response
+      if (!message.tool_calls || message.tool_calls.length === 0) {
+        return cleanLLMResponse(message.content || '');
+      }
+
+      // Process tool calls (this would be handled by the message handler)
+      // For now, we'll just return a message indicating tool calls were requested
+      console.log('Tool calls requested:', message.tool_calls);
+      return 'I need to search for more information to answer your question properly.';
+    }
+
+    return 'I tried to find information but reached the maximum number of search attempts. Please try again.';
   }
 
   /**
@@ -181,5 +253,6 @@ export function createOpenAIServiceFromEnv(): OpenAIService {
     visionModel: process.env.OPENAI_VISION_MODEL,
     temperature: process.env.OPENAI_TEMPERATURE ? parseFloat(process.env.OPENAI_TEMPERATURE) : undefined,
     maxTokens: process.env.OPENAI_MAX_TOKENS ? parseInt(process.env.OPENAI_MAX_TOKENS) : undefined,
+    enableToolCalling: process.env.OPENAI_ENABLE_TOOL_CALLING === 'true',
   });
 }

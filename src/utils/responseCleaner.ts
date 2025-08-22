@@ -17,6 +17,23 @@ export function removeThinkingTags(response: string): string {
 }
 
 /**
+ * Removes tool call artifacts and intermediate reasoning from responses
+ * @param response The raw LLM response that may contain tool call artifacts
+ * @returns Cleaned response without tool call artifacts
+ */
+export function removeToolCallArtifacts(response: string): string {
+  // Remove common tool call artifacts and intermediate reasoning
+  return response
+    .replace(/I need to search for more information to answer your question properly\./gi, '')
+    .replace(/Let me search for that information\./gi, '')
+    .replace(/I'll look that up for you\./gi, '')
+    .replace(/Searching for information\.\.\./gi, '')
+    .replace(/Based on my search results,/gi, '')
+    .replace(/According to my search,/gi, '')
+    .trim();
+}
+
+/**
  * Shortens responses for WhatsApp by truncating long messages and making them more concise
  * @param response The response to shorten
  * @param maxLength Maximum length for WhatsApp responses (default: 320 characters)
@@ -79,6 +96,9 @@ export function cleanLLMResponse(response: string): string {
 
   // Remove thinking tags first
   let cleaned = removeThinkingTags(response);
+
+  // Remove tool call artifacts
+  cleaned = removeToolCallArtifacts(cleaned);
 
   // Clean up excessive whitespace and newlines
   cleaned = cleaned

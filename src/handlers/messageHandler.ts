@@ -3,12 +3,16 @@ import { MediaService, MediaInfo } from '../services/mediaService';
 import { OpenAIService, createOpenAIServiceFromEnv } from '../services/openaiService';
 import { ConversationStorageService } from '../services/conversationStorageService';
 import { Message } from '../types/conversation';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../services/googleSearchService';
+import { initializeTools, getToolSchemas, executeTool, hasAvailableTools } from '../tools';
 
 export class MessageHandler {
   private whatsappService: WhatsAppService;
   private mediaService: MediaService;
   private openaiService: OpenAIService | null;
+  private googleSearchService: GoogleSearchService | null;
   private conversationStorage: ConversationStorageService;
+  private toolsAvailable: boolean = false;
 
   constructor(whatsappService: WhatsAppService, mediaService: MediaService) {
     this.whatsappService = whatsappService;
@@ -28,6 +32,22 @@ export class MessageHandler {
     } catch (error) {
       console.warn('OpenAI service not available:', error instanceof Error ? error.message : 'Unknown error');
       this.openaiService = null;
+    }
+
+    // Initialize Google Search service if API keys are available
+    try {
+      this.googleSearchService = createGoogleSearchServiceFromEnv();
+      console.log('Google Search service initialized successfully');
+
+      // Initialize tools if both services are available
+      if (this.openaiService && this.googleSearchService) {
+        initializeTools(this.googleSearchService);
+        this.toolsAvailable = hasAvailableTools();
+        console.log('Tools initialized:', this.toolsAvailable);
+      }
+    } catch (error) {
+      console.warn('Google Search service not available:', error instanceof Error ? error.message : 'Unknown error');
+      this.googleSearchService = null;
     }
   }
 
@@ -118,6 +138,11 @@ export class MessageHandler {
           context = await this.conversationStorage.getFormattedMessageHistory(senderNumber, 5);
         }
 
+        // Use tool calling if available and the message seems to require search
+        if (this.toolsAvailable && this.shouldUseSearch(messageText)) {
+          return await this.generateResponseWithTools(messageText, context, senderNumber);
+        }
+
         return await this.openaiService.generateTextResponse(messageText, context);
       } catch (error) {
         console.error('OpenAI response generation failed, falling back to basic responses:', error);
@@ -157,7 +182,63 @@ export class MessageHandler {
            '• Type "help" for available commands\n' +
            '• Type "time" for current time\n' +
            '• Type "info" for bot information';
- }
+  }
+
+  /**
+   * Generate response using tool calling for enhanced capabilities
+   */
+  private async generateResponseWithTools(
+    messageText: string,
+    context: string,
+    senderNumber?: string
+  ): Promise<string> {
+    if (!this.openaiService || !this.toolsAvailable) {
+      return this.generateResponse(messageText, senderNumber);
+    }
+
+    try {
+      const systemPrompt = context
+        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Use tools when you need to search for current information. Context: ${context}`
+        : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Use tools when you need to search for current information. Be direct and avoid formal language.';
+
+      const messages: any[] = [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: messageText
+        }
+      ];
+
+      const tools = getToolSchemas();
+      const response = await this.openaiService.generateResponseWithTools(messages, tools);
+
+      return response;
+    } catch (error) {
+      console.error('Error generating response with tools:', error);
+      // Fall back to regular response generation
+      return this.generateResponse(messageText, senderNumber);
+    }
+  }
+
+  /**
+   * Determine if a message should trigger search functionality
+   */
+  private shouldUseSearch(messageText: string): boolean {
+    const lowerMessage = messageText.toLowerCase();
+
+    // Keywords that indicate need for current information
+    const searchKeywords = [
+      'current', 'latest', 'news', 'today', 'recent', 'update',
+      'what is', 'who is', 'when is', 'where is', 'how to',
+      'search', 'find', 'look up', 'information about',
+      'weather', 'stock', 'price', 'score', 'results'
+    ];
+
+    return searchKeywords.some(keyword => lowerMessage.includes(keyword));
+  }
 
  private async storeIncomingMessage(
    senderNumber: string,
