@@ -208,8 +208,36 @@ export class MessageHandler {
 
     try {
       const systemPrompt = context
-        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Use tools when you need to search for current information. Context: ${context}`
-        : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Use tools when you need to search for current information. Be direct and avoid formal language.';
+        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences.
+
+IMPORTANT: When users ask about current information, news, specific websites, or detailed content, ALWAYS use the web_scrape tool to get real-time information directly from websites. This provides the most accurate and up-to-date responses.
+
+Use web_scrape for:
+- News articles and current events
+- Specific website content
+- Product information and prices
+- Technical documentation
+- Blog posts and articles
+- Any URL the user mentions
+
+Combine google_search to find relevant URLs first, then web_scrape to extract detailed content.
+
+Context: ${context}`
+        : `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences.
+
+IMPORTANT: When users ask about current information, news, specific websites, or detailed content, ALWAYS use the web_scrape tool to get real-time information directly from websites. This provides the most accurate and up-to-date responses.
+
+Use web_scrape for:
+- News articles and current events
+- Specific website content
+- Product information and prices
+- Technical documentation
+- Blog posts and articles
+- Any URL the user mentions
+
+Combine google_search to find relevant URLs first, then web_scrape to extract detailed content.
+
+Be direct and avoid formal language.`;
 
       const messages: any[] = [
         {
@@ -239,12 +267,19 @@ export class MessageHandler {
   private shouldUseSearch(messageText: string): boolean {
     const lowerMessage = messageText.toLowerCase();
 
-    // Keywords that indicate need for current information
+    // Keywords that indicate need for current information and web scraping
     const searchKeywords = [
       'current', 'latest', 'news', 'today', 'recent', 'update',
       'what is', 'who is', 'when is', 'where is', 'how to',
       'search', 'find', 'look up', 'information about',
-      'weather', 'stock', 'price', 'score', 'results'
+      'weather', 'stock', 'price', 'score', 'results',
+      // Web scraping specific keywords
+      'website', 'webpage', 'page', 'article', 'blog', 'post',
+      'url', 'link', 'http', 'https', 'www', '.com', '.org',
+      'read', 'content', 'extract', 'scrape', 'information from',
+      'check this', 'look at this', 'visit this', 'go to',
+      'product', 'review', 'manual', 'documentation', 'guide',
+      'tutorial', 'instructions', 'specifications', 'details'
     ];
 
     return searchKeywords.some(keyword => lowerMessage.includes(keyword));
@@ -259,7 +294,14 @@ export class MessageHandler {
       'current', 'latest', 'news', 'today', 'recent', 'update',
       'what is', 'who is', 'when is', 'where is', 'how to',
       'search', 'find', 'look up', 'information about',
-      'weather', 'stock', 'price', 'score', 'results'
+      'weather', 'stock', 'price', 'score', 'results',
+      // Web scraping specific keywords
+      'website', 'webpage', 'page', 'article', 'blog', 'post',
+      'url', 'link', 'http', 'https', 'www', '.com', '.org',
+      'read', 'content', 'extract', 'scrape', 'information from',
+      'check this', 'look at this', 'visit this', 'go to',
+      'product', 'review', 'manual', 'documentation', 'guide',
+      'tutorial', 'instructions', 'specifications', 'details'
     ];
 
     return searchKeywords.filter(keyword => lowerMessage.includes(keyword));

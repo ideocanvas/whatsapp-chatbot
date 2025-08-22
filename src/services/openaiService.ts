@@ -99,7 +99,7 @@ export class OpenAIService {
   async generateResponseWithTools(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools?: ChatCompletionTool[],
-    maxToolRounds: number = 3
+    maxToolRounds: number = 5
   ): Promise<string> {
     if (!this.config.enableToolCalling || !tools || tools.length === 0) {
       // Fall back to regular response generation
