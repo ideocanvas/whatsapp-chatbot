@@ -1,5 +1,5 @@
 # Use official Node.js runtime as a base image
-FROM node:20-alpine AS builder
+FROM node:20-bookworm AS builder
 
 # Set working directory
 WORKDIR /app
@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies including Playwright WebKit browser
+RUN npm ci --only=production && npx playwright install webkit
 
 # Copy source code
 COPY . .
@@ -17,14 +17,17 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine AS production
+FROM node:20-bookworm-slim AS production
 
 # Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+RUN apt-get update && apt-get install -y \
+    dumb-init \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create app user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S whatsapp-bot -u 1001
+RUN groupadd -g 1001 nodejs && \
+    useradd -m -u 1001 -g nodejs whatsapp-bot
 
 # Set working directory
 WORKDIR /app
@@ -32,8 +35,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+# Install production dependencies including Playwright WebKit browser
+RUN npm ci --only=production && npx playwright install webkit && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist
@@ -44,6 +47,10 @@ COPY --chown=whatsapp-bot:nodejs data/ ./data/
 
 # Create data directory if it doesn't exist
 RUN mkdir -p data/conversations && chown whatsapp-bot:nodejs data/conversations
+
+# Set environment variables for Playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/node_modules/playwright/.local-browsers
+ENV CHROME_BIN=/usr/bin/chromium-browser
 
 # Switch to non-root user
 USER whatsapp-bot
