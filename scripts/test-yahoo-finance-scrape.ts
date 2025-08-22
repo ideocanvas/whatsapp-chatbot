@@ -9,7 +9,6 @@ async function testYahooFinanceScrape() {
     maxRetries: 3,
     retryDelay: 3000,
     navigationTimeout: 20000,
-    loadStateTimeout: 15000,
   });
 
   const testUrl = 'https://sg.finance.yahoo.com/quote/1810.HK/';
@@ -21,7 +20,6 @@ async function testYahooFinanceScrape() {
       maxRetries: webScrapeService['config'].maxRetries,
       retryDelay: webScrapeService['config'].retryDelay,
       navigationTimeout: webScrapeService['config'].navigationTimeout,
-      loadStateTimeout: webScrapeService['config'].loadStateTimeout,
     });
 
     const startTime = Date.now();

@@ -1,5 +1,8 @@
 #!/usr/bin/env ts-node
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../src/services/googleSearchService';
 import { createWebScrapeService } from '../src/services/webScrapeService';
 import { createNewsScrapeService } from '../src/services/newsScrapeService';

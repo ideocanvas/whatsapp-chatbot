@@ -14,7 +14,6 @@ export interface WebScrapeConfig {
   maxRetries?: number;
   retryDelay?: number;
   navigationTimeout?: number;
-  loadStateTimeout?: number;
 }
 
 export class WebScrapeService {
@@ -29,7 +28,6 @@ export class WebScrapeService {
       maxRetries: config.maxRetries || 2,
       retryDelay: config.retryDelay || 2000,
       navigationTimeout: config.navigationTimeout || 15000,
-      loadStateTimeout: config.loadStateTimeout || 10000,
     };
   }
 
@@ -74,23 +72,14 @@ export class WebScrapeService {
           maxRetries
         });
 
-        // Navigate to the URL with separate timeouts for navigation and loading
+        // Navigate to the URL with minimal waiting - just get whatever content loads
         await page.goto(url, {
           timeout: this.config.navigationTimeout,
-          waitUntil: 'domcontentloaded',
+          waitUntil: 'domcontentloaded', // Just wait for DOM to be ready, not full load
         });
 
-        // Wait for the page to be fully loaded with a separate timeout
-        // Use 'load' instead of 'networkidle' for more reliable loading
-        await page.waitForLoadState('load', {
-          timeout: this.config.loadStateTimeout
-        });
-
-        // Handle website-specific challenges
-        await this.handleWebsiteSpecificChallenges(page, url);
-
-        // Additional wait for dynamic content
-        await this.waitForDynamicContent(page, url);
+        // Wait a very short time for basic content to appear
+        await page.waitForTimeout(500);
 
         // Get page title
         const pageTitle = await page.title();
@@ -246,72 +235,6 @@ export class WebScrapeService {
     return retryableErrors.some(keyword => errorMessage.includes(keyword));
   }
 
-  /**
-   * Handle website-specific scraping challenges
-   */
-  private async handleWebsiteSpecificChallenges(page: Page, url: string): Promise<void> {
-    const domain = new URL(url).hostname;
-
-    // Yahoo Finance specific handling
-    if (domain.includes('yahoo.com') || domain.includes('finance.yahoo')) {
-      console.log('🔧 Applying Yahoo Finance specific handling...');
-
-      // Wait for specific elements that indicate the page is loaded
-      try {
-        await page.waitForSelector('[data-test="quote-header"]', { timeout: 5000 });
-      } catch {
-        // Fallback to waiting for any price-related element
-        try {
-          await page.waitForSelector('[data-symbol]', { timeout: 5000 });
-        } catch {
-          // If neither selector works, just continue
-          console.log('⚠️ Yahoo Finance specific selectors not found, continuing...');
-        }
-      }
-    }
-
-    // News websites often have dynamic content
-    if (domain.includes('news.') || domain.includes('reuters') || domain.includes('bloomberg')) {
-      console.log('🔧 Applying news website handling...');
-
-      // Wait a bit longer for news content to load
-      await page.waitForTimeout(1000);
-    }
-
-    // Financial websites often have complex JavaScript
-    if (domain.includes('finance.') || domain.includes('yahoo.com/finance') || domain.includes('bloomberg.com')) {
-      console.log('🔧 Applying financial website handling...');
-
-      // Wait for financial data to load
-      await page.waitForTimeout(2000);
-
-      // Try to wait for common financial data elements
-      try {
-        await page.waitForSelector('[data-test*="price"], [data-symbol], .quote-header', {
-          timeout: 5000
-        });
-      } catch {
-        console.log('⚠️ Financial data selectors not found, continuing...');
-      }
-    }
-  }
-
-  /**
-   * Wait for dynamic content to load
-   */
-  private async waitForDynamicContent(page: Page, url: string): Promise<void> {
-    const domain = new URL(url).hostname;
-
-    // For JavaScript-heavy sites, wait for additional content
-    if (domain.includes('yahoo.com') || domain.includes('finance.')) {
-      console.log('⏳ Waiting for dynamic content on financial site...');
-      await page.waitForTimeout(3000);
-
-      // Scroll down a bit to trigger lazy loading using mouse wheel
-      await page.mouse.wheel(0, 300);
-      await page.waitForTimeout(1000);
-    }
-  }
 }
 
 // Helper function to create WebScrapeService instance with environment configuration
@@ -321,7 +244,6 @@ export function createWebScrapeService(): WebScrapeService {
     maxRetries: process.env.WEB_SCRAPE_MAX_RETRIES ? parseInt(process.env.WEB_SCRAPE_MAX_RETRIES) : undefined,
     retryDelay: process.env.WEB_SCRAPE_RETRY_DELAY ? parseInt(process.env.WEB_SCRAPE_RETRY_DELAY) : undefined,
     navigationTimeout: process.env.WEB_SCRAPE_NAVIGATION_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_NAVIGATION_TIMEOUT) : undefined,
-    loadStateTimeout: process.env.WEB_SCRAPE_LOAD_STATE_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_LOAD_STATE_TIMEOUT) : undefined,
   };
 
   console.log('🌐 Web Scrape Service Configuration:', {
@@ -329,7 +251,6 @@ export function createWebScrapeService(): WebScrapeService {
     maxRetries: config.maxRetries || 'default',
     retryDelay: config.retryDelay || 'default',
     navigationTimeout: config.navigationTimeout || 'default',
-    loadStateTimeout: config.loadStateTimeout || 'default',
   });
 
   return new WebScrapeService(config);
