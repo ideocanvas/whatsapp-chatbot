@@ -148,7 +148,7 @@ export function initializeTools(searchService: GoogleSearchService) {
         return webScrapeService.formatScrapeResults(results);
       } catch (error) {
         console.error('❌ Web scrape execution error:', {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : `${error}`,
           urls: args.urls
         });
         throw new Error('Failed to scrape web content');
@@ -202,7 +202,7 @@ availableTools.scrape_news = {
       return newsScrapeService.formatNewsArticles(articles);
     } catch (error) {
       console.error('❌ News scrape execution error:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : `${error}`,
         query: args.query
       });
       throw new Error('Failed to scrape news articles');

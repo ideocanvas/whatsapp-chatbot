@@ -213,7 +213,7 @@ export class OpenAIService {
       } catch (error) {
         console.error('❌ Tool execution failed:', {
           toolName: toolCall.function.name,
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: error instanceof Error ? error.message : `${error}`
         });
 
         results.push({

@@ -83,7 +83,7 @@ async function testTranscriptionOnly() {
         console.log('');
 
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = error instanceof Error ? error.message : `${error}`;
         console.log('   ❌ Transcription failed:', errorMessage);
         console.log('   ℹ️  Check your audio service configuration and network connection\n');
       }

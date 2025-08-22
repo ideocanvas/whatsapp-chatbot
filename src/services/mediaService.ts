@@ -26,7 +26,7 @@ export class MediaService {
       this.openaiService = createOpenAIServiceFromEnv();
       console.log('OpenAI service initialized in MediaService');
     } catch (error) {
-      console.warn('OpenAI service not available for media analysis:', error instanceof Error ? error.message : 'Unknown error');
+      console.warn('OpenAI service not available for media analysis:', error instanceof Error ? error.message : `${error}`);
       this.openaiService = null;
     }
   }
@@ -86,7 +86,7 @@ export class MediaService {
 
     } catch (error) {
       console.error('Error downloading media:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to download media: ${errorMessage}`);
     }
   }
@@ -195,7 +195,7 @@ export class MediaService {
 
     } catch (error) {
       console.error('Error transcribing audio:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to transcribe audio: ${errorMessage}`);
     }
   }

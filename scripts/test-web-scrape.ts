@@ -42,7 +42,7 @@ async function testWebScrape() {
     console.log('🎉 All web scrape tests passed!');
 
   } catch (error) {
-    console.error('❌ Test failed:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Test failed:', error instanceof Error ? error.message : `${error}`);
   } finally {
     await webScrapeService.close();
   }

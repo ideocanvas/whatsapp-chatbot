@@ -72,7 +72,7 @@ async function testAudioIntegration() {
         console.log('');
 
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = error instanceof Error ? error.message : `${error}`;
         console.log('   ❌ Transcription failed:', errorMessage);
         console.log('   ℹ️  This is expected if the audio service is not properly configured\n');
       }
@@ -109,7 +109,7 @@ async function testAudioIntegration() {
     console.log(`   🔤 MIME Type: ${mockMediaInfo.mimeType}\n`);
 
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = error instanceof Error ? error.message : `${error}`;
     console.log('   ❌ Media service simulation failed:', errorMessage);
     console.log('   ℹ️  This might be expected if WhatsApp API credentials are not set\n');
   }

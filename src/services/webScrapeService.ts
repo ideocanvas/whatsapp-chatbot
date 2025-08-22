@@ -136,7 +136,7 @@ export class WebScrapeService {
             url,
             attempt: retryCount,
             maxRetries,
-            error: error instanceof Error ? error.message : 'Unknown error',
+            error: error instanceof Error ? error.message : `${error}`,
             retryDelay: `${this.config.retryDelay}ms`
           });
 
@@ -147,11 +147,11 @@ export class WebScrapeService {
 
         console.error('❌ Web scrape error:', {
           url,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : `${error}`,
           finalAttempt: retryCount + 1,
         });
 
-        throw new Error(`Failed to scrape URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        throw new Error(`Failed to scrape URL: ${error instanceof Error ? error.message : `${error}`}`);
       }
     }
 

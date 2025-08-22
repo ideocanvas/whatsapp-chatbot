@@ -61,7 +61,7 @@ export class GoogleSearchService {
       return [];
     } catch (error) {
       console.error('❌ Google search error:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : `${error}`,
         query: query
       });
       throw new Error('Failed to perform Google search');

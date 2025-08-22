@@ -103,10 +103,10 @@ export class NewsScrapeService {
       return newsArticles;
     } catch (error) {
       console.error('❌ News scrape error:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : `${error}`,
         query: searchQuery
       });
-      throw new Error(`Failed to scrape news: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to scrape news: ${error instanceof Error ? error.message : `${error}`}`);
     }
   }
 
@@ -131,10 +131,10 @@ export class NewsScrapeService {
       return newsArticles;
     } catch (error) {
       console.error('❌ Specific URL news scrape error:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : `${error}`,
         urls
       });
-      throw new Error(`Failed to scrape news from URLs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to scrape news from URLs: ${error instanceof Error ? error.message : `${error}`}`);
     }
   }
 

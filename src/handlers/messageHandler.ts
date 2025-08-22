@@ -30,7 +30,7 @@ export class MessageHandler {
       this.openaiService = createOpenAIServiceFromEnv();
       console.log('OpenAI service initialized successfully');
     } catch (error) {
-      console.warn('OpenAI service not available:', error instanceof Error ? error.message : 'Unknown error');
+      console.warn('OpenAI service not available:', error instanceof Error ? error.message : `${error}`);
       this.openaiService = null;
     }
 
@@ -46,7 +46,7 @@ export class MessageHandler {
         console.log('Tools initialized:', this.toolsAvailable);
       }
     } catch (error) {
-      console.warn('Google Search service not available:', error instanceof Error ? error.message : 'Unknown error');
+      console.warn('Google Search service not available:', error instanceof Error ? error.message : `${error}`);
       this.googleSearchService = null;
     }
   }

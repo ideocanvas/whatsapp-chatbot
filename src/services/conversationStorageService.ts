@@ -67,7 +67,7 @@ export class ConversationStorageService {
 
     } catch (error) {
       console.error(`Error storing message for ${senderNumber}:`, error);
-      throw new Error(`Failed to store message: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to store message: ${error instanceof Error ? error.message : `${error}`}`);
     }
   }
 

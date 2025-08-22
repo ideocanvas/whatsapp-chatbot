@@ -53,7 +53,7 @@ async function testWebScrapeTool() {
     console.log('🎉 Web scrape tool integration tests passed!');
 
   } catch (error) {
-    console.error('❌ Tool test failed:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Tool test failed:', error instanceof Error ? error.message : `${error}`);
   } finally {
     await cleanupTools();
   }
