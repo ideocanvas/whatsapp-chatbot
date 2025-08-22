@@ -38,8 +38,8 @@ export class OpenAIService {
   async generateTextResponse(message: string, context?: string): Promise<string> {
     try {
       const systemPrompt = context
-        ? `You are a helpful WhatsApp assistant. Context: ${context}`
-        : 'You are a helpful WhatsApp assistant. Provide clear, concise, and helpful responses.';
+        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Context: ${context}`
+        : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language.';
 
       const response = await this.openai.chat.completions.create({
         model: this.config.model!,
