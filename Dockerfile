@@ -95,9 +95,13 @@ COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist
 # Copy other necessary files
 COPY --chown=whatsapp-bot:nodejs .env.example ./
 COPY --chown=whatsapp-bot:nodejs data/ ./data/
+COPY --chown=whatsapp-bot:nodejs entrypoint.sh ./
 
 # Create data directory if it doesn't exist
 RUN mkdir -p data/conversations && chown whatsapp-bot:nodejs data/conversations
+
+# Make entrypoint script executable
+RUN chmod +x entrypoint.sh
 
 # Set environment variables for Playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/node_modules/playwright/.local-browsers
@@ -115,5 +119,5 @@ EXPOSE 3000
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start the application
-CMD ["node", "dist/index.js"]
+# Start the application using entrypoint script
+CMD ["./entrypoint.sh"]
