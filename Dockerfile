@@ -7,8 +7,35 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies including Playwright WebKit browser
-RUN npm ci --only=production && npx playwright install webkit
+# Install dependencies including all Playwright browsers
+RUN apt-get update && apt-get install -y \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libexpat1 \
+    libgbm1 \
+    libglib2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libxshmfence1 \
+    wget \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm ci --only=production && npx playwright install --with-deps
 
 # Copy source code
 COPY . .
@@ -19,10 +46,34 @@ RUN npm run build
 # Production stage
 FROM node:20-bookworm-slim AS production
 
-# Install dumb-init for proper signal handling
+# Install dumb-init and all required system dependencies for Playwright
 RUN apt-get update && apt-get install -y \
     dumb-init \
     ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libexpat1 \
+    libgbm1 \
+    libglib2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libxshmfence1 \
+    wget \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app user
@@ -35,8 +86,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies including Playwright WebKit browser
-RUN npm ci --only=production && npx playwright install webkit && npm cache clean --force
+# Install production dependencies including all Playwright browsers
+RUN npm ci --only=production && npx playwright install --with-deps && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist
@@ -57,7 +108,6 @@ RUN chown -R whatsapp-bot:nodejs /app/
 # Switch to non-root user
 USER whatsapp-bot
 
-ENV npx playwright install
 
 # Expose the port the app runs on
 EXPOSE 3000
