@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Conversation, Message, ConversationStorageConfig } from '../types/conversation';
+import { Conversation, Message, ConversationStorageConfig, UserProfile } from '../types/conversation';
 
 export class ConversationStorageService {
   private config: ConversationStorageConfig;
@@ -45,6 +45,12 @@ export class ConversationStorageService {
       } else {
         conversation = {
           senderNumber,
+          // Initialize a default user profile for new users
+          userProfile: {
+            name: undefined,
+            state: null,
+            knowledge: {}
+          },
           messages: [],
           lastUpdated: new Date().toISOString(),
           messageCount: 0
@@ -189,5 +195,28 @@ export class ConversationStorageService {
       console.error('Error getting storage stats:', error);
       return { totalConversations: 0, totalMessages: 0 };
     }
+  }
+  // Add a new method to update the user profile
+  async updateUserProfile(senderNumber: string, profileUpdate: Partial<UserProfile>): Promise<Conversation | null> {
+      try {
+          const conversation = await this.getConversation(senderNumber);
+          if (!conversation) {
+              console.error(`Cannot update profile for non-existent conversation: ${senderNumber}`);
+              return null;
+          }
+
+          // Merge the update with the existing profile
+          conversation.userProfile = { ...conversation.userProfile, ...profileUpdate };
+          conversation.lastUpdated = new Date().toISOString();
+
+          const filePath = this.getConversationFilePath(senderNumber);
+          fs.writeFileSync(filePath, JSON.stringify(conversation, null, 2));
+
+          return conversation;
+
+      } catch (error) {
+          console.error(`Error updating profile for ${senderNumber}:`, error);
+          return null;
+      }
   }
 }

@@ -13,6 +13,7 @@ export class MessageHandler {
   private googleSearchService: GoogleSearchService | null;
   private conversationStorage: ConversationStorageService;
   private toolsAvailable: boolean = false;
+  private chatbotName: string;
 
   constructor(whatsappService: WhatsAppService, mediaService: MediaService) {
     this.whatsappService = whatsappService;
@@ -24,6 +25,9 @@ export class MessageHandler {
       maxMessagesPerConversation: 50,
       cleanupIntervalHours: 24
     });
+
+    // Get chatbot name from environment variable
+    this.chatbotName = process.env.CHATBOT_NAME || 'Lucy';
 
     // Initialize OpenAI service if API key is available
     try {
@@ -58,31 +62,47 @@ export class MessageHandler {
     messageType: string,
     mediaData?: { id: string; mimeType: string; sha256: string; type: 'image' | 'audio' }
   ): Promise<void> {
-    // Mark message as read
     await this.whatsappService.markMessageAsRead(messageId);
 
-    let response: string;
-
-    if (messageType === 'text') {
-      // Process text message
-      response = await this.generateResponse(messageText, from);
-    } else if (messageType === 'image' && mediaData) {
-      // Process image message
-      response = await this.processMediaMessage(mediaData, 'image');
-    } else if (messageType === 'audio' && mediaData) {
-      // Process audio message
-      response = await this.processMediaMessage(mediaData, 'audio');
-    } else {
-      response = 'I received your message, but I can only process text, images, and audio files.';
+    // Get the full conversation object, including the user profile
+    let conversation = await this.conversationStorage.getConversation(from);
+    if (!conversation) {
+        // This is a first-time user. Create an initial conversation entry.
+        // The storeIncomingMessage will create the file with a default profile.
+        await this.storeIncomingMessage(from, messageText, messageId, messageType, mediaData);
+        conversation = await this.conversationStorage.getConversation(from);
     }
 
-    // Store the incoming message
+    const userProfile = conversation?.userProfile;
+    let response: string;
+
+    // --- State-based conversation logic ---
+    if (userProfile?.state === 'awaiting_name') {
+        // The user is responding with their name
+        const name = messageText.trim();
+        await this.conversationStorage.updateUserProfile(from, { name, state: null });
+        response = `Great to meet you, ${name}! How can I help you today?`;
+    } else if (!userProfile?.name) {
+        // It's the first interaction and we don't know the name
+        await this.conversationStorage.updateUserProfile(from, { state: 'awaiting_name' });
+        response = `Hello! I'm ${this.chatbotName}, your personal assistant. What should I call you?`;
+    } else {
+        // --- Normal message processing ---
+        if (messageType === 'text') {
+            response = await this.generateResponse(messageText, from);
+        } else if (messageType === 'image' && mediaData) {
+            response = await this.processMediaMessage(mediaData, 'image');
+        } else if (messageType === 'audio' && mediaData) {
+            response = await this.processMediaMessage(mediaData, 'audio');
+        } else {
+            response = 'I can only process text, images, and audio files.';
+        }
+    }
+
+    // Store the incoming message (if not already stored)
     await this.storeIncomingMessage(from, messageText, messageId, messageType, mediaData);
 
-    // Send response back to user
     await this.whatsappService.sendMessage(from, response);
-
-    // Store the outgoing response
     await this.storeOutgoingMessage(from, response, messageId);
   }
 
@@ -136,6 +156,15 @@ export class MessageHandler {
         // Include conversation history if sender number is provided
         if (senderNumber) {
           context = await this.conversationStorage.getFormattedMessageHistory(senderNumber, 5);
+
+          // Add user's name and learned knowledge to the context for the LLM
+          const conversation = await this.conversationStorage.getConversation(senderNumber);
+          const userName = conversation?.userProfile?.name || 'the user';
+          const userKnowledge = conversation?.userProfile?.knowledge || {};
+
+          context += `\n\n--- User Information ---
+Name: ${userName}
+Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
         }
 
         // Use tool calling if available and the message seems to require search
@@ -207,8 +236,17 @@ export class MessageHandler {
     }
 
     try {
+      let userName = 'the user';
+      let userKnowledge = {};
+
+      if (senderNumber) {
+        const conversation = await this.conversationStorage.getConversation(senderNumber);
+        userName = conversation?.userProfile?.name || 'the user';
+        userKnowledge = conversation?.userProfile?.knowledge || {};
+      }
+
       const systemPrompt = context
-        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
+        ? `You are ${this.chatbotName}, a helpful and friendly WhatsApp assistant for ${userName}. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
 
 CRITICAL: When users ask about news, current events, or latest updates, ALWAYS use the scrape_news tool FIRST to get real-time information from major news websites. This provides the most accurate and up-to-date news coverage.
 
@@ -229,9 +267,28 @@ Use google_search + web_scrape for:
 - Technical documentation and manuals
 - Blog posts and articles from specific sites
 - Information from non-news websites
+
+**Knowledge Acquisition Rule:**
+If the user provides a specific URL and asks you to find information from it, and the information seems useful for future reference, you MUST do two things:
+1. Answer the user's current question using the provided source.
+2. After answering, output a special XML tag to save this knowledge. The tag should look like this:
+<learn topic="[a short, descriptive topic key]" source="[the URL the user provided]">
+[A concise summary of the information found]
+</learn>
+
+Example:
+User says: "Can you check the latest announcements on https://my-favorite-blog.com/news?"
+Your response should be:
+"Sure! The latest announcement is about their new product launch. [more details...]
+<learn topic="latest_announcements_from_blog" source="https://my-favorite-blog.com/news">
+The blog's news page contains the company's latest product announcements.
+</learn>"
+
+Your final response to the user should NOT include the <learn> tag. It is for my internal processing.
+Always check the 'Learned Knowledge' from the context first before searching the web.
 
 Context: ${context}`
-        : `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
+        : `You are ${this.chatbotName}, a helpful and friendly WhatsApp assistant for ${userName}. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
 
 CRITICAL: When users ask about news, current events, or latest updates, ALWAYS use the scrape_news tool FIRST to get real-time information from major news websites. This provides the most accurate and up-to-date news coverage.
 
@@ -252,6 +309,25 @@ Use google_search + web_scrape for:
 - Technical documentation and manuals
 - Blog posts and articles from specific sites
 - Information from non-news websites
+
+**Knowledge Acquisition Rule:**
+If the user provides a specific URL and asks you to find information from it, and the information seems useful for future reference, you MUST do two things:
+1. Answer the user's current question using the provided source.
+2. After answering, output a special XML tag to save this knowledge. The tag should look like this:
+<learn topic="[a short, descriptive topic key]" source="[the URL the user provided]">
+[A concise summary of the information found]
+</learn>
+
+Example:
+User says: "Can you check the latest announcements on https://my-favorite-blog.com/news?"
+Your response should be:
+"Sure! The latest announcement is about their new product launch. [more details...]
+<learn topic="latest_announcements_from_blog" source="https://my-favorite-blog.com/news">
+The blog's news page contains the company's latest product announcements.
+</learn>"
+
+Your final response to the user should NOT include the <learn> tag. It is for my internal processing.
+Always check the 'Learned Knowledge' from the context first before searching the web.
 
 Be direct and avoid formal language.`;
 
@@ -267,9 +343,36 @@ Be direct and avoid formal language.`;
       ];
 
       const tools = getToolSchemas();
-      const response = await this.openaiService.generateResponseWithTools(messages, tools);
+      const rawAiResponse = await this.openaiService.generateResponseWithTools(messages, tools);
 
-      return response;
+      // --- New logic to process and save learned knowledge ---
+      const learnTagRegex = /<learn topic="([^"]+)" source="([^"]+)">([\s\S]*?)<\/learn>/;
+      const match = rawAiResponse.match(learnTagRegex);
+
+      if (match && senderNumber) {
+          const [, topic, source, value] = match;
+          const knowledgeUpdate = {
+              [topic]: {
+                  value: value.trim(),
+                  source: source.trim(),
+                  lastUpdated: new Date().toISOString()
+              }
+          };
+
+          // Get the current profile and merge knowledge
+          const conversation = await this.conversationStorage.getConversation(senderNumber);
+          const existingKnowledge = conversation?.userProfile?.knowledge || {};
+          await this.conversationStorage.updateUserProfile(senderNumber, {
+              knowledge: { ...existingKnowledge, ...knowledgeUpdate }
+          });
+
+          console.log(`🧠 Learned new knowledge for user ${senderNumber}:`, knowledgeUpdate);
+      }
+
+      // Clean the <learn> tag from the response before sending it to the user
+      const finalResponse = rawAiResponse.replace(learnTagRegex, '').trim();
+
+      return finalResponse;
     } catch (error) {
       console.error('Error generating response with tools:', error);
       // Fall back to regular response generation

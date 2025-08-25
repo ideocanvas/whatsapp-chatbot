@@ -1,4 +1,7 @@
 import { webkit, Browser, Page } from 'playwright';
+import * as fs from 'fs';
+import * as path from 'path';
+import { OpenAIService, createOpenAIServiceFromEnv } from './openaiService';
 
 export interface WebScrapeResult {
   title: string;
@@ -19,6 +22,7 @@ export interface WebScrapeConfig {
 export class WebScrapeService {
   private config: WebScrapeConfig;
   private browser: Browser | null = null;
+  private openaiService: OpenAIService | null = null;
 
   constructor(config: WebScrapeConfig = {}) {
     this.config = {
@@ -29,6 +33,14 @@ export class WebScrapeService {
       retryDelay: config.retryDelay || 2000,
       navigationTimeout: config.navigationTimeout || 15000,
     };
+
+    // Initialize OpenAI service for visual analysis fallback
+    try {
+      this.openaiService = createOpenAIServiceFromEnv();
+      console.log('OpenAI service initialized for visual analysis fallback');
+    } catch (error) {
+      console.warn('OpenAI service not available for visual analysis fallback:', error instanceof Error ? error.message : `${error}`);
+    }
   }
 
   /**
@@ -85,13 +97,18 @@ export class WebScrapeService {
 
         // Extract content based on selector or entire page
         let extractedContent: string;
+        let usedVisualAnalysis = false;
+
         if (selector) {
           // Extract specific element content
           const element = await page.$(selector);
           if (element) {
             extractedContent = await element.textContent() || '';
           } else {
-            throw new Error(`Selector "${selector}" not found on page`);
+            console.warn(`⚠️ Selector "${selector}" not found on page, attempting visual analysis fallback`);
+            // Fallback to visual analysis
+            extractedContent = await this.fallbackToVisualAnalysis(page, url, selector);
+            usedVisualAnalysis = true;
           }
         } else {
           // Extract main content (try to get article or main content)
@@ -120,6 +137,7 @@ export class WebScrapeService {
           title: pageTitle.substring(0, 50) + (pageTitle.length > 50 ? '...' : ''),
           contentLength: extractedContent.length,
           attempt: retryCount + 1,
+          usedVisualAnalysis,
         });
 
         await page.close();
@@ -232,6 +250,109 @@ export class WebScrapeService {
     ];
 
     return retryableErrors.some(keyword => errorMessage.includes(keyword));
+  }
+
+  /**
+   * Fallback to visual analysis when CSS selectors fail
+   */
+  private async fallbackToVisualAnalysis(page: Page, url: string, selector?: string): Promise<string> {
+    if (!this.openaiService?.isConfigured()) {
+      throw new Error('Visual analysis fallback not available - OpenAI service not configured');
+    }
+
+    try {
+      // Capture screenshot of the page
+      const screenshotPath = await this.captureScreenshot(page, url);
+
+      // Analyze the screenshot using OpenAI vision
+      const analysis = await this.openaiService.analyzeImage(
+        screenshotPath,
+        `Analyze this webpage screenshot and extract the main content. ${selector ? `Focus on finding content that matches the CSS selector pattern: ${selector}` : 'Extract all readable text and information from the page.'}`
+      );
+
+      // Clean up the screenshot file
+      this.cleanupScreenshot(screenshotPath);
+
+      return analysis;
+
+    } catch (error) {
+      console.error('❌ Visual analysis fallback failed:', {
+        url,
+        error: error instanceof Error ? error.message : `${error}`,
+      });
+
+      // Clean up any temporary files
+      this.cleanupScreenshot(this.getScreenshotPath(url));
+
+      throw new Error(`Visual analysis fallback failed: ${error instanceof Error ? error.message : `${error}`}`);
+    }
+  }
+
+  /**
+   * Capture screenshot of the current page
+   */
+  private async captureScreenshot(page: Page, url: string): Promise<string> {
+    const screenshotPath = this.getScreenshotPath(url);
+
+    // Ensure screenshot directory exists
+    const screenshotDir = path.dirname(screenshotPath);
+    if (!fs.existsSync(screenshotDir)) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+    }
+
+    // Capture full page screenshot
+    await page.screenshot({
+      path: screenshotPath,
+      fullPage: true,
+      type: 'png',
+      quality: 80,
+    });
+
+    console.log('📸 Screenshot captured for visual analysis:', {
+      url,
+      screenshotPath,
+    });
+
+    return screenshotPath;
+  }
+
+  /**
+   * Generate screenshot file path
+   */
+  private getScreenshotPath(url: string): string {
+    const urlHash = this.hashString(url);
+    const timestamp = Date.now();
+    return path.join('data', 'screenshots', `screenshot_${urlHash}_${timestamp}.png`);
+  }
+
+  /**
+   * Clean up screenshot file
+   */
+  private cleanupScreenshot(screenshotPath: string): void {
+    try {
+      if (fs.existsSync(screenshotPath)) {
+        fs.unlinkSync(screenshotPath);
+        console.log('🧹 Cleaned up screenshot:', screenshotPath);
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to clean up screenshot:', {
+        screenshotPath,
+        error: error instanceof Error ? error.message : `${error}`,
+      });
+    }
+  }
+
+  /**
+   * Simple string hashing function
+   */
+  private hashString(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(16);
   }
 
 }

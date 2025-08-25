@@ -18,8 +18,9 @@ export interface OpenAIConfig {
 export class OpenAIService {
   private openai: OpenAI;
   private config: OpenAIConfig;
+  private chatbotName: string;
 
-  constructor(config: OpenAIConfig) {
+  constructor(config: OpenAIConfig, chatbotName?: string) {
     this.config = {
       model: config.model || process.env.OPENAI_MODEL || 'gpt-4o',
       visionModel: config.visionModel || process.env.OPENAI_VISION_MODEL || 'gpt-4o',
@@ -29,6 +30,7 @@ export class OpenAIService {
       baseURL: config.baseURL || process.env.OPENAI_BASE_URL,
       enableToolCalling: config.enableToolCalling ?? (process.env.OPENAI_ENABLE_TOOL_CALLING === 'true')
     };
+    this.chatbotName = chatbotName || process.env.CHATBOT_NAME || 'Lucy';
 
     this.openai = new OpenAI({
       apiKey: this.config.apiKey,
@@ -47,8 +49,8 @@ export class OpenAIService {
   ): Promise<string> {
     try {
       const systemPrompt = context
-        ? `You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message. Context: ${context}`
-        : 'You are a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.';
+        ? `You are ${this.chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message. Context: ${context}`
+        : `You are ${this.chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.`;
 
       const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         {
@@ -343,5 +345,5 @@ export function createOpenAIServiceFromEnv(): OpenAIService {
     temperature: process.env.OPENAI_TEMPERATURE ? parseFloat(process.env.OPENAI_TEMPERATURE) : undefined,
     maxTokens: process.env.OPENAI_MAX_TOKENS ? parseInt(process.env.OPENAI_MAX_TOKENS) : undefined,
     enableToolCalling: process.env.OPENAI_ENABLE_TOOL_CALLING === 'true',
-  });
+  }, process.env.CHATBOT_NAME);
 }
