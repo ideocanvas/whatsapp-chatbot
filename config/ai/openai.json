@@ -1,0 +1,22 @@
+{
+  "name": "OpenAI Configuration",
+  "description": "Configuration for OpenAI API models (GPT-4, GPT-3.5)",
+  "config": {
+    "apiKey": "your_openai_api_key_here",
+    "baseURL": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "visionModel": "gpt-4o",
+    "temperature": 0.7,
+    "maxTokens": 1000,
+    "enableToolCalling": true,
+    "embeddingModel": "text-embedding-ada-002",
+    "prompts": {
+      "textResponse": "You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.",
+      "imageAnalysis": "Analyze this image comprehensively with context awareness. Describe what you see in detail, including objects, people, text, colors, and environment. Include any text content exactly as it appears.",
+      "toolCalling": "You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.",
+      "errorResponse": "I apologize, but I could not generate a response. Please try again.",
+      "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings.",
+      "audioTranscriptionResponse": "Based on this audio transcription: \"{transcription}\"\n\nGenerate a helpful, engaging, and conversational response. Provide thoughtful commentary, answer questions, or continue the conversation naturally based on the audio content. Keep it conversational and focused on being helpful."
+    }
+  }
+}

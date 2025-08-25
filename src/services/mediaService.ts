@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import FormData from 'form-data';
 import { WhatsAppAPIConfig } from '../types/whatsapp';
-import { OpenAIService, createOpenAIServiceFromEnv } from './openaiService';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
 
 export interface MediaInfo {
   filename: string;
@@ -22,13 +22,8 @@ export class MediaService {
     this.config = config;
 
     // Initialize OpenAI service if API key is available
-    try {
-      this.openaiService = createOpenAIServiceFromEnv();
-      console.log('OpenAI service initialized in MediaService');
-    } catch (error) {
-      console.warn('OpenAI service not available for media analysis:', error instanceof Error ? error.message : `${error}`);
-      this.openaiService = null;
-    }
+    this.openaiService = null;
+    this.initializeOpenAIService();
   }
 
   async downloadAndSaveMedia(
@@ -218,10 +213,9 @@ export class MediaService {
     }
 
     try {
-      const analysis = await this.openaiService.analyzeImage(
-        imagePath,
-        'Analyze this image in detail. Describe what you see, including objects, people, text, colors, and any other relevant information. If there is any text in the image, please include all text content exactly as it appears.'
-      );
+      // Use specialized media image analysis prompt from config if available
+      const mediaImagePrompt = this.openaiService.getConfig()?.prompts?.mediaImageAnalysis;
+      const analysis = await this.openaiService.analyzeImage(imagePath, mediaImagePrompt);
 
       // Generate enhanced AI response based on the image analysis
       const aiResponse = await this.generateEnhancedAIResponseFromAnalysis(analysis);
@@ -242,7 +236,13 @@ export class MediaService {
     }
 
     try {
-      const prompt = `Based on this detailed image analysis: "${analysis}"
+      // Use enhanced image response prompt from config if available
+      const enhancedPrompt = this.openaiService.getConfig()?.prompts?.enhancedImageResponse;
+
+      // If no custom prompt is configured, use the default one
+      const prompt = enhancedPrompt
+        ? enhancedPrompt.replace('{analysis}', analysis)
+        : `Based on this detailed image analysis: "${analysis}"
 
 Generate a helpful, engaging, and conversational response with specific contextual awareness:
 
@@ -273,7 +273,13 @@ Keep the response natural, conversational, and focused on being genuinely helpfu
     }
 
     try {
-      const prompt = `Based on this audio transcription: "${transcription}"
+      // Use audio transcription response prompt from config if available
+      const transcriptionPrompt = this.openaiService.getConfig()?.prompts?.audioTranscriptionResponse;
+
+      // If no custom prompt is configured, use the default one
+      const prompt = transcriptionPrompt
+        ? transcriptionPrompt.replace('{transcription}', transcription)
+        : `Based on this audio transcription: "${transcription}"
 
 Generate a helpful, engaging, and conversational response. Provide thoughtful commentary, answer questions, or continue the conversation naturally based on the audio content. Keep it conversational and focused on being helpful.`;
 
@@ -301,5 +307,26 @@ Generate a helpful, engaging, and conversational response. Provide thoughtful co
     }
 
     return response;
+  }
+  /**
+   * Initialize OpenAI service asynchronously
+   */
+  private async initializeOpenAIService(): Promise<void> {
+    try {
+      // Try to load from config file first
+      this.openaiService = await createOpenAIServiceFromConfig();
+      console.log('OpenAI service initialized successfully from config file in MediaService');
+    } catch (configError) {
+      console.warn('Failed to initialize from config file in MediaService, trying legacy environment variables:', configError instanceof Error ? configError.message : `${configError}`);
+
+      // Fall back to environment variables for backward compatibility
+      try {
+        this.openaiService = createOpenAIServiceFromEnv();
+        console.log('OpenAI service initialized successfully from environment variables (legacy mode) in MediaService');
+      } catch (envError) {
+        console.warn('OpenAI service not available for media analysis:', envError instanceof Error ? envError.message : `${envError}`);
+        this.openaiService = null;
+      }
+    }
   }
 }

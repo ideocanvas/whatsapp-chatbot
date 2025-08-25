@@ -63,13 +63,11 @@ Edit the `.env` file with your WhatsApp Business API credentials:
 WHATSAPP_ACCESS_TOKEN=your_access_token_here
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
 
-# OpenAI-Compatible API Configuration (Optional - for AI features)
-OPENAI_API_KEY=your_openai_compatible_api_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1  # Use your provider's URL
-OPENAI_MODEL=gpt-4o
-OPENAI_VISION_MODEL=gpt-4o
-OPENAI_TEMPERATURE=0.7
-OPENAI_MAX_TOKENS=1000
+# AI Configuration File Settings
+AI_CONFIG_PATH=config/ai
+AI_CONFIG_FILE=default.json
+
+# WhatsApp Business API Configuration
 WHATSAPP_VERIFY_TOKEN=your_verify_token_here
 WHATSAPP_APP_SECRET=your_app_secret_here
 
@@ -97,25 +95,56 @@ The bot now includes advanced AI capabilities powered by OpenAI:
 - Automatically processes images sent to the bot via WhatsApp
 
 ### Configuration
-To enable AI features, you can use any OpenAI-compatible API provider:
+The bot now uses config files for AI model configuration instead of environment variables. This allows for multiple AI model configurations and easier switching between different providers.
+
+**Configuration File Structure:**
+Create JSON files in the `config/ai/` directory with the following structure:
+
+```json
+{
+  "name": "Configuration Name",
+  "description": "Description of this configuration",
+  "config": {
+    "apiKey": "your_api_key_here",
+    "baseURL": "https://api.provider.com/v1",
+    "model": "model-name",
+    "visionModel": "vision-model-name",
+    "temperature": 0.7,
+    "maxTokens": 1000,
+    "enableToolCalling": true,
+    "embeddingModel": "embedding-model",
+    "prompts": {
+      "textResponse": "Custom prompt template...",
+      "imageAnalysis": "Custom image analysis prompt...",
+      "toolCalling": "Custom tool calling prompt...",
+      "errorResponse": "Custom error response...",
+      "searchLimit": "Custom search limit response..."
+    }
+  }
+}
+```
+
+**Setup Steps:**
+1. Create config files in `config/ai/` directory (see examples provided)
+2. Update your `.env` file to specify which config file to use:
+   ```env
+   AI_CONFIG_PATH=config/ai
+   AI_CONFIG_FILE=default.json
+   ```
+3. The bot will automatically load the specified configuration
 
 **Supported Providers:**
 - [OpenAI](https://platform.openai.com/api-keys) - Official OpenAI API
 - [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) - Microsoft Azure OpenAI
 - [Anthropic Claude](https://console.anthropic.com/) - Anthropic's Claude models
 - [Google Gemini](https://aistudio.google.com/) - Google's Gemini models
+- Local LLM servers (LM Studio, Ollama, etc.)
 - Any other OpenAI-compatible API endpoint
 
-**Setup Steps:**
-1. Get an API key from your chosen provider
-2. Update your `.env` file with:
-   ```env
-   OPENAI_API_KEY=your_actual_api_key_here
-   OPENAI_BASE_URL=https://api.openai.com/v1  # Replace with your provider's URL
-   OPENAI_MODEL=gpt-4o  # Replace with your model name
-   OPENAI_VISION_MODEL=gpt-4o  # Replace with your vision model
-   ```
-3. Optional: Configure temperature and max tokens as needed
+**Example Config Files:**
+- `default.json` - Default configuration based on current setup
+- `openai.json` - Configuration for OpenAI API models
+- `local-llm.json` - Configuration for locally hosted models
 
 ### Testing OpenAI Integration
 
@@ -130,6 +159,17 @@ npm run test:openai
 ```
 
 The bot will automatically fall back to basic responses if OpenAI is not configured or encounters errors.
+
+**Legacy Environment Variable Support:**
+The bot maintains backward compatibility with environment variables. If no config file is found or specified, it will fall back to reading from:
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `OPENAI_MODEL`
+- `OPENAI_VISION_MODEL`
+- `OPENAI_TEMPERATURE`
+- `OPENAI_MAX_TOKENS`
+- `OPENAI_ENABLE_TOOL_CALLING`
+- `OPENAI_EMBEDDING_MODEL`
 
 ### Response Cleaning
 The bot automatically removes internal thinking tags (`<think>...</think>`) from OpenAI responses before sending them to users, ensuring clean and professional output.

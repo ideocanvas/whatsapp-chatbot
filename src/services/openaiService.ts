@@ -4,6 +4,8 @@ import * as path from 'path';
 import { cleanLLMResponse } from '../utils/responseCleaner';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { executeTool } from '../tools';
+import { AIConfig } from '../types/aiConfig';
+import { ConfigLoader } from '../utils/configLoader';
 
 export interface OpenAIConfig {
   apiKey: string;
@@ -13,24 +15,28 @@ export interface OpenAIConfig {
   temperature?: number;
   maxTokens?: number;
   enableToolCalling?: boolean;
+  embeddingModel?: string;
 }
 
 export class OpenAIService {
   private openai: OpenAI;
   private config: OpenAIConfig;
   private chatbotName: string;
+  private prompts: AIConfig['prompts'];
 
-  constructor(config: OpenAIConfig, chatbotName?: string) {
+  constructor(config: AIConfig, chatbotName?: string) {
     this.config = {
-      model: config.model || process.env.OPENAI_MODEL || 'gpt-4o',
-      visionModel: config.visionModel || process.env.OPENAI_VISION_MODEL || 'gpt-4o',
-      temperature: config.temperature || parseFloat(process.env.OPENAI_TEMPERATURE || '0.7'),
-      maxTokens: config.maxTokens || parseInt(process.env.OPENAI_MAX_TOKENS || '1000'),
+      model: config.model || 'gpt-4o',
+      visionModel: config.visionModel || 'gpt-4o',
+      temperature: config.temperature || 0.7,
+      maxTokens: config.maxTokens || 1000,
       apiKey: config.apiKey,
-      baseURL: config.baseURL || process.env.OPENAI_BASE_URL,
-      enableToolCalling: config.enableToolCalling ?? (process.env.OPENAI_ENABLE_TOOL_CALLING === 'true')
+      baseURL: config.baseURL,
+      enableToolCalling: config.enableToolCalling ?? true,
+      embeddingModel: config.embeddingModel || 'text-embedding-ada-002'
     };
-    this.chatbotName = chatbotName || process.env.CHATBOT_NAME || 'Lucy';
+    this.chatbotName = chatbotName || 'Lucy';
+    this.prompts = config.prompts || {};
 
     this.openai = new OpenAI({
       apiKey: this.config.apiKey,
@@ -48,9 +54,14 @@ export class OpenAIService {
     toolChoice?: 'auto' | 'none' | 'required'
   ): Promise<string> {
     try {
-      const systemPrompt = context
-        ? `You are ${this.chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message. Context: ${context}`
-        : `You are ${this.chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. Be direct and avoid formal language. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.`;
+      // Use custom prompt from config if available, otherwise use default
+      const textPrompt = this.prompts?.textResponse || `You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.`;
+
+      let systemPrompt = textPrompt.replace('{chatbotName}', this.chatbotName);
+
+      if (context) {
+        systemPrompt += ` Context: ${context}`;
+      }
 
       const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         {
@@ -168,17 +179,25 @@ export class OpenAIService {
 
     // Get the last user message to provide context
     const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
-    const userQuery = lastUserMessage?.content || 'your query';
+    const userQueryContent = lastUserMessage?.content;
+    const userQuery = typeof userQueryContent === 'string' ? userQueryContent : 'your query';
 
-    // Use LLM to generate a contextual final response
+    // Use custom search limit prompt from config if available, otherwise use default
+    const searchLimitPrompt = this.prompts?.searchLimit || `I reached the maximum search limit while researching "{query}". Here's what I found so far:\n\n{results}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings, explains I hit the search limit, and suggests next steps. Keep it conversational and short.`;
+
     const finalResponsePrompt = partialResults.length > 0
-      ? `I reached the maximum search limit while researching "${userQuery}". Here's what I found so far:\n\n${partialResults.map((result: any) => typeof result === 'string' ? result : JSON.stringify(result)).join('\n\n')}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings, explains I hit the search limit, and suggests next steps. Keep it conversational and short.`
+      ? searchLimitPrompt
+          .replace('{query}', userQuery)
+          .replace('{results}', partialResults.map((result: any) => typeof result === 'string' ? result : JSON.stringify(result)).join('\n\n'))
       : `I reached the maximum search attempts while trying to find information for "${userQuery}" but couldn't find any relevant results. Please create a helpful WhatsApp-style response explaining this situation and suggesting the user try a more specific query or different wording. Keep it conversational and short.`;
+
+    // Use custom tool calling prompt from config if available, otherwise use default
+    const toolCallingPrompt = this.prompts?.toolCalling || 'You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.';
 
     // Generate final response using LLM
     const finalResponse = await this.generateTextResponse(
       finalResponsePrompt,
-      'You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.',
+      toolCallingPrompt,
       undefined,
       'none' // Don't use tools for this final response
     );
@@ -241,7 +260,8 @@ export class OpenAIService {
       const extension = path.extname(imagePath).toLowerCase().substring(1);
       const mimeType = this.getMimeTypeFromExtension(extension);
 
-      const visionPrompt = prompt || `Analyze this image comprehensively with context awareness. Describe what you see in detail, including:
+      // Use custom image prompt from config if available, otherwise use default
+      const visionPrompt = prompt || this.prompts?.imageAnalysis || `Analyze this image comprehensively with context awareness. Describe what you see in detail, including:
 
 - Objects, people, animals, text, colors, and environment
 - If it's a food menu or restaurant scene: focus on menu items, prices, cuisine type, and popular dishes
@@ -309,7 +329,7 @@ Include any text content exactly as it appears. Provide specific details that wo
   async createEmbedding(text: string): Promise<number[]> {
     try {
       const response = await this.openai.embeddings.create({
-        model: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-ada-002',
+        model: this.config.embeddingModel!,
         input: text,
         encoding_format: 'float',
       });
@@ -327,14 +347,42 @@ Include any text content exactly as it appears. Provide specific details that wo
   isConfigured(): boolean {
     return !!this.config.apiKey;
   }
+
+  /**
+   * Get the current configuration
+   */
+  getConfig(): OpenAIConfig & { prompts?: AIConfig['prompts'] } {
+    return {
+      ...this.config,
+      prompts: this.prompts
+    };
+  }
 }
 
-// Helper function to create OpenAIService instance from environment variables
+// Helper function to create OpenAIService instance from config file
+export async function createOpenAIServiceFromConfig(): Promise<OpenAIService> {
+  const configLoader = new ConfigLoader();
+
+  try {
+    const config = await configLoader.loadConfig();
+
+    if (!config.apiKey) {
+      throw new Error('API key is required in the config file');
+    }
+
+    return new OpenAIService(config, process.env.CHATBOT_NAME);
+  } catch (error) {
+    console.error('Failed to create OpenAI service from config:', error);
+    throw new Error(`Failed to initialize OpenAI service: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+// Helper function to create OpenAIService instance from environment variables (legacy support)
 export function createOpenAIServiceFromEnv(): OpenAIService {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is required');
+    throw new Error('OPENAI_API_KEY environment variable is required for legacy mode');
   }
 
   return new OpenAIService({
@@ -345,5 +393,6 @@ export function createOpenAIServiceFromEnv(): OpenAIService {
     temperature: process.env.OPENAI_TEMPERATURE ? parseFloat(process.env.OPENAI_TEMPERATURE) : undefined,
     maxTokens: process.env.OPENAI_MAX_TOKENS ? parseInt(process.env.OPENAI_MAX_TOKENS) : undefined,
     enableToolCalling: process.env.OPENAI_ENABLE_TOOL_CALLING === 'true',
+    embeddingModel: process.env.OPENAI_EMBEDDING_MODEL,
   }, process.env.CHATBOT_NAME);
 }

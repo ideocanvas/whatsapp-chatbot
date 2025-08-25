@@ -1,7 +1,7 @@
 import { webkit, Browser, Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import { OpenAIService, createOpenAIServiceFromEnv } from './openaiService';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
 
 export interface WebScrapeResult {
   title: string;
@@ -35,12 +35,7 @@ export class WebScrapeService {
     };
 
     // Initialize OpenAI service for visual analysis fallback
-    try {
-      this.openaiService = createOpenAIServiceFromEnv();
-      console.log('OpenAI service initialized for visual analysis fallback');
-    } catch (error) {
-      console.warn('OpenAI service not available for visual analysis fallback:', error instanceof Error ? error.message : `${error}`);
-    }
+    this.initializeOpenAIService();
   }
 
   /**
@@ -264,11 +259,9 @@ export class WebScrapeService {
       // Capture screenshot of the page
       const screenshotPath = await this.captureScreenshot(page, url);
 
-      // Analyze the screenshot using OpenAI vision
-      const analysis = await this.openaiService.analyzeImage(
-        screenshotPath,
-        `Analyze this webpage screenshot and extract the main content. ${selector ? `Focus on finding content that matches the CSS selector pattern: ${selector}` : 'Extract all readable text and information from the page.'}`
-      );
+      // Use specialized web scrape image analysis prompt from config if available
+      const webScrapeImagePrompt = this.openaiService.getConfig()?.prompts?.webScrapeImageAnalysis;
+      const analysis = await this.openaiService.analyzeImage(screenshotPath, webScrapeImagePrompt);
 
       // Clean up the screenshot file
       this.cleanupScreenshot(screenshotPath);
@@ -355,6 +348,27 @@ export class WebScrapeService {
     return Math.abs(hash).toString(16);
   }
 
+  /**
+   * Initialize OpenAI service asynchronously
+   */
+  private async initializeOpenAIService(): Promise<void> {
+    try {
+      // Try to load from config file first
+      this.openaiService = await createOpenAIServiceFromConfig();
+      console.log('OpenAI service initialized successfully from config file in WebScrapeService');
+    } catch (configError) {
+      console.warn('Failed to initialize from config file in WebScrapeService, trying legacy environment variables:', configError instanceof Error ? configError.message : `${configError}`);
+
+      // Fall back to environment variables for backward compatibility
+      try {
+        this.openaiService = createOpenAIServiceFromEnv();
+        console.log('OpenAI service initialized successfully from environment variables (legacy mode) in WebScrapeService');
+      } catch (envError) {
+        console.warn('OpenAI service not available for visual analysis fallback:', envError instanceof Error ? envError.message : `${envError}`);
+        this.openaiService = null;
+      }
+    }
+  }
 }
 
 // Helper function to create WebScrapeService instance with environment configuration

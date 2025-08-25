@@ -1,6 +1,6 @@
 import { WhatsAppService } from '../services/whatsappService';
 import { MediaService, MediaInfo } from '../services/mediaService';
-import { OpenAIService, createOpenAIServiceFromEnv } from '../services/openaiService';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from '../services/openaiService';
 import { ConversationStorageService } from '../services/conversationStorageService';
 import { Message } from '../types/conversation';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../services/googleSearchService';
@@ -18,6 +18,8 @@ export class MessageHandler {
   constructor(whatsappService: WhatsAppService, mediaService: MediaService) {
     this.whatsappService = whatsappService;
     this.mediaService = mediaService;
+    this.openaiService = null;
+    this.googleSearchService = null;
 
     // Initialize conversation storage
     this.conversationStorage = new ConversationStorageService({
@@ -29,13 +31,30 @@ export class MessageHandler {
     // Get chatbot name from environment variable
     this.chatbotName = process.env.CHATBOT_NAME || 'Lucy';
 
-    // Initialize OpenAI service if API key is available
+    // Initialize services (OpenAI will be initialized asynchronously)
+    this.initializeServices();
+  }
+
+  /**
+   * Initialize services asynchronously
+   */
+  private async initializeServices(): Promise<void> {
+    // Initialize OpenAI service from config file
     try {
-      this.openaiService = createOpenAIServiceFromEnv();
-      console.log('OpenAI service initialized successfully');
-    } catch (error) {
-      console.warn('OpenAI service not available:', error instanceof Error ? error.message : `${error}`);
-      this.openaiService = null;
+      // Try to load from config file first
+      this.openaiService = await createOpenAIServiceFromConfig();
+      console.log('OpenAI service initialized successfully from config file');
+    } catch (configError) {
+      console.warn('Failed to initialize from config file, trying legacy environment variables:', configError instanceof Error ? configError.message : `${configError}`);
+
+      // Fall back to environment variables for backward compatibility
+      try {
+        this.openaiService = createOpenAIServiceFromEnv();
+        console.log('OpenAI service initialized successfully from environment variables (legacy mode)');
+      } catch (envError) {
+        console.warn('OpenAI service not available:', envError instanceof Error ? envError.message : `${envError}`);
+        this.openaiService = null;
+      }
     }
 
     // Initialize Google Search service if API keys are available

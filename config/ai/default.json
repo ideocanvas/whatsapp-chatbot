@@ -1,0 +1,25 @@
+{
+  "name": "Default Configuration",
+  "description": "Default AI model configuration based on current environment",
+  "config": {
+    "apiKey": "sk-f99acf5d37b9648491c1f89491f196aa0074d86e5290c0aa",
+    "baseURL": "http://192.168.8.166:1234/v1",
+    "model": "gpt-oss-20b-mlx",
+    "visionModel": "qwen2.5-vl-7b-instruct@q8_0",
+    "temperature": 0.7,
+    "maxTokens": 1000,
+    "enableToolCalling": true,
+    "embeddingModel": "text-embedding-nomic-embed-text-v1.5",
+    "prompts": {
+      "textResponse": "You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.",
+      "imageAnalysis": "Analyze this image comprehensively with context awareness. Describe what you see in detail, including:\n\n- Objects, people, animals, text, colors, and environment\n- If it's a food menu or restaurant scene: focus on menu items, prices, cuisine type, and popular dishes\n- If it's a building, landmark, or location: provide architectural details, possible location clues, and historical context if recognizable\n- If it's a product or object: identify the item, brand, purpose, and key features\n- If it's a hand holding something: identify the object being held and its potential use\n- If it's a document or text-heavy: transcribe all text accurately and note the document type\n- If it's nature or scenery: describe the landscape, weather conditions, and geographical features\n- If it's people or events: note activities, emotions, and social context\n\nInclude any text content exactly as it appears. Provide specific details that would help understand the context and purpose of the image.",
+      "toolCalling": "You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.",
+      "errorResponse": "I apologize, but I could not generate a response. Please try again.",
+      "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings, explains I hit the search limit, and suggests next steps. Keep it conversational and short.",
+      "mediaImageAnalysis": "Analyze this image in detail. Describe what you see, including objects, people, text, colors, and any other relevant information. If there is any text in the image, please include all text content exactly as it appears.",
+      "webScrapeImageAnalysis": "Analyze this webpage screenshot and extract the main content. Focus on finding readable text and information from the page.",
+      "enhancedImageResponse": "Based on this detailed image analysis: \"{analysis}\"\n\nGenerate a helpful, engaging, and conversational response with specific contextual awareness:\n\n- If it's a food menu: suggest popular dishes, recommend what to order based on cuisine type, mention any specials or pricing\n- If it's a building or landmark: suggest where it might be located, provide architectural details, historical context, and nearby attractions\n- If it's a hand holding an object: identify what the object is, suggest its purpose or how to use it, provide related recommendations\n- If it's a product: provide recommendations, usage tips, where to buy it, or similar alternatives\n- If it's a document or text-heavy: summarize key information clearly, highlight important details, suggest next steps\n- If it's nature or scenery: provide interesting facts, travel suggestions, best times to visit, or photography tips\n- If it's people or events: provide appropriate commentary, suggest related activities or social context\n- If it's artwork or creative content: discuss the style, possible meaning, or artistic techniques\n\nKeep the response natural, conversational, and focused on being genuinely helpful with practical suggestions.",
+      "audioTranscriptionResponse": "Based on this audio transcription: \"{transcription}\"\n\nGenerate a helpful, engaging, and conversational response. Provide thoughtful commentary, answer questions, or continue the conversation naturally based on the audio content. Keep it conversational and focused on being helpful."
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Local LLM Configuration",
+  "description": "Configuration for locally hosted LLM models (LM Studio, Ollama, etc.)",
+  "config": {
+    "apiKey": "your_local_api_key_or_none",
+    "baseURL": "http://localhost:1234/v1",
+    "model": "local-model",
+    "visionModel": "local-vision-model",
+    "temperature": 0.8,
+    "maxTokens": 512,
+    "enableToolCalling": false,
+    "embeddingModel": "local-embedding-model",
+    "prompts": {
+      "textResponse": "You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.",
+      "imageAnalysis": "Analyze this image and describe what you see in detail. Focus on the main objects, people, text, and overall scene.",
+      "toolCalling": "You are a helpful assistant explaining limitations.",
+      "errorResponse": "I apologize, but I could not generate a response. Please try again.",
+      "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}"
+    },
+    "modelSettings": {
+      "timeout": 30000,
+      "maxRetries": 3,
+      "retryDelay": 1000
+    }
+  }
+}
