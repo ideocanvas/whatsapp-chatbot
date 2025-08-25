@@ -37,7 +37,7 @@ chmod 755 data data/conversations
 echo "Checking Playwright browser installation..."
 if [ ! -d "node_modules/playwright/.local-browsers" ]; then
     echo "Playwright browsers not found, installing..."
-    npx playwright install --with-deps
+    npx playwright install
 else
     echo "Playwright browsers already installed"
 fi
