@@ -52,8 +52,12 @@ RUN mkdir -p data/conversations && chown whatsapp-bot:nodejs data/conversations
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/node_modules/playwright/.local-browsers
 ENV CHROME_BIN=/usr/bin/chromium-browser
 
+RUN chown -R whatsapp-bot:nodejs /app/
+
 # Switch to non-root user
 USER whatsapp-bot
+
+ENV npx playwright install
 
 # Expose the port the app runs on
 EXPOSE 3000
