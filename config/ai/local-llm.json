@@ -16,11 +16,6 @@
       "toolCalling": "You are a helpful assistant explaining limitations.",
       "errorResponse": "I apologize, but I could not generate a response. Please try again.",
       "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}"
-    },
-    "modelSettings": {
-      "timeout": 30000,
-      "maxRetries": 3,
-      "retryDelay": 1000
     }
   }
 }

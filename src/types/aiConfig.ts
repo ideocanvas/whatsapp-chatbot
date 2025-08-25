@@ -23,10 +23,6 @@ export interface AIConfig {
     audioTranscriptionResponse?: string;
   };
 
-  // Model-specific settings
-  modelSettings?: {
-    [key: string]: any;
-  };
 }
 
 export interface AIConfigFile {
