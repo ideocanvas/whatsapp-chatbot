@@ -13,11 +13,16 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - DEV_MODE=${DEV_MODE:-false}
+      - CHATBOT_NAME=${CHATBOT_NAME:-WhatsAppBot}
       - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
       - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
       - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}
       - WEBHOOK_URL=${WEBHOOK_URL}
+      # AI Configuration
+      - AI_CONFIG_PATH=${AI_CONFIG_PATH:-config/ai}
+      - AI_CONFIG_FILE=${AI_CONFIG_FILE:-default.json}
       # Optional: Audio transcription service
       - AUDIO_SERVICE_API_URL=${AUDIO_SERVICE_API_URL:-}
       - AUDIO_SERVICE_API_KEY=${AUDIO_SERVICE_API_KEY:-}
