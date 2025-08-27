@@ -2,6 +2,7 @@ import { WhatsAppService } from '../services/whatsappService';
 import { MediaService, MediaInfo } from '../services/mediaService';
 import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from '../services/openaiService';
 import { ConversationStorageService } from '../services/conversationStorageService';
+import { KnowledgeExtractionService } from '../services/knowledgeExtractionService';
 import { Message } from '../types/conversation';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../services/googleSearchService';
 import { initializeTools, getToolSchemas, executeTool, hasAvailableTools } from '../tools';
@@ -12,6 +13,7 @@ export class MessageHandler {
   public openaiService: OpenAIService | null;
   private googleSearchService: GoogleSearchService | null;
   private conversationStorage: ConversationStorageService;
+  private knowledgeExtractionService: KnowledgeExtractionService;
   private toolsAvailable: boolean = false;
   private chatbotName: string;
 
@@ -27,6 +29,12 @@ export class MessageHandler {
       maxMessagesPerConversation: 50,
       cleanupIntervalHours: 24
     });
+
+    // Initialize knowledge extraction service
+    this.knowledgeExtractionService = new KnowledgeExtractionService(
+      null, // Will be set after OpenAI service initialization
+      this.conversationStorage
+    );
 
     // Get chatbot name from environment variable
     this.chatbotName = process.env.CHATBOT_NAME || 'Lucy';
@@ -56,6 +64,12 @@ export class MessageHandler {
         this.openaiService = null;
       }
     }
+
+    // Update knowledge extraction service with OpenAI service
+    this.knowledgeExtractionService = new KnowledgeExtractionService(
+      this.openaiService,
+      this.conversationStorage
+    );
 
     // Initialize Google Search service if API keys are available
     try {
@@ -123,6 +137,9 @@ export class MessageHandler {
 
     await this.whatsappService.sendMessage(from, response);
     await this.storeOutgoingMessage(from, response, messageId);
+
+    // After responding, scan conversation history for knowledge extraction
+    await this.scanConversationForKnowledge(from);
   }
 
   async processMediaMessage(
@@ -296,24 +313,44 @@ TOOL USAGE GUIDELINES:
 DECISION MAKING:
 You decide which tools to use based on the user's message. If a user sends an image or audio, you can use the appropriate tool to process it. For text queries, use your judgment to determine if web search or news scraping is needed.
 
-**Knowledge Acquisition Rule:**
+**KNOWLEDGE MANAGEMENT RULES:**
+
+1. **URL-Based Knowledge Acquisition:**
 If the user provides a specific URL and asks you to find information from it, and the information seems useful for future reference, you MUST do two things:
-1. Answer the user's current question using the provided source.
-2. After answering, output a special XML tag to save this knowledge. The tag should look like this:
-<learn topic="[a short, descriptive topic key]" source="[the URL the user provided]">
-[A concise summary of the information found]
+• Answer the user's current question using the provided source.
+• After answering, output a special XML tag to save this knowledge:
+<learn topic="[short_descriptive_key]" source="[the_URL]">
+[Concise summary of the information]
 </learn>
 
-Example:
-User says: "Can you check the latest announcements on https://my-favorite-blog.com/news?"
-Your response should be:
-"Sure! The latest announcement is about their new product launch. [more details...]
-<learn topic="latest_announcements_from_blog" source="https://my-favorite-blog.com/news">
-The blog's news page contains the company's latest product announcements.
-</learn>"
+2. **Conversation-Based Knowledge Extraction:**
+During normal conversations, if the user shares valuable information that should be remembered (personal preferences, important details, specific requests, unique insights), you can optionally include a knowledge tag:
+<learn topic="[short_descriptive_key]" source="conversation">
+[Concise summary of the valuable information]
+</learn>
 
-Your final response to the user should NOT include the <learn> tag. It is for my internal processing.
+Examples of valuable information to extract:
+• Personal preferences: "I prefer black coffee", "I'm allergic to nuts"
+• Important dates: "My birthday is June 15th", "Our meeting is next Tuesday"
+• Specific requests: "Please remind me to call mom tomorrow"
+• Unique insights: "I work as a software engineer specializing in AI"
+
+3. **Knowledge Tag Guidelines:**
+• Use source="conversation" for information from regular chat
+• Keep topics short and descriptive (snake_case)
+• Summarize concisely but completely
+• Only extract genuinely valuable information, not casual chat
+
+4. **Response Format:**
+Your final response to the user should NOT include the <learn> tag. It is for my internal processing only.
 Always check the 'Learned Knowledge' from the context first before searching the web.
+
+Example conversation extraction:
+User: "I really enjoy hiking in the mountains on weekends"
+Assistant: "That sounds wonderful! Mountain hiking is great exercise. 😊"
+<learn topic="user_hobby_preference" source="conversation">
+Enjoys hiking in mountains on weekends
+</learn>
 
 Context: ${context}`
         : `You are ${this.chatbotName}, a helpful and friendly WhatsApp assistant for ${userName}. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
@@ -334,24 +371,44 @@ TOOL USAGE GUIDELINES:
 DECISION MAKING:
 You decide which tools to use based on the user's message. If a user sends an image or audio, you can use the appropriate tool to process it. For text queries, use your judgment to determine if web search or news scraping is needed.
 
-**Knowledge Acquisition Rule:**
+**KNOWLEDGE MANAGEMENT RULES:**
+
+1. **URL-Based Knowledge Acquisition:**
 If the user provides a specific URL and asks you to find information from it, and the information seems useful for future reference, you MUST do two things:
-1. Answer the user's current question using the provided source.
-2. After answering, output a special XML tag to save this knowledge. The tag should look like this:
-<learn topic="[a short, descriptive topic key]" source="[the URL the user provided]">
-[A concise summary of the information found]
+• Answer the user's current question using the provided source.
+• After answering, output a special XML tag to save this knowledge:
+<learn topic="[short_descriptive_key]" source="[the_URL]">
+[Concise summary of the information]
 </learn>
 
-Example:
-User says: "Can you check the latest announcements on https://my-favorite-blog.com/news?"
-Your response should be:
-"Sure! The latest announcement is about their new product launch. [more details...]
-<learn topic="latest_announcements_from_blog" source="https://my-favorite-blog.com/news">
-The blog's news page contains the company's latest product announcements.
-</learn>"
+2. **Conversation-Based Knowledge Extraction:**
+During normal conversations, if the user shares valuable information that should be remembered (personal preferences, important details, specific requests, unique insights), you can optionally include a knowledge tag:
+<learn topic="[short_descriptive_key]" source="conversation">
+[Concise summary of the valuable information]
+</learn>
 
-Your final response to the user should NOT include the <learn> tag. It is for my internal processing.
+Examples of valuable information to extract:
+• Personal preferences: "I prefer black coffee", "I'm allergic to nuts"
+• Important dates: "My birthday is June 15th", "Our meeting is next Tuesday"
+• Specific requests: "Please remind me to call mom tomorrow"
+• Unique insights: "I work as a software engineer specializing in AI"
+
+3. **Knowledge Tag Guidelines:**
+• Use source="conversation" for information from regular chat
+• Keep topics short and descriptive (snake_case)
+• Summarize concisely but completely
+• Only extract genuinely valuable information, not casual chat
+
+4. **Response Format:**
+Your final response to the user should NOT include the <learn> tag. It is for my internal processing only.
 Always check the 'Learned Knowledge' from the context first before searching the web.
+
+Example conversation extraction:
+User: "I really enjoy hiking in the mountains on weekends"
+Assistant: "That sounds wonderful! Mountain hiking is great exercise. 😊"
+<learn topic="user_hobby_preference" source="conversation">
+Enjoys hiking in mountains on weekends
+</learn>
 
 Be direct and avoid formal language.`;
 
@@ -498,6 +555,31 @@ Be direct and avoid formal language.`;
   /**
    * Get the chatbot name for external access
    */
+
+  /**
+   * Scan conversation history for knowledge extraction after responding
+   */
+  private async scanConversationForKnowledge(senderNumber: string): Promise<void> {
+    try {
+      // Only scan if we have enough conversation history (at least 3 messages)
+      const conversation = await this.conversationStorage.getConversation(senderNumber);
+      if (!conversation || conversation.messages.length < 3) {
+        return;
+      }
+
+      // Only scan periodically to avoid excessive API calls
+      // Scan every 5th message or if conversation has grown significantly
+      const shouldScan = conversation.messages.length % 5 === 0 ||
+                        conversation.messages.length > 20;
+
+      if (shouldScan) {
+        console.log(`🧠 Starting knowledge extraction scan for user ${senderNumber}`);
+        await this.knowledgeExtractionService.scanConversationForKnowledge(senderNumber);
+      }
+    } catch (error) {
+      console.error('Error in knowledge extraction scan:', error);
+    }
+  }
   getChatbotName(): string {
     return this.chatbotName;
   }
