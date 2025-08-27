@@ -7,6 +7,9 @@ import * as readline from 'readline';
 interface SendOptions {
   port: string;
   from: string;
+  image?: string;
+  audio?: string;
+  type?: 'text' | 'image' | 'audio';
 }
 
 const program = new Command();
@@ -18,23 +21,45 @@ program
   .argument('[message]', 'Message to send (if not provided, enters interactive chat mode)')
   .option('-p, --port <port>', 'Server port', '3000')
   .option('-f, --from <number>', 'Sender phone number', '1234567890')
+  .option('-i, --image <path>', 'Path to image file for testing')
+  .option('-a, --audio <path>', 'Path to audio file for testing')
+  .option('-t, --type <type>', 'Message type: text, image, audio', 'text')
   .action(async (message: string | undefined, options: SendOptions) => {
     try {
       const port = options.port || process.env.PORT || '3000';
       const devApiUrl = `http://localhost:${port}/dev/message`;
 
-      if (message) {
+      if (message || options.image || options.audio) {
         // Send single message from command line
         console.log(`📤 Sending message to ${devApiUrl}:`);
-        console.log(`💬 "${message}"`);
+
+        let requestBody: any = {
+          from: options.from
+        };
+
+        if (options.image) {
+          console.log(`🖼️ Image file: ${options.image}`);
+          console.log(`📋 Type: image`);
+          requestBody.type = 'image';
+          requestBody.imagePath = options.image;
+          requestBody.message = 'Test image analysis';
+        } else if (options.audio) {
+          console.log(`🎤 Audio file: ${options.audio}`);
+          console.log(`📋 Type: audio`);
+          requestBody.type = 'audio';
+          requestBody.audioPath = options.audio;
+          requestBody.message = 'Test audio transcription';
+        } else {
+          console.log(`💬 "${message}"`);
+          console.log(`📋 Type: text`);
+          requestBody.message = message;
+        }
+
         console.log(`📞 From: ${options.from}`);
         console.log(`🌐 Port: ${port}`);
         console.log('---');
 
-        const response = await axios.post(devApiUrl, {
-          message: message,
-          from: options.from
-        }, {
+        const response = await axios.post(devApiUrl, requestBody, {
           headers: {
             'Content-Type': 'application/json',
             'User-Agent': 'Dev-Test-CLI/1.0.0'

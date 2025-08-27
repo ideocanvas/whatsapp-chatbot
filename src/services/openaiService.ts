@@ -107,26 +107,26 @@ export class OpenAIService {
   }
 
   /**
-   * Generate response with tool calling support
+   * Generate response with tool calling support - let LLM decide when to use tools
    */
   async generateResponseWithTools(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools?: ChatCompletionTool[],
-    maxToolRounds: number = 5
+    maxToolRounds: number = 15 // Increased from 5 to 15 as requested
   ): Promise<string> {
     if (!this.config.enableToolCalling || !tools || tools.length === 0) {
-      // Fall back to regular response generation
+      // Fall back to regular response generation without tools
       const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
       return this.generateTextResponse(
         lastUserMessage?.content as string || '',
         undefined,
-        tools
+        undefined,
+        'none' // Explicitly disable tools
       );
     }
 
     let currentMessages = [...messages];
     let toolCallRound = 0;
-    let partialResults: any[] = [];
 
     while (toolCallRound < maxToolRounds) {
       toolCallRound++;
@@ -135,7 +135,7 @@ export class OpenAIService {
         model: this.config.model!,
         messages: currentMessages,
         tools,
-        tool_choice: 'auto',
+        tool_choice: 'auto', // Let LLM decide when to use tools
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
       });
@@ -150,59 +150,52 @@ export class OpenAIService {
         round: toolCallRound,
         hasToolCalls: !!message.tool_calls && message.tool_calls.length > 0,
         toolCallCount: message.tool_calls?.length || 0,
-        responseContent: message.content?.substring(0, 100) || 'No content'
+        hasContent: !!message.content,
+        contentPreview: message.content?.substring(0, 50) || 'No content'
       });
 
       currentMessages.push(message);
 
-      // If no tool calls, return the final response
+      // If no tool calls, return the final response immediately
       if (!message.tool_calls || message.tool_calls.length === 0) {
-        return cleanLLMResponse(message.content || '');
+        return cleanLLMResponse(message.content || 'I apologize, but I could not generate a response.');
       }
 
       // Process tool calls
       const toolResults = await this.processToolCalls(message.tool_calls);
 
-      // Store successful results for potential partial response
-      const successfulResults = toolResults.filter(result => !result.error);
-      partialResults.push(...successfulResults.map(result => result.result));
-
-      // Add tool results to the conversation - each result needs its own message
+      // Add tool results to the conversation
       for (const result of toolResults) {
         currentMessages.push({
           role: 'tool',
-          content: typeof result.result === 'string' ? result.result : JSON.stringify(result.result),
+          content: result.error
+            ? `Error: ${result.error}`
+            : (typeof result.result === 'string' ? result.result : JSON.stringify(result.result)),
           tool_call_id: result.tool_call_id
         });
       }
+
+      // Safety check to prevent infinite loops
+      if (toolCallRound >= maxToolRounds) {
+        console.warn('⚠️ Maximum tool call rounds reached:', maxToolRounds);
+
+        // Get the last user message for context
+        const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
+        const userQuery = lastUserMessage?.content;
+
+        // Use custom search limit prompt from config if available, otherwise use default
+        const toolLimitPrompt = this.prompts?.searchLimit || `I reached the maximum tool usage limit while processing your request. Please try a more specific query or ask me something else.`;
+
+        return await this.generateTextResponse(
+          toolLimitPrompt,
+          undefined,
+          undefined,
+          'none' // Don't use tools for this final response
+        );
+      }
     }
 
-    // Get the last user message to provide context
-    const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
-    const userQueryContent = lastUserMessage?.content;
-    const userQuery = typeof userQueryContent === 'string' ? userQueryContent : 'your query';
-
-    // Use custom search limit prompt from config if available, otherwise use default
-    const searchLimitPrompt = this.prompts?.searchLimit || `I reached the maximum search limit while researching "{query}". Here's what I found so far:\n\n{results}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings, explains I hit the search limit, and suggests next steps. Keep it conversational and short.`;
-
-    const finalResponsePrompt = partialResults.length > 0
-      ? searchLimitPrompt
-          .replace('{query}', userQuery)
-          .replace('{results}', partialResults.map((result: any) => typeof result === 'string' ? result : JSON.stringify(result)).join('\n\n'))
-      : `I reached the maximum search attempts while trying to find information for "${userQuery}" but couldn't find any relevant results. Please create a helpful WhatsApp-style response explaining this situation and suggesting the user try a more specific query or different wording. Keep it conversational and short.`;
-
-    // Use custom tool calling prompt from config if available, otherwise use default
-    const toolCallingPrompt = this.prompts?.toolCalling || 'You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.';
-
-    // Generate final response using LLM
-    const finalResponse = await this.generateTextResponse(
-      finalResponsePrompt,
-      toolCallingPrompt,
-      undefined,
-      'none' // Don't use tools for this final response
-    );
-
-    return finalResponse;
+    return 'I apologize, but I encountered an issue while processing your request. Please try again.';
   }
 
   /**
@@ -247,7 +240,26 @@ export class OpenAIService {
     return results;
   }
 
+
   /**
+   * Get MIME type from file extension
+   */
+  private getMimeTypeFromExtension(extension: string): string {
+    const mimeTypes: { [key: string]: string } = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      bmp: 'image/bmp',
+      tiff: 'image/tiff',
+      svg: 'image/svg+xml'
+    };
+
+    return mimeTypes[extension] || 'image/jpeg';
+  }
+  /**
+   * @deprecated Use tool calling with analyze_image tool instead
    * Analyze image content using OpenAI's vision capabilities
    */
   async analyzeImage(imagePath: string, prompt?: string): Promise<string> {
@@ -303,24 +315,6 @@ Include any text content exactly as it appears. Provide specific details that wo
       console.error('Error analyzing image:', error);
       throw new Error('Failed to analyze image with OpenAI');
     }
-  }
-
-  /**
-   * Get MIME type from file extension
-   */
-  private getMimeTypeFromExtension(extension: string): string {
-    const mimeTypes: { [key: string]: string } = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      webp: 'image/webp',
-      bmp: 'image/bmp',
-      tiff: 'image/tiff',
-      svg: 'image/svg+xml'
-    };
-
-    return mimeTypes[extension] || 'image/jpeg';
   }
 
   /**

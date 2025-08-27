@@ -5,6 +5,7 @@ import { MediaService } from '../services/mediaService';
 import { ProcessedMessageService } from '../services/processedMessageService';
 import { CryptoUtils } from '../utils/crypto';
 import { WhatsAppMessage } from '../types/whatsapp';
+import { getToolSchemas } from '../tools';
 
 export class WebhookRoutes {
   private router: Router;
@@ -152,19 +153,71 @@ export class WebhookRoutes {
 
   private async handleDevMessage(req: Request, res: Response): Promise<void> {
     try {
-      const { message, from = 'dev-user' } = req.body;
+      const { message, from = 'dev-user', type = 'text', imagePath, audioPath } = req.body;
 
       if (!message) {
         res.status(400).json({ error: 'Message is required' });
         return;
       }
 
-      console.log(`📱 [DEV API] Received message from ${from}: "${message}"`);
+      console.log(`📱 [DEV API] Received ${type} message from ${from}: "${message}"`);
 
-      // Process the message using the message handler
-      const response = await this.messageHandler.generateResponse(message, from);
+      let response: string;
 
-      console.log(`🤖 [DEV API] Response: "${response}"`);
+      if (type === 'image' && imagePath) {
+        console.log(`🖼️ Processing local image: ${imagePath}`);
+        // For dev testing, directly use the local file path with tool calling
+        const userMessage = "I've sent you an image. Please analyze and describe what you see.";
+
+        const systemPrompt = `You are ${this.messageHandler.getChatbotName()}, a helpful WhatsApp assistant. The user has sent an image file for analysis.
+
+Use the analyze_image tool to understand the image content and provide a helpful description.
+
+File path: ${imagePath}`;
+
+        const messages: any[] = [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: userMessage
+          }
+        ];
+
+        const tools = getToolSchemas();
+        response = await this.messageHandler.openaiService!.generateResponseWithTools(messages, tools);
+      } else if (type === 'audio' && audioPath) {
+        console.log(`🎤 Processing local audio: ${audioPath}`);
+        // For dev testing, directly use the local file path with tool calling
+        const userMessage = "I've sent you an audio message. Please transcribe and respond to it.";
+
+        const systemPrompt = `You are ${this.messageHandler.getChatbotName()}, a helpful WhatsApp assistant. The user has sent an audio file for transcription.
+
+Use the transcribe_audio tool to convert the audio to text, then respond conversationally.
+
+File path: ${audioPath}`;
+
+        const messages: any[] = [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: userMessage
+          }
+        ];
+
+        const tools = getToolSchemas();
+        response = await this.messageHandler.openaiService!.generateResponseWithTools(messages, tools);
+      } else {
+        // Process text message using the message handler
+        response = await this.messageHandler.generateResponse(message, from);
+      }
+
+      console.log(`🤖 [DEV API] Response: "${response.substring(0, 100)}${response.length > 100 ? '...' : ''}"`);
 
       // Return the response directly as JSON
       res.status(200).json({

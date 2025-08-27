@@ -9,7 +9,7 @@ import { initializeTools, getToolSchemas, executeTool, hasAvailableTools } from 
 export class MessageHandler {
   private whatsappService: WhatsAppService;
   private mediaService: MediaService;
-  private openaiService: OpenAIService | null;
+  public openaiService: OpenAIService | null;
   private googleSearchService: GoogleSearchService | null;
   private conversationStorage: ConversationStorageService;
   private toolsAvailable: boolean = false;
@@ -64,7 +64,7 @@ export class MessageHandler {
 
       // Initialize tools if both services are available
       if (this.openaiService && this.googleSearchService) {
-        initializeTools(this.googleSearchService);
+        initializeTools(this.googleSearchService, this.mediaService);
         this.toolsAvailable = hasAvailableTools();
         console.log('Tools initialized:', this.toolsAvailable);
       }
@@ -125,7 +125,7 @@ export class MessageHandler {
     await this.storeOutgoingMessage(from, response, messageId);
   }
 
-  private async processMediaMessage(
+  async processMediaMessage(
     mediaData: { id: string; mimeType: string; sha256: string; type: 'image' | 'audio' },
     mediaType: 'image' | 'audio'
   ): Promise<string> {
@@ -137,28 +137,41 @@ export class MessageHandler {
         mediaType
       );
 
-      if (mediaType === 'audio') {
-        try {
-          // Try to transcribe audio and get enhanced AI response
-          const transcribedText = await this.mediaService.transcribeAudio(mediaInfo.filepath);
-          return await this.mediaService.getTranscriptionResponse(transcribedText, mediaInfo);
-        } catch (transcriptionError) {
-          console.error('Audio transcription failed, falling back to basic info:', transcriptionError);
-          // Fall back to basic media info if transcription fails
-          return this.mediaService.getMediaInfoResponse(mediaInfo) +
-                 '\n\n❌ Audio transcription is not available at the moment.';
-        }
-      } else {
-        // For images, try to analyze with OpenAI if available
-        try {
-          const aiResponse = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
-          return this.mediaService.getEnhancedMediaInfoResponse(mediaInfo, aiResponse);
-        } catch (analysisError) {
-          console.error('Image analysis failed, falling back to basic info:', analysisError);
-          // Fall back to basic media info if analysis fails
-          return this.mediaService.getMediaInfoResponse(mediaInfo) +
-                 '\n\n❌ Image analysis is not available at the moment.';
-        }
+      // For both audio and images, use tool calling approach
+      // The LLM will decide whether to use analyze_image or transcribe_audio tools
+      const userMessage = mediaType === 'audio'
+        ? "I've sent you an audio message. Please transcribe and respond to it."
+        : "I've sent you an image. Please analyze and describe what you see.";
+
+      try {
+        const systemPrompt = `You are ${this.chatbotName}, a helpful WhatsApp assistant. The user has sent a ${mediaType} file.
+
+For audio messages: Use the transcribe_audio tool to convert the audio to text, then respond conversationally.
+For images: Use the analyze_image tool to understand the image content, then provide a helpful description.
+
+File path: ${mediaInfo.filepath}
+File type: ${mediaType}`;
+
+        const messages: any[] = [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: userMessage
+          }
+        ];
+
+        const tools = getToolSchemas();
+        const response = await this.openaiService!.generateResponseWithTools(messages, tools);
+
+        return this.mediaService.getEnhancedMediaInfoResponse(mediaInfo, response);
+      } catch (error) {
+        console.error(`${mediaType} processing via tool calling failed:`, error);
+        // Fall back to basic media info if tool calling fails
+        return this.mediaService.getMediaInfoResponse(mediaInfo) +
+               `\n\n❌ ${mediaType === 'audio' ? 'Audio transcription' : 'Image analysis'} is not available at the moment.`;
       }
     } catch (error) {
       console.error('Error processing media message:', error);
@@ -267,25 +280,21 @@ Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
       const systemPrompt = context
         ? `You are ${this.chatbotName}, a helpful and friendly WhatsApp assistant for ${userName}. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
 
-CRITICAL: When users ask about news, current events, or latest updates, ALWAYS use the scrape_news tool FIRST to get real-time information from major news websites. This provides the most accurate and up-to-date news coverage.
+AVAILABLE TOOLS:
+- scrape_news: Get current news articles from major news websites
+- google_search: Search the web for current information
+- web_scrape: Extract content from specific URLs
+- analyze_image: Analyze image content (describe objects, text, context, etc.)
+- transcribe_audio: Convert audio messages to text
 
-PRIORITY TOOL USAGE:
-1. scrape_news - For any news-related queries (breaking news, current events, latest updates)
-2. google_search + web_scrape - For specific website content, products, or technical information
+TOOL USAGE GUIDELINES:
+• Use scrape_news for news-related queries (breaking news, current events, latest updates)
+• Use google_search + web_scrape for specific website content, products, or technical information
+• Use analyze_image when users send images that need description, interpretation, or analysis
+• Use transcribe_audio when users send audio messages that need to be converted to text
 
-Use scrape_news for:
-- Breaking news and current events
-- Latest updates on any topic
-- News about politics, business, technology, sports, etc.
-- Trending stories and headlines
-- Any query containing "news", "latest", "current", "update", "today"
-
-Use google_search + web_scrape for:
-- Specific website content mentioned by URL
-- Product information and prices
-- Technical documentation and manuals
-- Blog posts and articles from specific sites
-- Information from non-news websites
+DECISION MAKING:
+You decide which tools to use based on the user's message. If a user sends an image or audio, you can use the appropriate tool to process it. For text queries, use your judgment to determine if web search or news scraping is needed.
 
 **Knowledge Acquisition Rule:**
 If the user provides a specific URL and asks you to find information from it, and the information seems useful for future reference, you MUST do two things:
@@ -309,25 +318,21 @@ Always check the 'Learned Knowledge' from the context first before searching the
 Context: ${context}`
         : `You are ${this.chatbotName}, a helpful and friendly WhatsApp assistant for ${userName}. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.
 
-CRITICAL: When users ask about news, current events, or latest updates, ALWAYS use the scrape_news tool FIRST to get real-time information from major news websites. This provides the most accurate and up-to-date news coverage.
+AVAILABLE TOOLS:
+- scrape_news: Get current news articles from major news websites
+- google_search: Search the web for current information
+- web_scrape: Extract content from specific URLs
+- analyze_image: Analyze image content (describe objects, text, context, etc.)
+- transcribe_audio: Convert audio messages to text
 
-PRIORITY TOOL USAGE:
-1. scrape_news - For any news-related queries (breaking news, current events, latest updates)
-2. google_search + web_scrape - For specific website content, products, or technical information
+TOOL USAGE GUIDELINES:
+• Use scrape_news for news-related queries (breaking news, current events, latest updates)
+• Use google_search + web_scrape for specific website content, products, or technical information
+• Use analyze_image when users send images that need description, interpretation, or analysis
+• Use transcribe_audio when users send audio messages that need to be converted to text
 
-Use scrape_news for:
-- Breaking news and current events
-- Latest updates on any topic
-- News about politics, business, technology, sports, etc.
-- Trending stories and headlines
-- Any query containing "news", "latest", "current", "update", "today"
-
-Use google_search + web_scrape for:
-- Specific website content mentioned by URL
-- Product information and prices
-- Technical documentation and manuals
-- Blog posts and articles from specific sites
-- Information from non-news websites
+DECISION MAKING:
+You decide which tools to use based on the user's message. If a user sends an image or audio, you can use the appropriate tool to process it. For text queries, use your judgment to determine if web search or news scraping is needed.
 
 **Knowledge Acquisition Rule:**
 If the user provides a specific URL and asks you to find information from it, and the information seems useful for future reference, you MUST do two things:
@@ -489,4 +494,11 @@ Be direct and avoid formal language.`;
      console.error('Error storing outgoing message:', error);
    }
  }
+
+  /**
+   * Get the chatbot name for external access
+   */
+  getChatbotName(): string {
+    return this.chatbotName;
+  }
 }
