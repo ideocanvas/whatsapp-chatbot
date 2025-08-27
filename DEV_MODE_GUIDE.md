@@ -12,22 +12,22 @@ npm run dev:mode
 
 This starts the server with `DEV_MODE=true` environment variable, which enables dev mode.
 
-### 2. Send Test Messages
-Use the dev-test CLI tool to send test messages to your dev server:
+### 2. Use the Chat Client
+The dev-test tool now functions as a chat client:
 
-#### Single Message
+#### Send a Single Message
 ```bash
-npm run dev:test -- send "Hello, how are you?"
+npm run dev:test -- "Hello, how are you?" --port 3000
 ```
 
-#### With Custom Options
+#### Start Interactive Chat Mode (no message argument)
 ```bash
-npm run dev:test -- send "What's the weather today?" --port 3000 --from 1234567890
+npm run dev:test -- --port 3000
 ```
 
-#### Interactive Mode
+#### With Custom Sender
 ```bash
-npm run dev:test interactive
+npm run dev:test -- "What's your name?" --port 3000 --from 5551234567
 ```
 
 ### 3. Example Output
@@ -45,9 +45,9 @@ When you send a message in dev mode, you'll see output like this in the server c
 - `npm run dev` - Start server normally (with nodemon)
 - `npm run start` - Start production server
 
-### Test Commands
-- `npm run dev:test -- send <message>` - Send a single test message
-- `npm run dev:test interactive` - Start interactive mode
+### Chat Client Commands
+- `npm run dev:test -- <message>` - Send a single message and exit
+- `npm run dev:test --` - Start interactive chat mode (no message argument)
 
 ### CLI Options for dev-test
 - `-p, --port <port>` - Server port (default: 3000)
@@ -73,11 +73,14 @@ When you send a message in dev mode, you'll see output like this in the server c
    npm run dev:mode
    ```
 
-2. In another terminal, send test messages:
+2. In another terminal, use the chat client:
    ```bash
-   npm run dev:test -- send "Hello"
-   npm run dev:test -- send "What's your name?"
-   npm run dev:test -- send "Can you help me?"
+   # Single messages
+   npm run dev:test -- "Hello"
+   npm run dev:test -- "What's your name?"
+
+   # Or start interactive chat
+   npm run dev:test -- --port 3001
    ```
 
 3. Watch the server console for responses and debug output.

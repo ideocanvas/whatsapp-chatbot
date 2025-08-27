@@ -7,85 +7,94 @@ import * as readline from 'readline';
 interface SendOptions {
   port: string;
   from: string;
-  type: string;
-}
-
-interface InteractiveOptions {
-  port: string;
-  from: string;
 }
 
 const program = new Command();
 
 program
   .name('dev-test')
-  .description('CLI tool to send test messages to WhatsApp chatbot dev server')
-  .version('1.0.0');
-
-program
-  .command('send')
-  .description('Send a test message to the dev server')
-  .argument('<message>', 'Message to send')
+  .description('CLI chat client for WhatsApp chatbot dev server')
+  .version('1.0.0')
+  .argument('[message]', 'Message to send (if not provided, enters interactive chat mode)')
   .option('-p, --port <port>', 'Server port', '3000')
   .option('-f, --from <number>', 'Sender phone number', '1234567890')
-  .option('-t, --type <type>', 'Message type', 'text')
-  .action(async (message: string, options: SendOptions) => {
+  .action(async (message: string | undefined, options: SendOptions) => {
     try {
-      // Use the port from options, or fall back to PORT environment variable, or default to 3000
       const port = options.port || process.env.PORT || '3000';
       const devApiUrl = `http://localhost:${port}/dev/message`;
 
-      const payload = {
-        object: 'whatsapp_business_account',
-        entry: [
-          {
-            id: 'test-entry-id',
-            changes: [
-              {
-                value: {
-                  messaging_product: 'whatsapp',
-                  metadata: {
-                    display_phone_number: '1234567890',
-                    phone_number_id: 'test-phone-id'
-                  },
-                  messages: [
-                    {
-                      from: options.from,
-                      id: `test-message-${Date.now()}`,
-                      timestamp: Math.floor(Date.now() / 1000),
-                      type: options.type,
-                      text: {
-                        body: message
-                      }
-                    }
-                  ]
-                },
-                field: 'messages'
-              }
-            ]
+      if (message) {
+        // Send single message from command line
+        console.log(`📤 Sending message to ${devApiUrl}:`);
+        console.log(`💬 "${message}"`);
+        console.log(`📞 From: ${options.from}`);
+        console.log(`🌐 Port: ${port}`);
+        console.log('---');
+
+        const response = await axios.post(devApiUrl, {
+          message: message,
+          from: options.from
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Dev-Test-CLI/1.0.0'
           }
-        ]
-      };
+        });
 
-      console.log(`📤 Sending message to ${devApiUrl}:`);
-      console.log(`💬 "${message}"`);
-      console.log(`📞 From: ${options.from}`);
-      console.log(`🌐 Port: ${port}`);
-      console.log('---');
+        console.log('✅ Message processed successfully!');
+        console.log(`🤖 Response: ${response.data.response}`);
+        console.log(`📋 Server status: ${response.status} ${response.statusText}`);
+      } else {
+        // Enter interactive chat mode
+        console.log('💬 Interactive chat mode started');
+        console.log(`📞 Sender: ${options.from}`);
+        console.log(`🌐 Server: http://localhost:${port}`);
+        console.log('📝 Type your messages (type "exit" or "quit" to end):');
+        console.log('---');
 
-      const response = await axios.post(devApiUrl, {
-        message: message,
-        from: options.from
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Dev-Test-CLI/1.0.0'
-        }
-      });
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
 
-      console.log('✅ Message processed successfully!');
-      console.log(`🤖 Response: ${response.data.response}`);
-      console.log(`📋 Server status: ${response.status} ${response.statusText}`);
+        const chatLoop = async () => {
+          rl.question('👤 You: ', async (userMessage: string) => {
+            if (userMessage.toLowerCase() === 'exit' || userMessage.toLowerCase() === 'quit') {
+              console.log('👋 Goodbye!');
+              rl.close();
+              return;
+            }
+
+            try {
+              console.log('⏳ Thinking...');
+
+              const response = await axios.post(devApiUrl, {
+                message: userMessage,
+                from: options.from
+              }, {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'Dev-Test-CLI/1.0.0'
+                }
+              });
+
+              console.log(`🤖 AI: ${response.data.response}`);
+              console.log('---');
+
+              // Continue the chat loop
+              chatLoop();
+            } catch (error: any) {
+              console.error('❌ Error:', error.message);
+              console.log('---');
+              // Continue the chat loop even on error
+              chatLoop();
+            }
+          });
+        };
+
+        // Start the chat loop
+        chatLoop();
+      }
     } catch (error: any) {
       if (error.response) {
         console.error('❌ Server error:', error.response.status, error.response.statusText);
@@ -98,87 +107,6 @@ program
       }
       process.exit(1);
     }
-  });
-
-program
-  .command('interactive')
-  .description('Start interactive mode to send multiple messages')
-  .option('-p, --port <port>', 'Server port', '3000')
-  .option('-f, --from <number>', 'Sender phone number', '1234567890')
-  .action((options: InteractiveOptions) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    console.log('💬 Interactive mode started');
-    console.log(`📞 Sender: ${options.from}`);
-    console.log(`🌐 Server: http://localhost:${options.port}`);
-    console.log('📝 Type your messages (type "exit" or "quit" to end):');
-    console.log('---');
-
-    const sendMessage = async (message: string) => {
-      if (message.toLowerCase() === 'exit' || message.toLowerCase() === 'quit') {
-        rl.close();
-        return;
-      }
-
-      try {
-        // Use the port from options, or fall back to PORT environment variable, or default to 3000
-        const port = options.port || process.env.PORT || '3000';
-        const devApiUrl = `http://localhost:${port}/dev/message`;
-
-        const payload = {
-          object: 'whatsapp_business_account',
-          entry: [
-            {
-              id: 'test-entry-id',
-              changes: [
-                {
-                  value: {
-                    messaging_product: 'whatsapp',
-                    metadata: {
-                      display_phone_number: '1234567890',
-                      phone_number_id: 'test-phone-id'
-                    },
-                    messages: [
-                      {
-                        from: options.from,
-                        id: `test-message-${Date.now()}`,
-                        timestamp: Math.floor(Date.now() / 1000),
-                        type: 'text',
-                        text: {
-                          body: message
-                        }
-                      }
-                    ]
-                  },
-                  field: 'messages'
-                }
-              ]
-            }
-          ]
-        };
-
-        await axios.post(devApiUrl, {
-          message: message,
-          from: options.from
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Dev-Test-CLI/1.0.0'
-          }
-        });
-
-        console.log('✅ Message processed!');
-      } catch (error: any) {
-        console.error('❌ Failed to send message:', error.message);
-      }
-
-      rl.question('💬 Next message: ', sendMessage);
-    };
-
-    rl.question('💬 Message: ', sendMessage);
   });
 
 program.parse();
