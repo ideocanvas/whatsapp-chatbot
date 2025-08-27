@@ -166,7 +166,7 @@ export class MessageHandler {
     }
   }
 
-  private async generateResponse(messageText: string, senderNumber?: string): Promise<string> {
+  async generateResponse(messageText: string, senderNumber?: string): Promise<string> {
     // Use OpenAI for intelligent responses if available
     if (this.openaiService?.isConfigured()) {
       try {

@@ -33,7 +33,7 @@ program
     try {
       // Use the port from options, or fall back to PORT environment variable, or default to 3000
       const port = options.port || process.env.PORT || '3000';
-      const webhookUrl = `http://localhost:${port}/webhook`;
+      const devApiUrl = `http://localhost:${port}/dev/message`;
 
       const payload = {
         object: 'whatsapp_business_account',
@@ -67,21 +67,25 @@ program
         ]
       };
 
-      console.log(`📤 Sending message to ${webhookUrl}:`);
+      console.log(`📤 Sending message to ${devApiUrl}:`);
       console.log(`💬 "${message}"`);
       console.log(`📞 From: ${options.from}`);
       console.log(`🌐 Port: ${port}`);
       console.log('---');
 
-      const response = await axios.post(webhookUrl, payload, {
+      const response = await axios.post(devApiUrl, {
+        message: message,
+        from: options.from
+      }, {
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'Dev-Test-CLI/1.0.0'
         }
       });
 
-      console.log('✅ Message sent successfully!');
-      console.log(`📋 Server response: ${response.status} ${response.statusText}`);
+      console.log('✅ Message processed successfully!');
+      console.log(`🤖 Response: ${response.data.response}`);
+      console.log(`📋 Server status: ${response.status} ${response.statusText}`);
     } catch (error: any) {
       if (error.response) {
         console.error('❌ Server error:', error.response.status, error.response.statusText);
@@ -122,7 +126,7 @@ program
       try {
         // Use the port from options, or fall back to PORT environment variable, or default to 3000
         const port = options.port || process.env.PORT || '3000';
-        const webhookUrl = `http://localhost:${port}/webhook`;
+        const devApiUrl = `http://localhost:${port}/dev/message`;
 
         const payload = {
           object: 'whatsapp_business_account',
@@ -156,14 +160,17 @@ program
           ]
         };
 
-        await axios.post(webhookUrl, payload, {
+        await axios.post(devApiUrl, {
+          message: message,
+          from: options.from
+        }, {
           headers: {
             'Content-Type': 'application/json',
             'User-Agent': 'Dev-Test-CLI/1.0.0'
           }
         });
 
-        console.log('✅ Message sent!');
+        console.log('✅ Message processed!');
       } catch (error: any) {
         console.error('❌ Failed to send message:', error.message);
       }

@@ -38,6 +38,13 @@ export class WebhookRoutes {
     this.router.get('/health', (req: Request, res: Response) => {
       res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
     });
+
+    // Dev mode API endpoint (only available in dev mode)
+    if (process.env.DEV_MODE === 'true') {
+      this.router.post('/dev/message', (req: Request, res: Response) => {
+        this.handleDevMessage(req, res);
+      });
+    }
   }
 
   private handleWebhookVerification(req: Request, res: Response): void {
@@ -57,8 +64,8 @@ export class WebhookRoutes {
 
   private async handleWebhookMessage(req: Request, res: Response): Promise<void> {
     try {
-      // Verify signature if app secret is provided and not in dev mode
-      if (this.appSecret && process.env.DEV_MODE !== 'true') {
+      // Verify signature if app secret is provided
+      if (this.appSecret) {
         const signature = req.headers['x-hub-signature-256'] as string;
         // Use raw body for signature verification (stored by body-parser middleware)
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
@@ -140,6 +147,39 @@ export class WebhookRoutes {
     } catch (error) {
       console.error('Error processing webhook:', error);
       res.sendStatus(500);
+    }
+  }
+
+  private async handleDevMessage(req: Request, res: Response): Promise<void> {
+    try {
+      const { message, from = 'dev-user' } = req.body;
+
+      if (!message) {
+        res.status(400).json({ error: 'Message is required' });
+        return;
+      }
+
+      console.log(`📱 [DEV API] Received message from ${from}: "${message}"`);
+
+      // Process the message using the message handler
+      const response = await this.messageHandler.generateResponse(message, from);
+
+      console.log(`🤖 [DEV API] Response: "${response}"`);
+
+      // Return the response directly as JSON
+      res.status(200).json({
+        success: true,
+        message: message,
+        response: response,
+        from: from,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error processing dev message:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   }
 
