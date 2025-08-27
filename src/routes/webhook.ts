@@ -57,8 +57,8 @@ export class WebhookRoutes {
 
   private async handleWebhookMessage(req: Request, res: Response): Promise<void> {
     try {
-      // Verify signature if app secret is provided
-      if (this.appSecret) {
+      // Verify signature if app secret is provided and not in dev mode
+      if (this.appSecret && process.env.DEV_MODE !== 'true') {
         const signature = req.headers['x-hub-signature-256'] as string;
         // Use raw body for signature verification (stored by body-parser middleware)
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);

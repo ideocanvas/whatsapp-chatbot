@@ -3,13 +3,22 @@ import { WhatsAppResponse, WhatsAppAPIConfig } from '../types/whatsapp';
 
 export class WhatsAppService {
   private config: WhatsAppAPIConfig;
+  private devMode: boolean;
 
-  constructor(config: WhatsAppAPIConfig) {
+  constructor(config: WhatsAppAPIConfig, devMode: boolean = false) {
     this.config = config;
+    this.devMode = devMode;
   }
 
   async sendMessage(to: string, message: string): Promise<boolean> {
     try {
+      if (this.devMode) {
+        console.log(`📱 [DEV MODE] Message would be sent to ${to}:`);
+        console.log(`💬 ${message}`);
+        console.log('---');
+        return true;
+      }
+
       const response: WhatsAppResponse = {
         messaging_product: 'whatsapp',
         to,
@@ -37,6 +46,11 @@ export class WhatsAppService {
 
   async markMessageAsRead(messageId: string): Promise<boolean> {
     try {
+      if (this.devMode) {
+        console.log(`📱 [DEV MODE] Message ${messageId} would be marked as read`);
+        return true;
+      }
+
       const url = `https://graph.facebook.com/${this.config.apiVersion}/${this.config.phoneNumberId}/messages`;
 
       await axios.post(url, {

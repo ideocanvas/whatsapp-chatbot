@@ -9,6 +9,7 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+const devMode = process.env.DEV_MODE === 'true';
 
 // Middleware
 app.use(bodyParser.json({ verify: (req, res, buf) => {
@@ -22,14 +23,14 @@ const whatsappConfig = {
   apiVersion: 'v19.0'
 };
 
-// Validate required environment variables
-if (!whatsappConfig.accessToken || !whatsappConfig.phoneNumberId) {
+// Validate required environment variables only if not in dev mode
+if (!devMode && (!whatsappConfig.accessToken || !whatsappConfig.phoneNumberId)) {
   console.error('Missing required environment variables: WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID');
   process.exit(1);
 }
 
 // Initialize services
-const whatsappService = new WhatsAppService(whatsappConfig);
+const whatsappService = new WhatsAppService(whatsappConfig, devMode);
 const webhookRoutes = new WebhookRoutes(
   whatsappService,
   process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
@@ -48,7 +49,26 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 
 // Start server
 app.listen(port, () => {
-  console.log(`WhatsApp ChatBot server is running on port ${port}`);
-  console.log(`Webhook URL: ${process.env.WEBHOOK_URL || `http://localhost:${port}`}/webhook`);
-  console.log(`Health check: ${process.env.WEBHOOK_URL || `http://localhost:${port}`}/health`);
+  console.log('\n' + '='.repeat(60));
+  console.log('🚀 WhatsApp ChatBot Server Started');
+  console.log('='.repeat(60));
+  console.log(`📍 Port: ${port}`);
+
+  if (devMode) {
+    console.log('\n' + '💡'.repeat(20));
+    console.log('💡 DEVELOPMENT MODE ACTIVATED');
+    console.log('💡'.repeat(20));
+    console.log('📱 Messages will be printed to console');
+    console.log('🚫 No messages will be sent to WhatsApp');
+    console.log('💡 No API credentials required');
+    console.log('💡'.repeat(20));
+    console.log('\n Usage: npm run dev:test -- send "Your message"');
+    console.log('📝 Interactive: npm run dev:test interactive');
+  } else {
+    console.log('\n⚡ Production Mode - Messages will be sent to WhatsApp');
+  }
+
+  console.log('\n🌐 Webhook URL:', `${process.env.WEBHOOK_URL || `http://localhost:${port}`}/webhook`);
+  console.log('❤️  Health check:', `${process.env.WEBHOOK_URL || `http://localhost:${port}`}/health`);
+  console.log('='.repeat(60) + '\n');
 });
