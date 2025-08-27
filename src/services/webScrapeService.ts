@@ -298,7 +298,7 @@ export class WebScrapeService {
       path: screenshotPath,
       fullPage: true,
       type: 'png',
-      quality: 80,
+      // quality option is only supported for JPEG screenshots
     });
 
     console.log('📸 Screenshot captured for visual analysis:', {
