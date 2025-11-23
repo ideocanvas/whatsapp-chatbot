@@ -1,7 +1,12 @@
-import { webkit, Browser, Page } from 'playwright';
+import { chromium, Browser, Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+
+// --- TYPE DECLARATIONS TO FIX "Cannot find name" ERRORS ---
+declare const window: any;
+declare const document: any;
+// ---------------------------------------------------------
 
 export interface WebScrapeResult {
   title: string;
@@ -17,6 +22,8 @@ export interface WebScrapeConfig {
   maxRetries?: number;
   retryDelay?: number;
   navigationTimeout?: number;
+  concurrency?: number;
+  simulateHuman?: boolean;
 }
 
 export class WebScrapeService {
@@ -26,195 +33,195 @@ export class WebScrapeService {
 
   constructor(config: WebScrapeConfig = {}) {
     this.config = {
-      timeout: config.timeout || 30000,
-      userAgent: config.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      viewport: config.viewport || { width: 1280, height: 720 },
+      timeout: config.timeout || 60000,
+      userAgent: config.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+      viewport: config.viewport || { width: 1366, height: 768 },
       maxRetries: config.maxRetries || 2,
       retryDelay: config.retryDelay || 2000,
-      navigationTimeout: config.navigationTimeout || 15000,
+      navigationTimeout: config.navigationTimeout || 30000,
+      concurrency: config.concurrency || 3,
+      simulateHuman: true,
     };
 
-    // Initialize OpenAI service for visual analysis fallback
     this.initializeOpenAIService();
   }
 
-  /**
-   * Initialize the browser instance
-   */
   async initialize(): Promise<void> {
     if (!this.browser) {
-      this.browser = await webkit.launch({
+      this.browser = await chromium.launch({
         headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled'
+        ]
       });
     }
   }
 
-  /**
-   * Scrape content from a specific URL
-   */
   async scrapeUrl(url: string, selector?: string): Promise<WebScrapeResult> {
     await this.initialize();
+    if (!this.browser) throw new Error('Browser not initialized');
 
-    if (!this.browser) {
-      throw new Error('Browser not initialized');
-    }
+    const context = await this.browser.newContext({
+      viewport: this.config.viewport,
+      userAgent: this.config.userAgent,
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+    });
 
+    const page = await context.newPage();
     let retryCount = 0;
-    const maxRetries = this.config.maxRetries!;
 
-    while (retryCount <= maxRetries) {
-      const page = await this.browser.newPage();
+    try {
+      while (retryCount <= this.config.maxRetries!) {
+        try {
+          console.log(`🕵️ Human-like scrape: ${url} (Attempt ${retryCount + 1})`);
 
-      try {
-        // Set viewport and user agent
-        await page.setViewportSize(this.config.viewport!);
-        await page.setExtraHTTPHeaders({
-          'User-Agent': this.config.userAgent!,
-        });
-
-        console.log('🌐 Navigating to URL:', {
-          url,
-          attempt: retryCount + 1,
-          maxRetries
-        });
-
-        // Navigate to the URL with minimal waiting - just get whatever content loads
-        await page.goto(url, {
-          timeout: this.config.navigationTimeout,
-          waitUntil: 'domcontentloaded', // Just wait for DOM to be ready, not full load
-        });
-
-        // Wait a very short time for basic content to appear
-        await page.waitForTimeout(500);
-
-        // Get page title
-        const pageTitle = await page.title();
-
-        // Extract content based on selector or entire page
-        let extractedContent: string;
-        let usedVisualAnalysis = false;
-
-        if (selector) {
-          // Extract specific element content
-          const element = await page.$(selector);
-          if (element) {
-            extractedContent = await element.textContent() || '';
-          } else {
-            console.warn(`⚠️ Selector "${selector}" not found on page, attempting visual analysis fallback`);
-            // Fallback to visual analysis
-            extractedContent = await this.fallbackToVisualAnalysis(page, url, selector);
-            usedVisualAnalysis = true;
-          }
-        } else {
-          // Extract main content (try to get article or main content)
-          const articleContent = await page.$('article, main, .content, #content');
-          if (articleContent) {
-            extractedContent = await articleContent.textContent() || '';
-          } else {
-            // Fallback to body content
-            const body = await page.$('body');
-            extractedContent = await body?.textContent() || '';
-          }
-        }
-
-        // Clean up content
-        extractedContent = this.cleanContent(extractedContent);
-
-        const scrapeResult: WebScrapeResult = {
-          title: pageTitle,
-          url,
-          content: extractedContent.substring(0, 4000), // Limit content length
-          extractedAt: new Date().toISOString(),
-        };
-
-        console.log('✅ Web scrape completed:', {
-          url,
-          title: pageTitle.substring(0, 50) + (pageTitle.length > 50 ? '...' : ''),
-          contentLength: extractedContent.length,
-          attempt: retryCount + 1,
-          usedVisualAnalysis,
-        });
-
-        await page.close();
-        return scrapeResult;
-
-      } catch (error) {
-        await page.close();
-
-        // Check if we should retry
-        if (retryCount < maxRetries && this.shouldRetry(error)) {
-          retryCount++;
-          console.warn('⚠️ Web scrape attempt failed, retrying:', {
-            url,
-            attempt: retryCount,
-            maxRetries,
-            error: error instanceof Error ? error.message : `${error}`,
-            retryDelay: `${this.config.retryDelay}ms`
+          await page.goto(url, {
+            timeout: this.config.navigationTimeout,
+            waitUntil: 'domcontentloaded',
           });
 
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, this.config.retryDelay!));
-          continue;
+          if (this.config.simulateHuman) {
+            await this.dismissModals(page);
+            await this.autoScroll(page);
+            await page.waitForTimeout(Math.floor(Math.random() * 1000) + 500);
+          }
+
+          const pageTitle = await page.title();
+
+          // Execute extraction logic IN the browser
+          let extractedContent = await page.evaluate((inputSelector) => {
+            // -- CLEANUP PHASE --
+            const junkSelectors = [
+              'script', 'style', 'noscript', 'iframe', 'svg',
+              'nav', 'footer', 'header', 
+              '.ad', '.ads', '.advertisement', 
+              '#cookie-banner', '.cookie-consent',
+              '[role="alert"]', '[aria-hidden="true"]'
+            ];
+            
+            junkSelectors.forEach(sel => {
+              const elements = document.querySelectorAll(sel);
+              elements.forEach((el: any) => el.remove());
+            });
+
+            const clean = (text: string) => text.replace(/\s+/g, ' ').replace(/\n+/g, '\n').trim();
+
+            // -- EXTRACTION PHASE --
+
+            // 1. Specific Selector
+            if (inputSelector) {
+              const el = document.querySelector(inputSelector);
+              if (el) return clean(el.textContent || '');
+            }
+
+            // 2. Heuristic: Find 'meatiest' element
+            // explicitly cast to any[] to allow reduce
+            const candidates = Array.from(document.querySelectorAll('article, main, .content, #content, .post-body, .entry-content')) as any[];
+            
+            if (candidates.length > 0) {
+              // Explicitly cast result to 'any' to fix "best is unknown" error
+              const best = candidates.reduce((a: any, b: any) => 
+                (a.textContent?.length || 0) > (b.textContent?.length || 0) ? a : b
+              ) as any;
+              
+              return clean(best.textContent || '');
+            }
+
+            // 3. Fallback to Body
+            return clean(document.body.innerText || '');
+          }, selector);
+
+          // Visual Fallback
+          if (extractedContent.length < 100) {
+            console.warn(`⚠️ Content sparse for "${url}", using Visual Analysis...`);
+            extractedContent = await this.fallbackToVisualAnalysis(page, url, selector);
+          }
+
+          const scrapeResult: WebScrapeResult = {
+            title: pageTitle,
+            url,
+            content: extractedContent.substring(0, 8000),
+            extractedAt: new Date().toISOString(),
+          };
+
+          await context.close();
+          return scrapeResult;
+
+        } catch (error) {
+            if (retryCount < this.config.maxRetries! && this.shouldRetry(error)) {
+                retryCount++;
+                const delay = this.config.retryDelay! + Math.random() * 1000;
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            throw error;
         }
-
-        console.error('❌ Web scrape error:', {
-          url,
-          error: error instanceof Error ? error.message : `${error}`,
-          finalAttempt: retryCount + 1,
-        });
-
-        throw new Error(`Failed to scrape URL: ${error instanceof Error ? error.message : `${error}`}`);
       }
+      throw new Error(`Max retries reached`);
+    } catch (error) {
+      await context.close().catch(() => {});
+      throw new Error(`Scrape failed: ${error instanceof Error ? error.message : `${error}`}`);
     }
-
-    throw new Error(`Failed to scrape URL after ${maxRetries + 1} attempts`);
   }
 
-  /**
-   * Scrape multiple URLs
-   */
+  private async autoScroll(page: Page): Promise<void> {
+    try {
+      await page.evaluate(async () => {
+        await new Promise<void>((resolve) => {
+          let totalHeight = 0;
+          const distance = 200;
+          const timer = setInterval(() => {
+            const scrollHeight = document.body.scrollHeight;
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+
+            if (totalHeight >= scrollHeight || totalHeight > 15000) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 100);
+        });
+      });
+    } catch (e) {
+      // Ignore scroll errors
+    }
+  }
+
+  private async dismissModals(page: Page): Promise<void> {
+    try {
+      const buttonTexts = ['Accept', 'Agree', 'Allow', 'I understand', 'Close', 'Reject All'];
+      for (const text of buttonTexts) {
+        const button = page.getByRole('button', { name: text, exact: false }).first();
+        if (await button.isVisible()) {
+            await button.click({ timeout: 1000 }).catch(() => {});
+            await page.waitForTimeout(200);
+        }
+      }
+    } catch (e) {}
+  }
+
   async scrapeUrls(urls: string[], selector?: string): Promise<WebScrapeResult[]> {
     const results: WebScrapeResult[] = [];
+    const batchSize = this.config.concurrency || 3; 
 
-    for (const url of urls) {
-      try {
-        const result = await this.scrapeUrl(url, selector);
-        results.push(result);
-      } catch (error) {
-        console.warn('⚠️ Failed to scrape URL:', { url, error });
-        // Continue with other URLs
-      }
+    for (let i = 0; i < urls.length; i += batchSize) {
+      const batch = urls.slice(i, i + batchSize);
+      console.log(`🚀 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(urls.length/batchSize)}`);
+      
+      const batchPromises = batch.map(url => this.scrapeUrl(url, selector).catch(e => {
+        console.error(`❌ Failed: ${url}`); 
+        return null; 
+      }));
+
+      const batchResults = await Promise.all(batchPromises);
+      batchResults.forEach(r => { if(r) results.push(r); });
     }
-
     return results;
   }
 
-  /**
-   * Clean extracted content
-   */
-  private cleanContent(content: string): string {
-    return content
-      .replace(/\s+/g, ' ')
-      .replace(/\n+/g, '\n')
-      .trim();
-  }
-
-  /**
-   * Format scrape results for LLM consumption
-   */
-  formatScrapeResults(results: WebScrapeResult[]): string {
-    if (results.length === 0) {
-      return 'No content scraped.';
-    }
-
-    return results.map((result, index) =>
-      `[${index + 1}] ${result.title}\nURL: ${result.url}\nContent: ${result.content}\n`
-    ).join('\n');
-  }
-
-  /**
-   * Close the browser instance
-   */
   async close(): Promise<void> {
     if (this.browser) {
       await this.browser.close();
@@ -222,170 +229,58 @@ export class WebScrapeService {
     }
   }
 
-  /**
-   * Determine if a scrape error should be retried
-   */
   private shouldRetry(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
-
-    const errorMessage = error.message.toLowerCase();
-
-    // Retry on timeout and network-related errors
-    const retryableErrors = [
-      'timeout',
-      'network',
-      'navigation',
-      'load',
-      'connection',
-      'socket',
-      'econnreset',
-      'econnrefused',
-      'econnaborted',
-      'etimedout'
-    ];
-
-    return retryableErrors.some(keyword => errorMessage.includes(keyword));
+    const msg = error.message.toLowerCase();
+    return ['timeout', 'network', 'connection', 'reset', 'navigat'].some(k => msg.includes(k));
   }
 
-  /**
-   * Fallback to visual analysis when CSS selectors fail
-   */
   private async fallbackToVisualAnalysis(page: Page, url: string, selector?: string): Promise<string> {
-    if (!this.openaiService?.isConfigured()) {
-      throw new Error('Visual analysis fallback not available - OpenAI service not configured');
-    }
-
+    if (!this.openaiService?.isConfigured()) return "Visual analysis not configured.";
     try {
-      // Capture screenshot of the page
       const screenshotPath = await this.captureScreenshot(page, url);
-
-      // Use specialized web scrape image analysis prompt from config if available
-      const webScrapeImagePrompt = this.openaiService.getConfig()?.prompts?.webScrapeImageAnalysis;
-      const analysis = await this.openaiService.analyzeImage(screenshotPath, webScrapeImagePrompt);
-
-      // Clean up the screenshot file
+      const prompt = this.openaiService.getConfig()?.prompts?.webScrapeImageAnalysis;
+      const analysis = await this.openaiService.analyzeImage(screenshotPath, prompt);
       this.cleanupScreenshot(screenshotPath);
-
       return analysis;
-
-    } catch (error) {
-      console.error('❌ Visual analysis fallback failed:', {
-        url,
-        error: error instanceof Error ? error.message : `${error}`,
-      });
-
-      // Clean up any temporary files
-      this.cleanupScreenshot(this.getScreenshotPath(url));
-
-      throw new Error(`Visual analysis fallback failed: ${error instanceof Error ? error.message : `${error}`}`);
-    }
+    } catch (error) { return ""; }
   }
 
-  /**
-   * Capture screenshot of the current page
-   */
   private async captureScreenshot(page: Page, url: string): Promise<string> {
     const screenshotPath = this.getScreenshotPath(url);
-
-    // Ensure screenshot directory exists
-    const screenshotDir = path.dirname(screenshotPath);
-    if (!fs.existsSync(screenshotDir)) {
-      fs.mkdirSync(screenshotDir, { recursive: true });
-    }
-
-    // Capture full page screenshot
-    await page.screenshot({
-      path: screenshotPath,
-      fullPage: true,
-      type: 'png',
-      // quality option is only supported for JPEG screenshots
-    });
-
-    console.log('📸 Screenshot captured for visual analysis:', {
-      url,
-      screenshotPath,
-    });
-
+    const dir = path.dirname(screenshotPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: screenshotPath, fullPage: true });
     return screenshotPath;
   }
 
-  /**
-   * Generate screenshot file path
-   */
   private getScreenshotPath(url: string): string {
-    const urlHash = this.hashString(url);
-    const timestamp = Date.now();
-    return path.join('data', 'screenshots', `screenshot_${urlHash}_${timestamp}.png`);
-  }
-
-  /**
-   * Clean up screenshot file
-   */
-  private cleanupScreenshot(screenshotPath: string): void {
-    try {
-      if (fs.existsSync(screenshotPath)) {
-        fs.unlinkSync(screenshotPath);
-        console.log('🧹 Cleaned up screenshot:', screenshotPath);
-      }
-    } catch (error) {
-      console.warn('⚠️ Failed to clean up screenshot:', {
-        screenshotPath,
-        error: error instanceof Error ? error.message : `${error}`,
-      });
-    }
-  }
-
-  /**
-   * Simple string hashing function
-   */
-  private hashString(str: string): string {
     let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash).toString(16);
+    for (let i = 0; i < url.length; i++) hash = ((hash << 5) - hash) + url.charCodeAt(i) | 0;
+    return path.join('data', 'screenshots', `snap_${Math.abs(hash)}_${Date.now()}.png`);
   }
 
-  /**
-   * Initialize OpenAI service asynchronously
-   */
-  private async initializeOpenAIService(): Promise<void> {
-    try {
-      // Try to load from config file first
-      this.openaiService = await createOpenAIServiceFromConfig();
-      console.log('OpenAI service initialized successfully from config file in WebScrapeService');
-    } catch (configError) {
-      console.warn('Failed to initialize from config file in WebScrapeService, trying legacy environment variables:', configError instanceof Error ? configError.message : `${configError}`);
+  private cleanupScreenshot(pathStr: string): void {
+    try { if (fs.existsSync(pathStr)) fs.unlinkSync(pathStr); } catch (e) {}
+  }
 
-      // Fall back to environment variables for backward compatibility
-      try {
-        this.openaiService = createOpenAIServiceFromEnv();
-        console.log('OpenAI service initialized successfully from environment variables (legacy mode) in WebScrapeService');
-      } catch (envError) {
-        console.warn('OpenAI service not available for visual analysis fallback:', envError instanceof Error ? envError.message : `${envError}`);
-        this.openaiService = null;
-      }
-    }
+  formatScrapeResults(results: WebScrapeResult[]): string {
+    if (results.length === 0) return 'No content scraped.';
+    return results.map((result, index) =>
+      `[${index + 1}] ${result.title}\nURL: ${result.url}\nContent: ${result.content}\n`
+    ).join('\n');
+  }
+
+  private async initializeOpenAIService(): Promise<void> {
+    try { this.openaiService = await createOpenAIServiceFromConfig(); } 
+    catch (e) { try { this.openaiService = createOpenAIServiceFromEnv(); } catch (e) { this.openaiService = null; } }
   }
 }
 
-// Helper function to create WebScrapeService instance with environment configuration
 export function createWebScrapeService(): WebScrapeService {
-  const config: WebScrapeConfig = {
-    timeout: process.env.WEB_SCRAPE_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_TIMEOUT) : undefined,
-    maxRetries: process.env.WEB_SCRAPE_MAX_RETRIES ? parseInt(process.env.WEB_SCRAPE_MAX_RETRIES) : undefined,
-    retryDelay: process.env.WEB_SCRAPE_RETRY_DELAY ? parseInt(process.env.WEB_SCRAPE_RETRY_DELAY) : undefined,
-    navigationTimeout: process.env.WEB_SCRAPE_NAVIGATION_TIMEOUT ? parseInt(process.env.WEB_SCRAPE_NAVIGATION_TIMEOUT) : undefined,
-  };
-
-  console.log('🌐 Web Scrape Service Configuration:', {
-    timeout: config.timeout || 'default',
-    maxRetries: config.maxRetries || 'default',
-    retryDelay: config.retryDelay || 'default',
-    navigationTimeout: config.navigationTimeout || 'default',
+  return new WebScrapeService({
+    timeout: Number(process.env.WEB_SCRAPE_TIMEOUT) || undefined,
+    maxRetries: Number(process.env.WEB_SCRAPE_MAX_RETRIES) || undefined,
+    concurrency: Number(process.env.WEB_SCRAPE_CONCURRENCY) || 3
   });
-
-  return new WebScrapeService(config);
 }
