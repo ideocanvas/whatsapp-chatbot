@@ -13,6 +13,9 @@ export interface WebScrapeResult {
   content: string;
   extractedAt: string;
   method: 'html' | 'visual' | 'hybrid';
+  mobileView?: boolean;
+  viewport?: { width: number; height: number };
+  userAgent?: string;
 }
 
 export interface WebScrapeConfig {
@@ -24,6 +27,8 @@ export interface WebScrapeConfig {
   navigationTimeout?: number;
   concurrency?: number;
   simulateHuman?: boolean;
+  mobileView?: boolean;
+  mobileDevice?: 'iphone' | 'android' | 'tablet' | 'custom';
 }
 
 export class WebScrapeService {
@@ -31,16 +36,54 @@ export class WebScrapeService {
   private browser: Browser | null = null;
   private openaiService: OpenAIService | null = null;
 
+  // Mobile device presets
+  private mobilePresets = {
+    iphone: {
+      viewport: { width: 375, height: 812 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+    },
+    android: {
+      viewport: { width: 360, height: 740 },
+      userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36'
+    },
+    tablet: {
+      viewport: { width: 768, height: 1024 },
+      userAgent: 'Mozilla/5.0 (iPad; CPU OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+    }
+  };
+
   constructor(config: WebScrapeConfig = {}) {
+    // Apply mobile configuration if requested
+    let finalViewport = config.viewport;
+    let finalUserAgent = config.userAgent;
+
+    if (config.mobileView) {
+      const device = config.mobileDevice || 'iphone';
+      
+      if (device !== 'custom') {
+        const preset = this.mobilePresets[device];
+        if (preset) {
+          finalViewport = config.viewport || preset.viewport;
+          finalUserAgent = config.userAgent || preset.userAgent;
+        }
+      } else {
+        // Default mobile settings for custom device
+        finalViewport = config.viewport || { width: 375, height: 812 };
+        finalUserAgent = config.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36';
+      }
+    }
+
     this.config = {
       timeout: config.timeout || 60000,
-      userAgent: config.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-      viewport: config.viewport || { width: 1280, height: 800 },
+      userAgent: finalUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+      viewport: finalViewport || { width: 1280, height: 800 },
       maxRetries: config.maxRetries || 2,
       retryDelay: config.retryDelay || 1000,
       navigationTimeout: config.navigationTimeout || 30000,
       concurrency: config.concurrency || 3,
       simulateHuman: true,
+      mobileView: config.mobileView || false,
+      mobileDevice: config.mobileDevice,
     };
 
     this.initializeOpenAIService();
@@ -149,18 +192,56 @@ export class WebScrapeService {
     }
   }
 
-  async scrapeUrl(url: string, selector?: string): Promise<WebScrapeResult> {
+  private shouldUseMobileView(url: string): boolean {
+    // Check if mobile view is explicitly configured
+    if (this.config.mobileView) return true;
+    
+    // Auto-detect mobile sites based on URL patterns
+    const mobilePatterns = [
+      /m\./i,                    // m.domain.com
+      /mobile\./i,               // mobile.domain.com
+      /\/mobile\//i,             // domain.com/mobile/
+      /\.mobi/i,                 // domain.mobi
+      /touch\./i,                // touch.domain.com
+      /\/wml\//i,                // WML mobile pages
+    ];
+    
+    return mobilePatterns.some(pattern => pattern.test(url));
+  }
+
+  async scrapeUrl(url: string, selector?: string, forceMobile?: boolean): Promise<WebScrapeResult> {
     await this.initialize();
     if (!this.browser) throw new Error('Browser not initialized');
 
+    // Determine if we should use mobile view
+    const useMobileView = forceMobile || this.shouldUseMobileView(url);
+    
     let context: BrowserContext | null = null;
     let retryCount = 0;
 
     while (retryCount <= this.config.maxRetries!) {
         try {
+            // Apply mobile settings if needed
+            let contextViewport = this.config.viewport;
+            let contextUserAgent = this.config.userAgent;
+            
+            if (useMobileView) {
+              const device = this.config.mobileDevice || 'iphone';
+              if (device !== 'custom') {
+                const preset = this.mobilePresets[device];
+                if (preset) {
+                  contextViewport = this.config.viewport || preset.viewport;
+                  contextUserAgent = this.config.userAgent || preset.userAgent;
+                }
+              } else {
+                contextViewport = this.config.viewport || { width: 375, height: 812 };
+                contextUserAgent = this.config.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36';
+              }
+            }
+
             context = await this.browser.newContext({
-                viewport: this.config.viewport,
-                userAgent: this.config.userAgent,
+                viewport: contextViewport,
+                userAgent: contextUserAgent,
                 deviceScaleFactor: 1,
             });
 
@@ -225,7 +306,10 @@ export class WebScrapeService {
                 url,
                 content: extractedContent,
                 extractedAt: new Date().toISOString(),
-                method
+                method,
+                mobileView: useMobileView,
+                viewport: contextViewport,
+                userAgent: contextUserAgent
             };
 
         } catch (error) {
@@ -277,13 +361,13 @@ export class WebScrapeService {
     }
   }
 
-  async scrapeUrls(urls: string[], selector?: string): Promise<WebScrapeResult[]> {
+  async scrapeUrls(urls: string[], selector?: string, forceMobile?: boolean): Promise<WebScrapeResult[]> {
     const results: WebScrapeResult[] = [];
     const batchSize = this.config.concurrency || 3;
 
     for (let i = 0; i < urls.length; i += batchSize) {
       const batch = urls.slice(i, i + batchSize);
-      const batchPromises = batch.map(url => this.scrapeUrl(url, selector).catch(e => {
+      const batchPromises = batch.map(url => this.scrapeUrl(url, selector, forceMobile).catch(e => {
         console.error(`❌ Failed: ${url} - ${e.message}`);
         return null;
       }));
@@ -315,7 +399,7 @@ export class WebScrapeService {
   formatScrapeResults(results: WebScrapeResult[]): string {
     if (results.length === 0) return 'No content scraped.';
     return results.map((result, index) =>
-      `[${index + 1}] ${result.title} (${result.method})\nURL: ${result.url}\nContent: ${result.content}\n`
+      `[${index + 1}] ${result.title} (${result.method})${result.mobileView ? ' 📱' : ''}\nURL: ${result.url}\nContent: ${result.content}\n`
     ).join('\n');
   }
 }
