@@ -85,6 +85,7 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY pnpm-lock.yaml ./
 
 # Install production dependencies including all Playwright browsers
 RUN npx playwright install chromium --with-deps && npm cache clean --force
@@ -110,9 +111,13 @@ ENV CHROME_BIN=/usr/bin/chromium-browser
 
 RUN chown -R whatsapp-bot:nodejs /app/
 
+RUN npm install -g pnpm
 # Switch to non-root user
 USER whatsapp-bot
 
+RUN pnpm install --frozen-lockfile
+COPY pnpm-workspace.yaml ./
+RUN pnpm rebuild better-sqlite3
 
 # Expose the port the app runs on
 EXPOSE 3000
