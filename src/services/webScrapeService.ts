@@ -36,19 +36,14 @@ export class WebScrapeService {
   private browser: Browser | null = null;
   private openaiService: OpenAIService | null = null;
 
-  // Mobile device presets
+  // 1. UPDATED: Modern Mobile Presets (iPhone 14 Pro)
   private mobilePresets = {
     iphone: {
-      viewport: { width: 375, height: 812 },
-      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
-    },
-    android: {
-      viewport: { width: 360, height: 740 },
-      userAgent: 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36'
-    },
-    tablet: {
-      viewport: { width: 768, height: 1024 },
-      userAgent: 'Mozilla/5.0 (iPad; CPU OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+      viewport: { width: 393, height: 852 },
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
     }
   };
 
@@ -61,7 +56,8 @@ export class WebScrapeService {
       const device = config.mobileDevice || 'iphone';
       
       if (device !== 'custom') {
-        const preset = this.mobilePresets[device];
+        // Only 'iphone' is supported in the updated presets
+        const preset = this.mobilePresets.iphone;
         if (preset) {
           finalViewport = config.viewport || preset.viewport;
           finalUserAgent = config.userAgent || preset.userAgent;
@@ -213,37 +209,31 @@ export class WebScrapeService {
     await this.initialize();
     if (!this.browser) throw new Error('Browser not initialized');
 
-    // Determine if we should use mobile view
     const useMobileView = forceMobile || this.shouldUseMobileView(url);
     
+    // Default Context Options
+    const contextOptions: any = {
+        viewport: this.config.viewport,
+        userAgent: this.config.userAgent,
+        deviceScaleFactor: 1,
+    };
+
+    // Apply iPhone Mobile Settings if requested
+    if (useMobileView) {
+        const preset = this.mobilePresets.iphone;
+        contextOptions.viewport = preset.viewport;
+        contextOptions.userAgent = preset.userAgent;
+        contextOptions.isMobile = preset.isMobile;
+        contextOptions.hasTouch = preset.hasTouch;
+        contextOptions.deviceScaleFactor = preset.deviceScaleFactor;
+    }
+
     let context: BrowserContext | null = null;
     let retryCount = 0;
 
     while (retryCount <= this.config.maxRetries!) {
         try {
-            // Apply mobile settings if needed
-            let contextViewport = this.config.viewport;
-            let contextUserAgent = this.config.userAgent;
-            
-            if (useMobileView) {
-              const device = this.config.mobileDevice || 'iphone';
-              if (device !== 'custom') {
-                const preset = this.mobilePresets[device];
-                if (preset) {
-                  contextViewport = this.config.viewport || preset.viewport;
-                  contextUserAgent = this.config.userAgent || preset.userAgent;
-                }
-              } else {
-                contextViewport = this.config.viewport || { width: 375, height: 812 };
-                contextUserAgent = this.config.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36';
-              }
-            }
-
-            context = await this.browser.newContext({
-                viewport: contextViewport,
-                userAgent: contextUserAgent,
-                deviceScaleFactor: 1,
-            });
+            context = await this.browser.newContext(contextOptions);
 
             await this.setupBlockers(context);
             const page = await context.newPage();
@@ -308,8 +298,8 @@ export class WebScrapeService {
                 extractedAt: new Date().toISOString(),
                 method,
                 mobileView: useMobileView,
-                viewport: contextViewport,
-                userAgent: contextUserAgent
+                viewport: contextOptions.viewport,
+                userAgent: contextOptions.userAgent
             };
 
         } catch (error) {

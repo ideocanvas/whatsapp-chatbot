@@ -36,28 +36,20 @@ export function removeToolCallArtifacts(response: string): string {
 /**
  * Shortens responses for WhatsApp by truncating long messages and making them more concise
  * @param response The response to shorten
- * @param maxLength Maximum length for WhatsApp responses (default: 320 characters)
+ * @param maxLength Maximum length for WhatsApp responses (default: 1000 characters)
  * @returns Shortened response suitable for WhatsApp
  */
-export function shortenForWhatsApp(response: string, maxLength: number = 320): string {
-  if (!response || response.length <= maxLength) {
-    return response;
-  }
+export function shortenForWhatsApp(response: string, maxLength: number = 1000): string {
+  if (!response) return response;
 
-  // First, clean up the response
   let shortened = response.trim();
 
-  // Remove excessive formalities and make it more conversational
-  shortened = shortened
-    .replace(/^(?:hello|hi|hey|greetings)[,!.\s]*/i, '') // Remove greeting words at start
-    .replace(/thank you for your (?:question|query|message)/gi, '')
-    .replace(/i (?:would like to|want to) (?:share|tell you|inform you)/gi, '')
-    .replace(/in (?:conclusion|summary|closing)/gi, '')
-    .replace(/\b(?:certainly|absolutely|definitely|of course)\b/gi, '')
-    .replace(/\.\s+However,/g, ', but') // Make transitions more casual
-    .replace(/\.\s+Additionally,/g, ', also') // Make transitions more casual
-    .replace(/\.\s+Furthermore,/g, ', plus') // Make transitions more casual
-    .trim();
+  // DISABLED: Allow the bot to be polite
+  // shortened = shortened.replace(/^(?:hello|hi|hey|greetings)[,!.\s]*/i, '');
+
+  if (shortened.length > maxLength) {
+      return shortened.substring(0, maxLength) + "...";
+  }
 
   return shortened;
 }

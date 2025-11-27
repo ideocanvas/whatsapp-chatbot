@@ -5,250 +5,118 @@ export interface NewsArticle {
   url: string;
   content: string;
   source: string;
-  publishedAt?: string;
   category?: string;
 }
 
-export interface NewsScrapeConfig {
-  maxArticles?: number;
-  maxArticlesPerSite?: number;
-  searchQuery?: string;
-  timeout?: number;
-  newsSources?: string[];
-}
+// Define supported categories
+type NewsCategory = 'general' | 'tech' | 'business' | 'sports' | 'world';
 
 export class NewsScrapeService {
   private webScrapeService: WebScrapeService;
-  private config: NewsScrapeConfig;
-  private hardcodedNewsUrls: string[];
+  
+  // Storage for our cached news summaries
+  private newsCache: Map<string, string> = new Map();
+  private isScraping: boolean = false;
+  private lastUpdated: Date | null = null;
 
-  constructor(
-    webScrapeService: WebScrapeService,
-    config: NewsScrapeConfig = {}
-  ) {
+  // Hong Kong focused, Mobile-Friendly URLs
+  private categorySources: Record<NewsCategory, string[]> = {
+    'general': [
+       'https://news.rthk.hk/rthk/en/', 
+       'https://hongkongfp.com/'
+    ],
+    'world': [
+       'https://www.bbc.com/news/world' 
+    ],
+    'tech': [
+       'https://techcrunch.com/',
+       'https://www.theverge.com/'
+    ],
+    'business': [
+       'https://www.cnbc.com/world/?region=world'
+    ],
+    'sports': [
+       'https://www.skysports.com/news-wire'
+    ]
+  };
+
+  constructor(webScrapeService: WebScrapeService) {
     this.webScrapeService = webScrapeService;
-    this.config = {
-      maxArticles: config.maxArticles || 5,
-      maxArticlesPerSite: config.maxArticlesPerSite || 3,
-      searchQuery: config.searchQuery || 'latest news',
-      timeout: config.timeout || 30000,
-      newsSources: config.newsSources || [
-        'www.scmp.com',
-      ]
-    };
-
-    // Hardcoded news URLs from popular news sources
-    this.hardcodedNewsUrls = [
-      'https://news.google.com/search?q=Hong%20Kong&hl=en-US&gl=US&ceid=US%3Aen',
-    ];
   }
 
   /**
-   * Scrape news articles based on a query
+   * Start the background service loop
    */
-  async scrapeNews(query?: string): Promise<NewsArticle[]> {
-    const maxArticles = this.config.maxArticles!;
-    const maxArticlesPerSite = this.config.maxArticlesPerSite!;
+  public startBackgroundService(intervalMinutes: number = 30) {
+    console.log(`🕰️ Starting Background News Service (Every ${intervalMinutes} mins)`);
+    this.refreshNewsCache(); // Run immediately
+    setInterval(() => this.refreshNewsCache(), intervalMinutes * 60 * 1000);
+  }
 
-    console.log('📰 Starting news scrape from hardcoded URLs:', {
-      maxArticles,
-      maxArticlesPerSite,
-      totalHardcodedUrls: this.hardcodedNewsUrls.length
-    });
+  /**
+   * Scrapes all categories and updates the cache
+   */
+  private async refreshNewsCache() {
+    if (this.isScraping) return;
+    this.isScraping = true;
+    console.log('🔄 Background Service: Updating News Cache...');
 
     try {
-      // Step 1: Use hardcoded URLs directly instead of Google search
-      const newsUrls = this.hardcodedNewsUrls.slice(0, maxArticles);
+      const categories = Object.keys(this.categorySources) as NewsCategory[];
 
-      console.log('🔍 Selected hardcoded URLs:', {
-        totalSelected: newsUrls.length,
-        urls: newsUrls.map(url => new URL(url).hostname)
-      });
-
-      // Step 2: Scrape content from hardcoded URLs
-      const scrapeResults = await this.webScrapeService.scrapeUrls(newsUrls);
-
-      // Step 3: Convert to NewsArticle format
-      const newsArticles = scrapeResults.map(result => this.convertToNewsArticle(result));
-
-      console.log('✅ News scrape completed:', {
-        successfulArticles: newsArticles.length,
-        totalAttempted: newsUrls.length,
-        distribution: this.getArticleDistribution(newsArticles)
-      });
-
-      return newsArticles;
+      for (const cat of categories) {
+        const urls = this.categorySources[cat];
+        // FORCE MOBILE = TRUE
+        const results = await this.webScrapeService.scrapeUrls(urls, undefined, true);
+        
+        if (results.length > 0) {
+            const formatted = this.formatNewsForLLM(results);
+            this.newsCache.set(cat, formatted);
+            console.log(`✅ Cached ${results.length} articles for [${cat}]`);
+        }
+      }
+      this.lastUpdated = new Date();
     } catch (error) {
-      console.error('❌ News scrape error:', {
-        error: error instanceof Error ? error.message : `${error}`
-      });
-      throw new Error(`Failed to scrape news: ${error instanceof Error ? error.message : `${error}`}`);
+      console.error('❌ Background Service Error:', error);
+    } finally {
+      this.isScraping = false;
     }
   }
 
   /**
-   * Scrape news from specific URLs
+   * Returns cached string for the Tool to use
    */
-  async scrapeNewsFromUrls(urls: string[]): Promise<NewsArticle[]> {
-    console.log('📰 Scraping news from specific URLs:', {
-      urls: urls.map(url => new URL(url).hostname),
-      count: urls.length
-    });
+  public getCachedNews(category: string = 'general'): string {
+    // Basic normalization
+    let key: NewsCategory = 'general';
+    const lower = category.toLowerCase();
+    if (lower.includes('tech')) key = 'tech';
+    else if (lower.includes('busin') || lower.includes('financ')) key = 'business';
+    else if (lower.includes('sport')) key = 'sports';
+    else if (lower.includes('world')) key = 'world';
 
-    try {
-      const scrapeResults = await this.webScrapeService.scrapeUrls(urls);
-      const newsArticles = scrapeResults.map(result => this.convertToNewsArticle(result));
-
-      console.log('✅ Specific URL news scrape completed:', {
-        successfulArticles: newsArticles.length,
-        totalAttempted: urls.length
-      });
-
-      return newsArticles;
-    } catch (error) {
-      console.error('❌ Specific URL news scrape error:', {
-        error: error instanceof Error ? error.message : `${error}`,
-        urls
-      });
-      throw new Error(`Failed to scrape news from URLs: ${error instanceof Error ? error.message : `${error}`}`);
-    }
-  }
-
-  /**
-   * Check if a URL is from a known news source
-   */
-  private isNewsSource(url: string): boolean {
-    try {
-      const hostname = new URL(url).hostname;
-      return this.config.newsSources!.some(source => hostname.includes(source));
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Convert WebScrapeResult to NewsArticle
-   */
-  private convertToNewsArticle(result: WebScrapeResult): NewsArticle {
-    const source = new URL(result.url).hostname;
-
-    return {
-      title: result.title,
-      url: result.url,
-      content: result.content,
-      source: source,
-      publishedAt: new Date().toISOString(), // Could extract from content if available
-      category: this.detectCategory(result.content)
-    };
-  }
-
-  /**
-   * Detect news category from content
-   */
-  private detectCategory(content: string): string {
-    const lowerContent = content.toLowerCase();
-
-    if (lowerContent.includes('politics') || lowerContent.includes('election') || lowerContent.includes('government')) {
-      return 'Politics';
-    } else if (lowerContent.includes('business') || lowerContent.includes('economy') || lowerContent.includes('market')) {
-      return 'Business';
-    } else if (lowerContent.includes('technology') || lowerContent.includes('tech') || lowerContent.includes('ai')) {
-      return 'Technology';
-    } else if (lowerContent.includes('sports') || lowerContent.includes('game') || lowerContent.includes('match')) {
-      return 'Sports';
-    } else if (lowerContent.includes('health') || lowerContent.includes('medical') || lowerContent.includes('covid')) {
-      return 'Health';
-    } else if (lowerContent.includes('entertainment') || lowerContent.includes('movie') || lowerContent.includes('celebrity')) {
-      return 'Entertainment';
-    } else {
-      return 'General';
-    }
-  }
-
-  /**
-   * Get distribution of articles by source
-   */
-  private getArticleDistribution(articles: NewsArticle[]): Record<string, number> {
-    const distribution: Record<string, number> = {};
-    for (const article of articles) {
-      distribution[article.source] = (distribution[article.source] || 0) + 1;
-    }
-    return distribution;
-  }
-
-  /**
-   * Format news articles for WhatsApp display - concise and easy to read
-   */
-  formatNewsArticles(articles: NewsArticle[]): string {
-    if (articles.length === 0) {
-      return '📰 No news articles found at the moment.';
+    const data = this.newsCache.get(key);
+    
+    if (!data) {
+        // If cache is empty, trigger a scrape (fallback)
+        this.refreshNewsCache(); 
+        return "I am currently updating my news feed. Please ask again in 1 minute.";
     }
 
-    // WhatsApp-friendly format with emojis and concise information
-    const header = `📰 *Today's Top ${articles.length} News Updates* 📰\n\n`;
+    const timeAgo = this.lastUpdated 
+      ? Math.floor((new Date().getTime() - this.lastUpdated.getTime()) / 60000) 
+      : 0;
 
-    const formattedText = articles.map((article, index) => {
-      // Extract the main domain for cleaner source display
-      const sourceDomain = article.source.replace('www.', '').split('.')[0];
-      const sourceEmoji = this.getSourceEmoji(article.source);
-
-      // Create a concise summary from the content (first 2-3 sentences)
-      const summary = this.extractSummary(article.content);
-
-      return `*${index + 1}. ${article.title}*\n` +
-             `${sourceEmoji} ${sourceDomain} • ${article.category}\n` +
-             `📝 ${summary}\n`;
-    }).join('\n');
-
-    const footer = `\n💬 *Reply with the number* for more details on any story!`;
-
-    return header + formattedText + footer;
+    return `[SYSTEM: News fetch time: ${timeAgo} mins ago. Category: ${key.toUpperCase()}]\n\n${data}`;
   }
 
-  /**
-   * Get appropriate emoji for news source
-   */
-  private getSourceEmoji(source: string): string {
-    if (source.includes('scmp')) return '🇭🇰';
-    if (source.includes('bbc')) return '🇬🇧';
-    if (source.includes('cnn')) return '🇺🇸';
-    if (source.includes('reuters')) return '🌍';
-    return '📰';
-  }
-
-  /**
-   * Extract a concise summary from article content (2-3 sentences)
-   */
-  private extractSummary(content: string, maxSentences: number = 2): string {
-    if (!content) return 'No summary available';
-
-    // Split into sentences and take first few
-    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
-    const summary = sentences.slice(0, maxSentences).join('. ') + '.';
-
-    // Ensure it's not too long for WhatsApp
-    return summary.length > 120 ? summary.substring(0, 117) + '...' : summary;
-  }
-
-  /**
-   * Get trending news topics
-   */
-  async getTrendingNews(): Promise<NewsArticle[]> {
-    return this.scrapeNews('trending news today');
-  }
-
-  /**
-   * Get news by category
-   */
-  async getNewsByCategory(category: string): Promise<NewsArticle[]> {
-    return this.scrapeNews(`${category} news`);
+  private formatNewsForLLM(results: WebScrapeResult[]): string {
+    return results.map((r, i) => 
+        `Headline: ${r.title}\nSource: ${r.url}\nSummary: ${r.content.substring(0, 350)}...`
+    ).join('\n\n');
   }
 }
 
-// Helper function to create NewsScrapeService instance
-export function createNewsScrapeService(
-  webScrapeService: WebScrapeService,
-  config?: NewsScrapeConfig
-): NewsScrapeService {
-  return new NewsScrapeService(webScrapeService, config);
+export function createNewsScrapeService(webScrapeService: WebScrapeService): NewsScrapeService {
+  return new NewsScrapeService(webScrapeService);
 }

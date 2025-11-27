@@ -13,7 +13,7 @@ export interface ToolFunction {
 // Available tools
 export const availableTools: { [key: string]: ToolFunction } = {};
 let webScrapeService: WebScrapeService;
-let newsScrapeService: NewsScrapeService;
+export let newsScrapeService: NewsScrapeService;
 let mediaService: any; // Will be initialized later
 
 // Tool schemas for OpenAI function calling
@@ -69,20 +69,15 @@ export const toolSchemas = [
     type: 'function' as const,
     function: {
       name: 'scrape_news',
-      description: 'Scrape current news articles from hardcoded major news websites. Use this when users ask for news, current events, or latest updates.',
+      description: 'Get latest news headlines. Categories: general, tech, business, sports, world.',
       parameters: {
         type: 'object',
         properties: {
-          query: {
+          category: {
             type: 'string',
-            description: 'The news topic or query (optional - currently uses hardcoded URLs)',
-          },
-          max_articles: {
-            type: 'number',
-            description: 'Maximum number of news articles to return (default: 3)',
+            description: 'Category of news (default: general).',
           }
         },
-        required: [],
         additionalProperties: false,
       },
     },
@@ -295,36 +290,17 @@ export async function executeTool(toolName: string, args: any): Promise<any> {
   return tool.execute(args);
 }
 
-availableTools.scrape_news = {
-  name: 'scrape_news',
-  description: 'Scrape current news articles from hardcoded major news websites',
-  parameters: toolSchemas[2].function.parameters,
-  execute: async (args: { query?: string; max_articles?: number }) => {
-    console.log('📰 Executing News Scrape from hardcoded URLs:', {
-      maxArticles: args.max_articles || 3
-    });
-
-    const startTime = Date.now();
-
-    try {
-      const articles = await newsScrapeService.scrapeNews(args.query);
-      const executionTime = Date.now() - startTime;
-
-      console.log('✅ News Scrape Completed:', {
-        articlesCount: articles.length,
-        executionTime: `${executionTime}ms`,
-        firstArticle: articles[0] ? articles[0].title.substring(0, 50) + '...' : 'No articles'
-      });
-
-      return newsScrapeService.formatNewsArticles(articles);
-    } catch (error) {
-      console.error('❌ News scrape execution error:', {
-        error: error instanceof Error ? error.message : `${error}`,
-      });
-      throw new Error('Failed to scrape news articles');
+  // UPDATED: News Tool
+  availableTools.scrape_news = {
+    name: 'scrape_news',
+    description: 'Get latest news headlines. Categories: general, tech, business, sports, world.',
+    parameters: toolSchemas[2].function.parameters,
+    execute: async (args: { category?: string }) => {
+      const cat = args.category || 'general';
+      console.log(`📰 Tool retrieving cached news for: ${cat}`);
+      return newsScrapeService.getCachedNews(cat);
     }
-  }
-};
+  };
 
 // Cleanup function to close browser instances
 export async function cleanupTools(): Promise<void> {

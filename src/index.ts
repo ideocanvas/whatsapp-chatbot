@@ -1,8 +1,11 @@
-import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
-import { WhatsAppService } from './services/whatsappService';
+import express from 'express';
 import { WebhookRoutes } from './routes/webhook';
+import { WhatsAppService } from './services/whatsappService';
+import { newsScrapeService, initializeTools } from './tools/index'; // Import service
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
+import { MediaService } from './services/mediaService';
 
 // Load environment variables
 dotenv.config();
@@ -31,6 +34,7 @@ if (!devMode && (!whatsappConfig.accessToken || !whatsappConfig.phoneNumberId)) 
 
 // Initialize services
 const whatsappService = new WhatsAppService(whatsappConfig, devMode);
+const mediaService = new MediaService(whatsappConfig);
 const webhookRoutes = new WebhookRoutes(
   whatsappService,
   process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
@@ -40,6 +44,44 @@ const webhookRoutes = new WebhookRoutes(
 
 // Use routes
 app.use('/', webhookRoutes.getRouter());
+
+// Initialize tools and start background service
+async function initializeBackgroundService() {
+  try {
+    // Initialize Google Search service if API keys are available
+    let googleSearchService: GoogleSearchService | null = null;
+    try {
+      googleSearchService = createGoogleSearchServiceFromEnv();
+      console.log('✅ Google Search service initialized successfully');
+    } catch (error) {
+      console.warn('⚠️ Google Search service not available:', error instanceof Error ? error.message : `${error}`);
+      googleSearchService = null;
+    }
+
+    // Initialize tools if Google Search service is available
+    if (googleSearchService) {
+      initializeTools(googleSearchService, mediaService);
+      console.log('✅ Tools initialized successfully');
+      
+      // Start background service after tools are initialized
+      if (newsScrapeService) {
+        console.log('🕰️ Starting Background News Service (Every 30 mins)');
+        newsScrapeService.startBackgroundService(30); // Runs every 30 mins
+      } else {
+        console.warn('⚠️ News scrape service not available');
+      }
+    } else {
+      console.warn('⚠️ Tools not initialized - Google Search service unavailable');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize background service:', error);
+  }
+}
+
+// Start background service initialization after server settles
+setTimeout(() => {
+  initializeBackgroundService();
+}, 5000);
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
