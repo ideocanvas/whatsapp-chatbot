@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm ci --only=production && npx playwright install chromium --with-deps
+RUN npx playwright install chromium --with-deps
 
 # Copy source code
 COPY . .
@@ -87,7 +87,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install production dependencies including all Playwright browsers
-RUN npm ci --only=production && npx playwright install chromium --with-deps && npm cache clean --force
+RUN npx playwright install chromium --with-deps && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist

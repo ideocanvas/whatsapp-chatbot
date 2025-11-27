@@ -1,6 +1,9 @@
 import { GoogleSearchService } from '../services/googleSearchService';
 import { WebScrapeService, createWebScrapeService } from '../services/webScrapeService';
 import { NewsScrapeService, createNewsScrapeService, NewsArticle } from '../services/newsScrapeService';
+import { VectorStoreService } from '../services/vectorStoreService'; // Updated
+import { NewsProcessorService } from '../services/newsProcessorService'; // New
+import { OpenAIService, createOpenAIServiceFromConfig } from '../services/openaiService';
 
 // Tool function definitions
 export interface ToolFunction {
@@ -12,8 +15,9 @@ export interface ToolFunction {
 
 // Available tools
 export const availableTools: { [key: string]: ToolFunction } = {};
-let webScrapeService: WebScrapeService;
+let webScrapeService: WebScrapeService | undefined;
 export let newsScrapeService: NewsScrapeService;
+let vectorStoreService: VectorStoreService; // Updated global reference
 let mediaService: any; // Will be initialized later
 
 // Tool schemas for OpenAI function calling
@@ -126,10 +130,43 @@ export const toolSchemas = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'search_knowledge',
+      description: 'Search the bot\'s learned knowledge base for past news, facts, and enriched context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The specific topic or question to search for in memory',
+          }
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 // Initialize tools with dependencies
-export function initializeTools(searchService: GoogleSearchService, mediaServiceInstance?: any) {
+export async function initializeTools(searchService: GoogleSearchService, mediaServiceInstance?: any) {
+  // 1. Initialize OpenAI (Needed for Embeddings & Processor)
+  const openaiService = await createOpenAIServiceFromConfig();
+
+  // 2. Initialize Vector Store (The Better RAG)
+  vectorStoreService = new VectorStoreService(openaiService);
+
+  // 3. Initialize News Processor
+  const newsProcessor = new NewsProcessorService(openaiService, searchService, vectorStoreService);
+
+  // 4. Initialize Web Scrape
+  webScrapeService = createWebScrapeService();
+
+  // 5. Initialize News Scrape Service WITH Processor
+  newsScrapeService = createNewsScrapeService(webScrapeService, newsProcessor);
+
   // Store media service reference for later use
   if (mediaServiceInstance) {
     mediaService = mediaServiceInstance;
@@ -160,12 +197,6 @@ export function initializeTools(searchService: GoogleSearchService, mediaService
     }
   };
 
-  // Initialize web scrape service
-  webScrapeService = createWebScrapeService();
-
-  // Initialize news scrape service
-  newsScrapeService = createNewsScrapeService(webScrapeService);
-
   availableTools.web_scrape = {
     name: 'web_scrape',
     description: 'Scrape content from specific URLs',
@@ -180,6 +211,9 @@ export function initializeTools(searchService: GoogleSearchService, mediaService
       const startTime = Date.now();
 
       try {
+        if (!webScrapeService) {
+          throw new Error('Web scrape service not initialized');
+        }
         const results = await webScrapeService.scrapeUrls(args.urls, args.selector);
         const executionTime = Date.now() - startTime;
 
@@ -299,6 +333,24 @@ export async function executeTool(toolName: string, args: any): Promise<any> {
       const cat = args.category || 'general';
       console.log(`📰 Tool retrieving cached news for: ${cat}`);
       return newsScrapeService.getCachedNews(cat);
+    }
+  };
+
+  // ADD NEW TOOL: search_knowledge
+  // ADD NEW TOOL: search_knowledge
+  availableTools.search_knowledge = {
+    name: 'search_knowledge',
+    description: 'Search learned knowledge base',
+    parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' }
+        },
+        required: ['query']
+    },
+    execute: async (args: { query: string }) => {
+      console.log(`🧠 Searching Vector Store for: ${args.query}`);
+      return vectorStoreService.search(args.query);
     }
   };
 

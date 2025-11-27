@@ -1,4 +1,7 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { WebScrapeService, WebScrapeResult } from './webScrapeService';
+import { NewsProcessorService } from './newsProcessorService'; // Import new service
 
 export interface NewsArticle {
   title: string;
@@ -6,6 +9,7 @@ export interface NewsArticle {
   content: string;
   source: string;
   category?: string;
+  scrapedAt?: string;
 }
 
 // Define supported categories
@@ -13,6 +17,7 @@ type NewsCategory = 'general' | 'tech' | 'business' | 'sports' | 'world';
 
 export class NewsScrapeService {
   private webScrapeService: WebScrapeService;
+  private newsProcessor?: NewsProcessorService; // Optional dependency
   
   // Storage for our cached news summaries
   private newsCache: Map<string, string> = new Map();
@@ -22,11 +27,11 @@ export class NewsScrapeService {
   // Hong Kong focused, Mobile-Friendly URLs
   private categorySources: Record<NewsCategory, string[]> = {
     'general': [
-       'https://news.rthk.hk/rthk/en/', 
+       'https://news.rthk.hk/rthk/en/',
        'https://hongkongfp.com/'
     ],
     'world': [
-       'https://www.bbc.com/news/world' 
+       'https://www.bbc.com/news/world'
     ],
     'tech': [
        'https://techcrunch.com/',
@@ -40,8 +45,9 @@ export class NewsScrapeService {
     ]
   };
 
-  constructor(webScrapeService: WebScrapeService) {
+  constructor(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService) {
     this.webScrapeService = webScrapeService;
+    this.newsProcessor = newsProcessor;
   }
 
   /**
@@ -63,6 +69,13 @@ export class NewsScrapeService {
 
     try {
       const categories = Object.keys(this.categorySources) as NewsCategory[];
+      const dateStr = new Date().toISOString().split('T')[0];
+      const storageBase = path.join('data', 'news', dateStr);
+
+      // Ensure daily directory exists
+      if (!fs.existsSync(storageBase)) {
+        fs.mkdirSync(storageBase, { recursive: true });
+      }
 
       for (const cat of categories) {
         const urls = this.categorySources[cat];
@@ -70,9 +83,14 @@ export class NewsScrapeService {
         const results = await this.webScrapeService.scrapeUrls(urls, undefined, true);
         
         if (results.length > 0) {
+            // 1. Format for Cache (Immediate Tool Access)
             const formatted = this.formatNewsForLLM(results);
             this.newsCache.set(cat, formatted);
-            console.log(`✅ Cached ${results.length} articles for [${cat}]`);
+            
+            // 2. Save Raw Files & Trigger Learning
+            await this.handlePersistenceAndLearning(results, cat, storageBase);
+            
+            console.log(`✅ Cached & Processed ${results.length} articles for [${cat}]`);
         }
       }
       this.lastUpdated = new Date();
@@ -80,6 +98,31 @@ export class NewsScrapeService {
       console.error('❌ Background Service Error:', error);
     } finally {
       this.isScraping = false;
+    }
+  }
+
+  private async handlePersistenceAndLearning(results: WebScrapeResult[], category: string, storageBase: string) {
+    const filePath = path.join(storageBase, `${category}.json`);
+    
+    // Convert to NewsArticle format
+    const articles: NewsArticle[] = results.map(r => ({
+        title: r.title,
+        url: r.url,
+        content: r.content,
+        source: 'web_scrape',
+        category: category,
+        scrapedAt: new Date().toISOString()
+    }));
+
+    // Save to Disk
+    fs.writeFileSync(filePath, JSON.stringify(articles, null, 2));
+
+    // Trigger "Learning" if Processor is available
+    if (this.newsProcessor) {
+        // Limit to top 2 articles per category to save tokens/time
+        for (const article of articles.slice(0, 2)) {
+            await this.newsProcessor.processAndLearn(article, category);
+        }
     }
   }
 
@@ -117,6 +160,6 @@ export class NewsScrapeService {
   }
 }
 
-export function createNewsScrapeService(webScrapeService: WebScrapeService): NewsScrapeService {
-  return new NewsScrapeService(webScrapeService);
+export function createNewsScrapeService(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService): NewsScrapeService {
+  return new NewsScrapeService(webScrapeService, newsProcessor);
 }
