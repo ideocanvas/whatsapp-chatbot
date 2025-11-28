@@ -247,8 +247,8 @@ export class Scheduler {
   private async maintenance(): Promise<void> {
     console.log('🧹 Running maintenance tasks');
     
-    // Clean up expired contexts
-    const expiredCount = this.contextMgr.cleanupExpiredContexts();
+    // Clean up expired contexts (now async with summarization)
+    const expiredCount = await this.contextMgr.cleanupExpiredContexts();
     
     // Clean up old knowledge
     const oldKnowledgeCount = await this.kb.cleanupOldKnowledge(30); // 30 days

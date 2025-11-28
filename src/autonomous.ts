@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Scheduler } from './core/Scheduler';
 import { Agent } from './core/Agent';
 import { ContextManager } from './memory/ContextManager';
+import { SummaryStore } from './memory/SummaryStore';
 import { ToolRegistry } from './core/ToolRegistry';
 import { BrowserService } from './services/BrowserService';
 import { ActionQueueService } from './services/ActionQueueService';
@@ -35,6 +36,7 @@ class AutonomousWhatsAppAgent {
   private openai?: OpenAIService;
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
   private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
+  private summaryStore?: SummaryStore;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -49,6 +51,7 @@ class AutonomousWhatsAppAgent {
       // 1. Initialize Core Services
       this.openai = await createOpenAIServiceFromConfig();
       this.contextMgr = new ContextManager();
+      this.summaryStore = new SummaryStore();
       
       // Initialize database services using configuration switcher
       await DatabaseConfig.initialize();
@@ -56,6 +59,9 @@ class AutonomousWhatsAppAgent {
       this.historyStore = DatabaseConfig.getHistoryStore();
       this.vectorStore = DatabaseConfig.getVectorStoreService(this.openai);
       this.actionQueue = new ActionQueueService();
+
+      // Set dependencies for ContextManager (rolling summarization)
+      this.contextMgr.setDependencies(this.summaryStore, this.openai);
 
       // WhatsApp configuration
       const whatsappConfig = {

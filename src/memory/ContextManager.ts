@@ -1,6 +1,7 @@
 /**
  * Short-term memory manager with 1-hour TTL for active conversations.
  * Stores the last hour of conversation verbatim for immediate context.
+ * Implements rolling summarization to archive expired conversations.
  */
 interface ConversationContext {
   userId: string;
@@ -12,6 +13,16 @@ interface ConversationContext {
 export class ContextManager {
   private activeContexts: Map<string, ConversationContext> = new Map();
   private readonly TTL_MS = 60 * 60 * 1000; // 1 Hour
+  private summaryStore?: any; // SummaryStore instance
+  private openai?: any; // OpenAIService instance
+
+  /**
+   * Set dependencies for summarization functionality
+   */
+  setDependencies(summaryStore: any, openai: any) {
+    this.summaryStore = summaryStore;
+    this.openai = openai;
+  }
 
   /**
    * Get conversation history for a user (filtered by TTL)
@@ -139,13 +150,16 @@ export class ContextManager {
 
   /**
    * Clean up expired contexts (run periodically)
+   * Now includes summarization of expired conversations
    */
-  cleanupExpiredContexts(): number {
+  async cleanupExpiredContexts(): Promise<number> {
     const now = Date.now();
     let removedCount = 0;
 
     for (const [userId, ctx] of this.activeContexts.entries()) {
       if (now - ctx.lastInteraction >= this.TTL_MS) {
+        // Summarize and archive the conversation before deleting
+        await this.summarizeAndArchive(userId, ctx.messages);
         this.activeContexts.delete(userId);
         removedCount++;
       }
@@ -156,6 +170,56 @@ export class ContextManager {
     }
 
     return removedCount;
+  }
+
+  /**
+   * Summarize and archive a conversation when it expires
+   */
+  private async summarizeAndArchive(userId: string, messages: any[]): Promise<void> {
+    if (!this.summaryStore || !this.openai) {
+      console.log('⚠️ Summarization dependencies not set, skipping archive');
+      return;
+    }
+
+    // Only summarize conversations with enough content
+    if (messages.length < 5) {
+      console.log(`📝 Skipping summary for ${userId}: only ${messages.length} messages`);
+      return;
+    }
+
+    try {
+      const prompt = `Summarize this conversation in 3 bullet points, focusing on user preferences, key facts, and important context. Keep it concise but informative:
+
+${JSON.stringify(messages, null, 2)}
+
+Summary:`;
+
+      const summary = await this.openai.generateTextResponse(prompt);
+      
+      // Store the summary in long-term memory
+      await this.summaryStore.storeSummary(userId, summary, messages);
+      
+      console.log(`📝 Archived conversation for ${userId}: ${summary.substring(0, 100)}...`);
+    } catch (error) {
+      console.error('❌ Failed to summarize and archive conversation:', error);
+    }
+  }
+
+  /**
+   * Get long-term conversation summaries for a user
+   */
+  async getLongTermSummaries(userId: string): Promise<string[]> {
+    if (!this.summaryStore) {
+      console.log('⚠️ SummaryStore not available, returning empty summaries');
+      return [];
+    }
+
+    try {
+      return await this.summaryStore.getRecentSummaries(userId, 3);
+    } catch (error) {
+      console.error('❌ Failed to get long-term summaries:', error);
+      return [];
+    }
   }
 
   /**

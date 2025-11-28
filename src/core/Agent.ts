@@ -29,7 +29,7 @@ export class Agent {
     this.contextMgr.addMessage(userId, 'user', message);
 
     // 2. Check if we need RAG (Knowledge Base)
-    let systemContext = this.getSystemPrompt();
+    let systemContext = await this.getSystemPrompt(userId);
     
     // Retrieve relevant facts from Long-term memory
     const relevantFacts = await this.kb.search(message);
@@ -134,10 +134,10 @@ Your decision:`;
   }
 
   /**
-   * Get system prompt with mobile optimization
+   * Get system prompt with mobile optimization and long-term context
    */
-  private getSystemPrompt(): string {
-    return `You are ${this.chatbotName}, a witty, concise WhatsApp assistant.
+  private async getSystemPrompt(userId: string): Promise<string> {
+    let systemPrompt = `You are ${this.chatbotName}, a witty, concise WhatsApp assistant.
 
 **CRITICAL RESPONSE GUIDELINES:**
 1. **Mobile Optimization**: Responses MUST be under 50 words unless specifically requested. Use natural spacing.
@@ -146,9 +146,17 @@ Your decision:`;
 4. **Tool Usage**: Use available tools when you need current information or specific actions.
 5. **Context Awareness**: Reference recent conversation naturally when relevant.
 
-**Current Time**: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}
+**Current Time**: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
 
-Always prioritize being helpful while respecting the mobile format constraints.`;
+    // Add long-term conversation summaries if available
+    const longTermSummaries = await this.contextMgr.getLongTermSummaries(userId);
+    if (longTermSummaries.length > 0) {
+      systemPrompt += `\n\n📚 **Previous Conversation Context:**\n${longTermSummaries.join('\n\n')}`;
+    }
+
+    systemPrompt += `\n\nAlways prioritize being helpful while respecting the mobile format constraints.`;
+
+    return systemPrompt;
   }
 
   /**
