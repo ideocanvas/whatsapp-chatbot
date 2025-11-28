@@ -19,10 +19,18 @@ export class ActionQueueService {
   private readonly MAX_RETRIES = 3;
   private readonly RATE_LIMIT_DELAY = 2000; // 2 seconds between messages
   private readonly PROACTIVE_COOLDOWN = 15 * 60 * 1000; // 15 minutes between proactive messages
+  private messageSender?: (userId: string, content: string) => Promise<boolean>;
 
   constructor() {
     // Start processing loop
     this.startProcessing();
+  }
+
+  /**
+   * Register a message sender function (called by AutonomousAgent)
+   */
+  registerMessageSender(sender: (userId: string, content: string) => Promise<boolean>) {
+    this.messageSender = sender;
   }
 
   /**
@@ -120,19 +128,26 @@ export class ActionQueueService {
   }
 
   /**
-   * Execute an action (to be integrated with actual service)
+   * Execute an action (Updated to send real messages)
    */
   private async executeAction(action: QueuedAction): Promise<void> {
-    // This will be replaced with actual WhatsApp service integration
-    console.log(`📤 Executing ${action.type} action for ${action.userId}:`);
-    console.log(`💬 Content: ${action.content.substring(0, 100)}${action.content.length > 100 ? '...' : ''}`);
+    console.log(`📤 Executing ${action.type} action for ${action.userId}`);
     
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
-    
-    // Simulate occasional failures for testing retry logic
-    if (Math.random() < 0.1) { // 10% failure rate for testing
-      throw new Error('Simulated API failure');
+    if (!this.messageSender) {
+      console.warn('⚠️ No message sender registered in ActionQueue! Message logged but not sent.');
+      return;
+    }
+
+    try {
+      // Send via the registered callback
+      const success = await this.messageSender(action.userId, action.content);
+      
+      if (!success) {
+        throw new Error('Message sender returned false');
+      }
+    } catch (error) {
+      console.error('Failed to send WhatsApp message:', error);
+      throw error; // This triggers the retry logic in processNextAction
     }
   }
 

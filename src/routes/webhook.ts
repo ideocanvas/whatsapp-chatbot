@@ -1,23 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { WhatsAppService } from '../services/whatsappService';
-import { MessageHandler } from '../handlers/messageHandler';
 import { MediaService } from '../services/mediaService';
 import { ProcessedMessageService } from '../services/processedMessageService';
 import { CryptoUtils } from '../utils/crypto';
 import { WhatsAppMessage } from '../types/whatsapp';
 import { getToolSchemas } from '../tools';
+// Import the Autonomous Agent getter
+import { getAutonomousAgent } from '../autonomous';
 
 export class WebhookRoutes {
   private router: Router;
-  private messageHandler: MessageHandler;
   private processedMessageService: ProcessedMessageService;
   private verifyToken: string;
   private appSecret: string;
 
   constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string, whatsappConfig: any) {
     this.router = Router();
-    const mediaService = new MediaService(whatsappConfig);
-    this.messageHandler = new MessageHandler(whatsappService, mediaService);
     this.processedMessageService = new ProcessedMessageService();
     this.verifyToken = verifyToken;
     this.appSecret = appSecret;
@@ -103,38 +101,21 @@ export class WebhookRoutes {
                 );
 
                 if (message.type === 'text' && message.text) {
-                  await this.messageHandler.processMessage(
+                  // USE AUTONOMOUS AGENT HERE
+                  const agent = getAutonomousAgent(); // Get the singleton agent
+                  await agent.handleIncomingMessage(
                     message.from,
                     message.text.body,
-                    message.id,
-                    'text'
+                    message.id
                   );
                 } else if (message.type === 'image' && message.image) {
-                  await this.messageHandler.processMessage(
-                    message.from,
-                    '',
-                    message.id,
-                    'image',
-                    {
-                      id: message.image.id,
-                      mimeType: message.image.mime_type,
-                      sha256: message.image.sha256,
-                      type: 'image'
-                    }
-                  );
+                  // TODO: Handle image messages with autonomous agent
+                  console.log(`🖼️ Image message from ${message.from} (ID: ${message.image.id})`);
+                  console.log('⚠️ Image processing not yet implemented in autonomous agent');
                 } else if (message.type === 'audio' && message.audio) {
-                  await this.messageHandler.processMessage(
-                    message.from,
-                    '',
-                    message.id,
-                    'audio',
-                    {
-                      id: message.audio.id,
-                      mimeType: message.audio.mime_type,
-                      sha256: message.audio.sha256,
-                      type: 'audio'
-                    }
-                  );
+                  // TODO: Handle audio messages with autonomous agent
+                  console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
+                  console.log('⚠️ Audio processing not yet implemented in autonomous agent');
                 } else {
                   console.log(`Unsupported message type: ${message.type}`);
                 }
@@ -166,55 +147,16 @@ export class WebhookRoutes {
 
       if (type === 'image' && imagePath) {
         console.log(`🖼️ Processing local image: ${imagePath}`);
-        // For dev testing, directly use the local file path with tool calling
-        const userMessage = "I've sent you an image. Please analyze and describe what you see.";
-
-        const systemPrompt = `You are ${this.messageHandler.getChatbotName()}, a helpful WhatsApp assistant. The user has sent an image file for analysis.
-
-Use the analyze_image tool to understand the image content and provide a helpful description.
-
-File path: ${imagePath}`;
-
-        const messages: any[] = [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userMessage
-          }
-        ];
-
-        const tools = getToolSchemas();
-        response = await this.messageHandler.openaiService!.generateResponseWithTools(messages, tools);
+        // TODO: Implement image processing in autonomous agent
+        response = "Image processing is not yet implemented in the autonomous agent. Please use text messages for now.";
       } else if (type === 'audio' && audioPath) {
         console.log(`🎤 Processing local audio: ${audioPath}`);
-        // For dev testing, directly use the local file path with tool calling
-        const userMessage = "I've sent you an audio message. Please transcribe and respond to it.";
-
-        const systemPrompt = `You are ${this.messageHandler.getChatbotName()}, a helpful WhatsApp assistant. The user has sent an audio file for transcription.
-
-Use the transcribe_audio tool to convert the audio to text, then respond conversationally.
-
-File path: ${audioPath}`;
-
-        const messages: any[] = [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userMessage
-          }
-        ];
-
-        const tools = getToolSchemas();
-        response = await this.messageHandler.openaiService!.generateResponseWithTools(messages, tools);
+        // TODO: Implement audio processing in autonomous agent
+        response = "Audio processing is not yet implemented in the autonomous agent. Please use text messages for now.";
       } else {
-        // Process text message using the message handler
-        response = await this.messageHandler.generateResponse(message, from);
+        // Process text message using the autonomous agent
+        const agent = getAutonomousAgent();
+        response = await agent.handleWebMessage(from, message);
       }
 
       console.log(`🤖 [DEV API] Response: "${response.substring(0, 100)}${response.length > 100 ? '...' : ''}"`);

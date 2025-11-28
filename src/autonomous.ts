@@ -11,12 +11,13 @@ import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiS
 import { WebScrapeService, createWebScrapeService } from './services/webScrapeService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
 import { WebSearchTool } from './tools/WebSearchTool';
+import { RecallHistoryTool } from './tools/RecallHistoryTool';
+import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
+import { HistoryStore } from './memory/HistoryStore';
+import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
+import { NewsProcessorService } from './services/newsProcessorService';
+import { VectorStoreService } from './services/vectorStoreService';
 import type { KnowledgeDocument } from './memory/KnowledgeBase';
-
-// Tool imports will be added when tools are migrated to BaseTool pattern
-// import { WebSearchTool } from './tools/WebSearchTool';
-// import { RecallHistoryTool } from './tools/RecallHistoryTool';
-// import { AnalyzeMediaTool } from './tools/AnalyzeMediaTool';
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
@@ -34,6 +35,7 @@ class AutonomousWhatsAppAgent {
   private actionQueue?: ActionQueueService;
   private whatsapp?: WhatsAppService;
   private openai?: OpenAIService;
+  private historyStore?: HistoryStore;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -50,6 +52,9 @@ class AutonomousWhatsAppAgent {
       this.contextMgr = new ContextManager();
       this.kb = new KnowledgeBase(this.openai);
       this.actionQueue = new ActionQueueService();
+      
+      // NEW: Initialize History Store
+      this.historyStore = new HistoryStore();
 
       // WhatsApp configuration
       const whatsappConfig = {
@@ -60,18 +65,38 @@ class AutonomousWhatsAppAgent {
 
       this.whatsapp = new WhatsAppService(whatsappConfig, process.env.DEV_MODE === 'true');
 
-      // 2. Initialize Browser Service for autonomous surfing
+      // CRITICAL FIX: Link ActionQueue to WhatsApp Service
+      this.actionQueue.registerMessageSender(async (userId, content) => {
+        return this.whatsapp!.sendMessage(userId, content);
+      });
+
+      // 2. Initialize Browser & News Services
       const scraper = createWebScrapeService();
       this.browser = new BrowserService(scraper, this.kb);
+      
+      // Initialize News Stack
+      const vectorStore = new VectorStoreService(this.openai);
+      // Mock GoogleSearchService for processor if not available, or initialize properly
+      const searchService = createGoogleSearchServiceFromEnv();
+      const newsProcessor = new NewsProcessorService(this.openai, searchService, vectorStore);
+      const newsService = createNewsScrapeService(scraper, newsProcessor);
 
-      // 3. Initialize Tool Registry with migrated tools
+      // 3. Initialize Tool Registry
       this.tools = new ToolRegistry();
-      await this.initializeTools();
+      
+      // Register Web Search
+      if (searchService) {
+        this.tools.registerTool(new WebSearchTool(searchService));
+      }
 
-      // 4. Initialize the Agent (The Brain)
+      // Register NEW Tools
+      this.tools.registerTool(new RecallHistoryTool(this.historyStore));
+      this.tools.registerTool(new ScrapeNewsTool(newsService));
+
+      // 4. Initialize Agent
       this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue);
 
-      // 5. Initialize the Scheduler (The Heartbeat)
+      // 5. Initialize Scheduler
       this.scheduler = new Scheduler(
         this.browser,
         this.contextMgr,
@@ -83,9 +108,9 @@ class AutonomousWhatsAppAgent {
 
       this.isInitialized = true;
       console.log('✅ Autonomous WhatsApp Agent Initialized Successfully');
-
-      // Log initial stats
-      this.logInitialStats();
+      
+      // Start background news service
+      newsService.startBackgroundService(30);
 
     } catch (error) {
       console.error('❌ Failed to initialize Autonomous Agent:', error);
