@@ -27,6 +27,42 @@ export class KnowledgeBasePostgres {
   }
 
   /**
+   * Check if a source URL has already been processed and stored
+   */
+  async hasDocument(url: string): Promise<boolean> {
+    try {
+      const count = await prisma.knowledge.count({
+        where: { source: url }
+      });
+      return count > 0;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a specific content hash already exists in the database.
+   * This is used to detect if an article (even with a different URL)
+   * has already been learned.
+   */
+  async hasContentHash(hash: string): Promise<boolean> {
+    try {
+      const tag = `hash:${hash}`;
+      const count = await prisma.knowledge.count({
+        where: {
+          tags: {
+            string_contains: tag
+          }
+        }
+      });
+      return count > 0;
+    } catch (error) {
+      console.error('Error checking content hash:', error);
+      return false;
+    }
+  }
+
+  /**
    * Add a new document learned from browsing
    */
   async learnDocument(document: {
@@ -35,33 +71,33 @@ export class KnowledgeBasePostgres {
     tags: string[];
     timestamp: Date;
     category?: string;
+    contentHash?: string;
   }): Promise<void> {
-    if (!document.content || document.content.trim().length < 10) {
-      console.log('📝 Skipping empty or too short document');
-      return;
+    if (!document.content || document.content.trim().length < 50) return;
+
+    // Add hash to tags if provided
+    const finalTags = [...document.tags];
+    if (document.contentHash) {
+      finalTags.push(`hash:${document.contentHash}`);
     }
 
     try {
-      // Create embedding for the content
       const embedding = await this.openaiService.createEmbedding(document.content);
-      
-      // Convert array to Float64Array buffer
       const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
 
-      // Insert into database
       await prisma.knowledge.create({
         data: {
           id: uuidv4(),
-          content: document.content.substring(0, 2000), // Limit content length
+          content: document.content.substring(0, 4000),
           vector: vectorBuffer,
           source: document.source,
           category: document.category || 'general',
-          tags: document.tags,
+          tags: finalTags,
           timestamp: document.timestamp,
         },
       });
 
-      console.log(`💾 Learned new knowledge: [${document.category || 'general'}] ${document.source}`);
+      console.log(`💾 Learned: [${document.category}] ${document.source.substring(0, 40)}...`);
     } catch (error) {
       console.error('❌ Failed to learn document:', error);
     }

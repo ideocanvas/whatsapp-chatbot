@@ -73,21 +73,30 @@ export class Scheduler {
     this.stats.lastTick = new Date();
 
     try {
+      // 1. Get STRICTLY active users (last contact < 1 hour)
       const activeUsers = this.contextMgr.getActiveUsers();
-      
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // 1. IDLE MODE: Autonomous Browsing (when no active users or low load)
+      // 2. IDLE MODE: Browse if not too busy or just random
       if (this.shouldBrowse(activeUsers.length)) {
-        await this.idleMode();
+          // Pass a user interest as intent if a user is active!
+          let browseIntent = undefined;
+          if (activeUsers.length > 0) {
+              const randomUser = activeUsers[Math.floor(Math.random() * activeUsers.length)];
+              const interests = this.contextMgr.getUserInterests(randomUser);
+              if (interests.length > 0) {
+                  browseIntent = interests[Math.floor(Math.random() * interests.length)];
+                  console.log(`🎯 Browsing targeted for active user ${randomUser}: ${browseIntent}`);
+              }
+          }
+          await this.idleMode(browseIntent);
       }
 
-      // 2. PROACTIVE MODE: Check active users for relevant content
-      if (this.shouldCheckProactive(activeUsers.length)) {
+      // 3. PROACTIVE MODE: Only for Active Users
+      if (activeUsers.length > 0) {
         await this.proactiveMode(activeUsers);
       }
 
-      // 3. Log tick statistics
       this.logTickStats();
 
     } catch (error) {
@@ -95,96 +104,55 @@ export class Scheduler {
     }
   }
 
-  /**
-   * Idle Mode: Autonomous web browsing for knowledge acquisition
-   */
-  private async idleMode(): Promise<void> {
+  private async idleMode(intent?: string): Promise<void> {
     console.log('🌐 Entering Idle Mode: Autonomous Browsing');
     this.stats.browsingSessions++;
-
-    // Determine browsing intent based on recent knowledge gaps
-    const intent = await this.determineBrowsingIntent();
     
+    // Surf with intent if provided, otherwise generic
     const result = await this.browser.surf(intent);
     this.stats.knowledgeLearned += result.knowledgeGained;
-
-    console.log(`📚 Idle Mode Complete: ${result.urlsVisited.length} pages, ${result.knowledgeGained} facts learned`);
   }
 
-  /**
-   * Proactive Mode: Check if we should message active users
-   */
   private async proactiveMode(activeUsers: string[]): Promise<void> {
-    console.log('💬 Entering Proactive Mode: Checking active users');
-    this.stats.proactiveChecks++;
+    console.log(`💬 Proactive Mode: Checking ${activeUsers.length} active users`);
 
     for (const userId of activeUsers) {
-      // Only check 20% of active users per tick to avoid spam
-      if (Math.random() > 0.2) continue;
+      // Check strict cooldown (e.g., don't message twice in 15 mins)
+      if (!this.actionQueue.canSendProactiveMessage(userId)) continue;
 
-      await this.checkUserForProactiveMessage(userId);
-    }
-  }
-
-  /**
-   * Check if a specific user should receive a proactive message
-   */
-  private async checkUserForProactiveMessage(userId: string): Promise<void> {
-    // Check cooldown first
-    if (!this.actionQueue.canSendProactiveMessage(userId)) {
-      const cooldown = this.actionQueue.getProactiveCooldownRemaining(userId);
-      console.log(`⏰ User ${userId} in cooldown: ${Math.round(cooldown / 60000)} minutes remaining`);
-      return;
-    }
-
-    // Find recently learned knowledge relevant to user interests
-    const relevantKnowledge = await this.findRelevantKnowledgeForUser(userId);
-    if (!relevantKnowledge) {
-      console.log(`🤔 No relevant knowledge found for user ${userId}`);
-      return;
-    }
-
-    // Generate proactive message using agent
-    const message = await this.agent.generateProactiveMessage(userId, relevantKnowledge);
-    if (!message) {
-      console.log(`❌ Agent decided not to message user ${userId}`);
-      return;
-    }
-
-    // Queue the proactive message with appropriate delay
-    const actionId = this.actionQueue.queueMessage(userId, message, {
-      isProactive: true,
-      delayMs: 5000 + Math.random() * 10000, // 5-15 second delay
-      priority: 7 // Medium-high priority
-    });
-
-    this.stats.messagesSent++;
-    console.log(`📤 Proactive message queued for ${userId}: ${message.substring(0, 50)}...`);
-  }
-
-  /**
-   * Find knowledge relevant to a user's interests
-   */
-  private async findRelevantKnowledgeForUser(userId: string): Promise<string | null> {
-    const userInterests = this.contextMgr.getUserInterests(userId);
-    if (userInterests.length === 0) return null;
-
-    // Try each interest until we find relevant knowledge
-    for (const interest of userInterests) {
-      try {
-        // Search knowledge base for this interest
-        const knowledge = await this.kb.search(interest, 1, this.mapInterestToCategory(interest));
-        
-        if (knowledge && !knowledge.includes('No relevant knowledge')) {
-          console.log(`🎯 Found relevant knowledge for ${userId}'s interest in ${interest}`);
-          return knowledge;
-        }
-      } catch (error) {
-        console.error(`❌ Error searching knowledge for interest ${interest}:`, error);
+      // Find knowledge specifically learned RECENTLY (last 1 hour) that matches interests
+      const relevantContent = await this.findFreshRelevantContent(userId);
+      
+      if (relevantContent) {
+          const message = await this.agent.generateProactiveMessage(userId, relevantContent);
+          if (message) {
+              this.actionQueue.queueMessage(userId, message, { isProactive: true, priority: 8 });
+              this.stats.messagesSent++;
+          }
       }
     }
+  }
 
-    return null;
+
+  /**
+   * Find content learned in the last hour that matches user interests
+   */
+  private async findFreshRelevantContent(userId: string): Promise<string | null> {
+      const interests = this.contextMgr.getUserInterests(userId);
+      if (interests.length === 0) return null;
+
+      // We need a way to search specifically for *recent* docs in KB matching tags
+      // This uses a specific search logic on the KB
+      for (const interest of interests) {
+          // This relies on the KnowledgeBase having a method to find *fresh* content by tag/query
+          // We can use the existing search but filter the string results or add a new method to KB
+          // For now, using standard search but looking for the "🆕" indicator added by KB
+          const knowledge = await this.kb.search(interest, 1);
+          if (knowledge && knowledge.includes('🆕')) {
+              return knowledge; // Found something fresh
+          }
+      }
+      return null;
   }
 
   /**
@@ -201,44 +169,13 @@ export class Scheduler {
     return 'general';
   }
 
-  /**
-   * Determine browsing intent based on knowledge gaps
-   */
-  private async determineBrowsingIntent(): Promise<string | undefined> {
-    const knowledgeStats = await this.kb.getStats();
-    
-    // If we have few documents, browse broadly
-    if (knowledgeStats.totalDocuments < 10) {
-      return undefined; // Browse everything
-    }
 
-    // Find category with least knowledge
-    const categoryCounts = knowledgeStats.categories.reduce((acc: Record<string, number>, category: string) => {
-      acc[category] = (acc[category] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-
-    const leastKnownCategory = Object.keys(categoryCounts).reduce((a, b) =>
-      categoryCounts[a] < categoryCounts[b] ? a : b
-    );
-
-    return leastKnownCategory;
-  }
-
-  /**
-   * Decide if we should browse in this tick
-   */
   private shouldBrowse(activeUserCount: number): boolean {
-    // Browse if no active users OR random chance when users are active
-    return activeUserCount === 0 || Math.random() > 0.7; // 30% chance when users active
+    return true; // Always try to browse if browser limit allows
   }
 
-  /**
-   * Decide if we should check for proactive messages
-   */
   private shouldCheckProactive(activeUserCount: number): boolean {
-    // Only check if we have active users
-    return activeUserCount > 0 && Math.random() > 0.5; // 50% chance per tick
+    return activeUserCount > 0;
   }
 
   /**

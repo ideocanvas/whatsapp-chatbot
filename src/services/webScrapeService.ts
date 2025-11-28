@@ -11,11 +11,17 @@ export interface WebScrapeResult {
   title: string;
   url: string;
   content: string;
+  links: string[]; // Added links array
   extractedAt: string;
   method: 'html' | 'visual' | 'hybrid';
   mobileView?: boolean;
   viewport?: { width: number; height: number };
   userAgent?: string;
+}
+
+export interface ArticleCandidate {
+  title: string;
+  url: string;
 }
 
 export interface WebScrapeConfig {
@@ -253,6 +259,21 @@ export class WebScrapeService {
 
             const pageTitle = await page.title().catch(() => "Untitled");
 
+            // Extract Links BEFORE cleaning content
+            const links = await page.evaluate(() => {
+                const anchors = Array.from(document.querySelectorAll('a[href]'));
+                return anchors
+                    .map((a: any) => ({ href: a.href, text: a.innerText }))
+                    .filter((link: any) =>
+                        link.href.startsWith('http') &&
+                        link.text.trim().length > 10 // Only substantial links
+                    )
+                    .map((link: any) => link.href);
+            });
+            
+            // Unique links
+            const uniqueLinks = [...new Set(links)] as string[];
+
             let extractedContent = await page.evaluate((inputSelector) => {
                 const junkSelectors = [
                     'script', 'style', 'noscript', 'iframe', 'svg',
@@ -295,6 +316,7 @@ export class WebScrapeService {
                 title: pageTitle,
                 url,
                 content: extractedContent,
+                links: uniqueLinks, // Return collected links
                 extractedAt: new Date().toISOString(),
                 method,
                 mobileView: useMobileView,
@@ -315,6 +337,76 @@ export class WebScrapeService {
         }
     }
     throw new Error('Max retries reached');
+  }
+
+  /**
+   * Scrapes a "Hub" page (homepage/section) to find potential article links.
+   * Uses mobile view for cleaner HTML structure.
+   */
+  async extractArticleLinks(url: string): Promise<ArticleCandidate[]> {
+    await this.initialize();
+    if (!this.browser) throw new Error('Browser not initialized');
+
+    const context = await this.browser.newContext({
+      viewport: { width: 393, height: 852 }, // iPhone 14 Pro
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true,
+      hasTouch: true
+    });
+
+    try {
+      const page = await context.newPage();
+      await page.goto(url, { timeout: 30000, waitUntil: 'domcontentloaded' });
+      
+      // Fast scroll to trigger lazy loading
+      await this.fastSmartScroll(page);
+
+      // Extract links with heuristics
+      const links = await page.evaluate((baseUrl) => {
+        const anchors = Array.from(document.querySelectorAll('a[href]'));
+        const candidates: { title: string; url: string }[] = [];
+        const seenUrls = new Set();
+        const baseDomain = new URL(baseUrl).hostname.replace('www.', '');
+
+        anchors.forEach((a: any) => {
+          let href = a.href;
+          let title = a.innerText.trim();
+
+          // 1. Basic filtering
+          if (!href || href.startsWith('javascript:') || href.startsWith('mailto:') || !title) return;
+          if (title.length < 15) return; // Skip "Home", "More", "Login"
+          
+          try {
+            const urlObj = new URL(href, baseUrl);
+            
+            // 2. Strict Domain Check (Must be internal link)
+            if (!urlObj.hostname.includes(baseDomain)) return;
+            
+            // 3. Remove query params for cleaner URLs
+            const cleanUrl = urlObj.origin + urlObj.pathname;
+
+            // 4. Heuristic: Article URLs usually have >3 path segments or contain date/slug
+            const pathSegments = urlObj.pathname.split('/').filter(p => p.length > 0);
+            if (pathSegments.length < 2) return;
+
+            if (!seenUrls.has(cleanUrl)) {
+              seenUrls.add(cleanUrl);
+              candidates.push({ title, url: cleanUrl });
+            }
+          } catch (e) {}
+        });
+
+        return candidates;
+      }, url);
+
+      return links;
+
+    } catch (error) {
+      console.error(`Failed to extract links from ${url}:`, error);
+      return [];
+    } finally {
+      await context.close();
+    }
   }
 
   private async performOptimizedVisualExtraction(page: Page, url: string): Promise<string> {

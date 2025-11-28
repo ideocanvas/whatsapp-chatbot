@@ -25,7 +25,7 @@ async function testAutonomousAgent() {
         knowledgeDocuments: status.memory?.knowledge?.totalDocuments || 0
       },
       tools: status.tools?.count || 0,
-      browser: status.browser?.totalSessions || 0
+      browser: status.browser?.favoritesCount || 0
     });
 
     // 3. Test incoming message handling
