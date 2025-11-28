@@ -4,6 +4,8 @@ import cookieParser from 'cookie-parser';
 import { startAutonomousAgent } from './autonomous';
 import { DashboardRoutes } from './routes/dashboard';
 import { WebhookRoutes } from './routes/webhook';
+import { WhatsAppService } from './services/whatsappService';
+import { MediaService } from './services/mediaService';
 
 /**
  * Main server that integrates both autonomous agent and web dashboard
@@ -56,10 +58,7 @@ class AutonomousServer {
       };
       
       if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
-        const { WhatsAppService } = require('./services/whatsappService');
-        const { MediaService } = require('./services/mediaService');
-        
-        const whatsappService = new WhatsAppService(whatsappConfig);
+        const whatsappService = new WhatsAppService(whatsappConfig, false); // false = production mode
         const mediaService = new MediaService(whatsappConfig);
         
         this.webhookRoutes = new WebhookRoutes(
