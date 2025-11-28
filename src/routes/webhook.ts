@@ -11,12 +11,14 @@ import { getAutonomousAgent } from '../autonomous';
 export class WebhookRoutes {
   private router: Router;
   private processedMessageService: ProcessedMessageServicePostgres;
+  private whatsappService: WhatsAppService; // Added property
   private verifyToken: string;
   private appSecret: string;
 
   constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string, whatsappConfig: any) {
     this.router = Router();
     this.processedMessageService = new ProcessedMessageServicePostgres();
+    this.whatsappService = whatsappService; // Store the service instance
     this.verifyToken = verifyToken;
     this.appSecret = appSecret;
     this.setupRoutes();
@@ -24,18 +26,22 @@ export class WebhookRoutes {
 
   private setupRoutes(): void {
     // Webhook verification endpoint (GET)
-    this.router.get('/webhook', (req: Request, res: Response) => {
+    this.router.get('/', (req: Request, res: Response) => {
       this.handleWebhookVerification(req, res);
     });
 
     // Webhook message handler (POST)
-    this.router.post('/webhook', (req: Request, res: Response) => {
+    this.router.post('/', (req: Request, res: Response) => {
       this.handleWebhookMessage(req, res);
     });
 
-    // Health check endpoint
+    // Health check endpoint (webhook-specific)
     this.router.get('/health', (req: Request, res: Response) => {
-      res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+      res.status(200).json({
+        status: 'OK',
+        service: 'webhook',
+        timestamp: new Date().toISOString()
+      });
     });
 
     // Dev mode API endpoint (only available in dev mode)
@@ -50,14 +56,21 @@ export class WebhookRoutes {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
+    
+    // Log verification attempt for debugging
+    console.log(`Webhook Verification: Mode=${mode}, Token=${token?.toString().substring(0,3)}...`);
+
     if (mode && token) {
       if (mode === 'subscribe' && token === this.verifyToken) {
-        console.log('Webhook verified successfully!');
+        console.log('✅ Webhook verified successfully!');
+        // WhatsApp expects the challenge string directly, not JSON
         res.status(200).send(challenge);
       } else {
-        console.log('Webhook verification failed!');
+        console.warn('❌ Webhook verification failed! Token mismatch.');
         res.sendStatus(403);
       }
+    } else {
+        res.sendStatus(400);
     }
   }
 
@@ -66,7 +79,6 @@ export class WebhookRoutes {
       // Verify signature if app secret is provided
       if (this.appSecret) {
         const signature = req.headers['x-hub-signature-256'] as string;
-        // Use raw body for signature verification (stored by body-parser middleware)
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
         if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
           console.warn('Invalid webhook signature');
@@ -77,7 +89,12 @@ export class WebhookRoutes {
 
       const data: WhatsAppMessage = req.body;
 
-      // Process each entry
+      // Handle immediate validation response
+      // WhatsApp sometimes sends test events that are not messages
+      if (!data.entry || !Array.isArray(data.entry)) {
+          return void res.sendStatus(200);
+      }
+
       for (const entry of data.entry) {
         for (const change of entry.changes) {
           if (change.field === 'messages') {
@@ -85,15 +102,15 @@ export class WebhookRoutes {
 
             if (messages && messages.length > 0) {
               for (const message of messages) {
-                // Check if this message has already been processed
-                const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
-
-                if (alreadyProcessed) {
-                  console.log(`Skipping duplicate message: ${message.id} (already processed)`);
-                  continue;
+                // 1. Mark as read immediately to stop retries
+                if (this.whatsappService) {
+                   await this.whatsappService.markMessageAsRead(message.id);
                 }
 
-                // Mark message as processed immediately to prevent race conditions
+                // 2. Check for duplicates
+                const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
+                if (alreadyProcessed) continue;
+
                 await this.processedMessageService.markMessageAsProcessed(
                   message.id,
                   message.from,
@@ -101,23 +118,13 @@ export class WebhookRoutes {
                 );
 
                 if (message.type === 'text' && message.text) {
-                  // USE AUTONOMOUS AGENT HERE
-                  const agent = getAutonomousAgent(); // Get the singleton agent
-                  await agent.handleIncomingMessage(
+                  // Pass to autonomous agent without awaiting (prevents timeouts)
+                  const agent = getAutonomousAgent();
+                  agent.handleIncomingMessage(
                     message.from,
                     message.text.body,
                     message.id
-                  );
-                } else if (message.type === 'image' && message.image) {
-                  // TODO: Handle image messages with autonomous agent
-                  console.log(`🖼️ Image message from ${message.from} (ID: ${message.image.id})`);
-                  console.log('⚠️ Image processing not yet implemented in autonomous agent');
-                } else if (message.type === 'audio' && message.audio) {
-                  // TODO: Handle audio messages with autonomous agent
-                  console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
-                  console.log('⚠️ Audio processing not yet implemented in autonomous agent');
-                } else {
-                  console.log(`Unsupported message type: ${message.type}`);
+                  ).catch(err => console.error('Agent processing error:', err));
                 }
               }
             }

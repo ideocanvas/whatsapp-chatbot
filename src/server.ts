@@ -45,37 +45,31 @@ class AutonomousServer {
   }
 
   private setupRoutes(): void {
-    // Dashboard routes (web interface)
-    this.app.use('/', this.dashboardRoutes.getRouter());
+    // 1. Setup Webhook Routes FIRST (Priority over catch-all dashboard)
+    const whatsappConfig = {
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+      apiVersion: 'v19.0'
+    };
     
-    // Webhook routes (WhatsApp integration) - only if not in dev mode
-    if (process.env.DEV_MODE !== 'true') {
-      // Initialize WhatsApp webhook routes if configured
-      const whatsappConfig = {
-        accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
-        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
-        apiVersion: 'v19.0'
-      };
+    if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
+      const isDevMode = process.env.DEV_MODE === 'true';
+      const whatsappService = new WhatsAppService(whatsappConfig, isDevMode);
       
-      if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
-        const whatsappService = new WhatsAppService(whatsappConfig, false); // false = production mode
-        const mediaService = new MediaService(whatsappConfig);
-        
-        this.webhookRoutes = new WebhookRoutes(
-          whatsappService,
-          process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
-          process.env.WHATSAPP_APP_SECRET || '',
-          whatsappConfig
-        );
-        
-        this.app.use('/webhook', this.webhookRoutes.getRouter());
-        console.log('✅ WhatsApp webhook routes enabled');
-      } else {
-        console.log('⚠️ WhatsApp webhook routes disabled - missing configuration');
-      }
-    } else {
-      console.log('💡 Development mode - WhatsApp webhook routes disabled');
+      this.webhookRoutes = new WebhookRoutes(
+        whatsappService,
+        process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
+        process.env.WHATSAPP_APP_SECRET || '',
+        whatsappConfig
+      );
+      
+      // Mount at /webhook
+      this.app.use('/webhook', this.webhookRoutes.getRouter());
+      console.log(`✅ WhatsApp webhook routes enabled`);
     }
+
+    // 2. Setup Dashboard Routes (Web Interface) - Acts as catch-all for '/'
+    this.app.use('/', this.dashboardRoutes.getRouter());
 
     // Health check endpoint
     this.app.get('/health', (req, res) => {

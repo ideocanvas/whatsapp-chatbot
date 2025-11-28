@@ -875,6 +875,7 @@ import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './service
 import { WebSearchTool } from './tools/WebSearchTool';
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
+import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
 import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
 import { NewsProcessorService } from './services/newsProcessorService';
 import { DatabaseConfig } from './config/databaseConfig';
@@ -960,6 +961,11 @@ class AutonomousWhatsAppAgent {
       // Register NEW Tools
       this.tools.registerTool(new RecallHistoryTool(this.historyStore));
       this.tools.registerTool(new ScrapeNewsTool(newsService));
+      
+      // Register Deep Research Tool
+      if (this.browser) {
+          this.tools.registerTool(new DeepResearchTool(this.browser));
+      }
 
       // 4. Initialize Agent
       this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue);
@@ -1056,6 +1062,11 @@ class AutonomousWhatsAppAgent {
       throw new Error('Agent not initialized');
     }
 
+    // 1. INTERRUPT BACKGROUND TASKS
+    if (this.scheduler) {
+        this.scheduler.interrupt();
+    }
+
     console.log(`📱 Incoming message from ${userId}: ${message.substring(0, 50)}...`);
 
     try {
@@ -1088,6 +1099,11 @@ class AutonomousWhatsAppAgent {
   async handleWebMessage(userId: string, message: string): Promise<string> {
     if (!this.isInitialized || !this.agent) {
       throw new Error('Agent not initialized');
+    }
+
+    // 1. INTERRUPT BACKGROUND TASKS
+    if (this.scheduler) {
+        this.scheduler.interrupt();
     }
 
     console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}...`);
@@ -1378,6 +1394,8 @@ import cookieParser from 'cookie-parser';
 import { startAutonomousAgent } from './autonomous';
 import { DashboardRoutes } from './routes/dashboard';
 import { WebhookRoutes } from './routes/webhook';
+import { WhatsAppService } from './services/whatsappService';
+import { MediaService } from './services/mediaService';
 
 /**
  * Main server that integrates both autonomous agent and web dashboard
@@ -1394,7 +1412,7 @@ class AutonomousServer {
     this.dashboardRoutes = new DashboardRoutes();
     
     this.setupMiddleware();
-    this.setupRoutes();
+    // Note: setupRoutes() will be called after agent initialization in start() method
   }
 
   private setupMiddleware(): void {
@@ -1420,36 +1438,32 @@ class AutonomousServer {
     // Dashboard routes (web interface)
     this.app.use('/', this.dashboardRoutes.getRouter());
     
-    // Webhook routes (WhatsApp integration) - only if not in dev mode
-    if (process.env.DEV_MODE !== 'true') {
-      // Initialize WhatsApp webhook routes if configured
-      const whatsappConfig = {
-        accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
-        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
-        apiVersion: 'v19.0'
-      };
+    // Webhook routes (WhatsApp integration) - enable if configured, regardless of dev mode
+    const whatsappConfig = {
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+      apiVersion: 'v19.0'
+    };
+    
+    if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
+      const isDevMode = process.env.DEV_MODE === 'true';
+      const whatsappService = new WhatsAppService(whatsappConfig, isDevMode);
+      const mediaService = new MediaService(whatsappConfig);
       
-      if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
-        const { WhatsAppService } = require('./services/whatsappService');
-        const { MediaService } = require('./services/mediaService');
-        
-        const whatsappService = new WhatsAppService(whatsappConfig);
-        const mediaService = new MediaService(whatsappConfig);
-        
-        this.webhookRoutes = new WebhookRoutes(
-          whatsappService,
-          process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
-          process.env.WHATSAPP_APP_SECRET || '',
-          whatsappConfig
-        );
-        
-        this.app.use('/webhook', this.webhookRoutes.getRouter());
-        console.log('✅ WhatsApp webhook routes enabled');
-      } else {
-        console.log('⚠️ WhatsApp webhook routes disabled - missing configuration');
+      this.webhookRoutes = new WebhookRoutes(
+        whatsappService,
+        process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
+        process.env.WHATSAPP_APP_SECRET || '',
+        whatsappConfig
+      );
+      
+      this.app.use('/webhook', this.webhookRoutes.getRouter());
+      console.log(`✅ WhatsApp webhook routes enabled (${isDevMode ? 'development' : 'production'} mode)`);
+      if (isDevMode) {
+        console.log('💡 Development mode: Messages will be logged to console');
       }
     } else {
-      console.log('💡 Development mode - WhatsApp webhook routes disabled');
+      console.log('⚠️ WhatsApp webhook routes disabled - missing configuration');
     }
 
     // Health check endpoint
@@ -1485,8 +1499,11 @@ class AutonomousServer {
     try {
       console.log('🚀 Starting Autonomous WhatsApp Agent Server...');
       
-      // Start the autonomous agent
+      // Start the autonomous agent first
       await startAutonomousAgent();
+      
+      // Now set up routes after agent is initialized
+      this.setupRoutes();
       
       // Determine host based on environment variable or fallback to 0.0.0.0 for external access
       const host = process.env.HOST || '0.0.0.0';
@@ -1803,6 +1820,14 @@ Your decision:`;
 4. **Tool Usage**: Use available tools when you need current information or specific actions.
 5. **Context Awareness**: Reference recent conversation naturally when relevant.
 
+**TOOL SELECTION PRIORITY:**
+1. Check 'recall_history' first if the user refers to the past.
+2. Use 'search_knowledge' for general facts you might have learned.
+3. Use 'web_search' for quick lookups of current information.
+4. **IMPORTANT**: If 'search_knowledge' and 'web_search' yield no results, YOU MUST use 'deep_research' to find the answer. Do not give up without trying deep research.
+
+**CRITICAL: When using 'deep_research', you MUST first respond to the user with a natural message like "Let me research that for you" or "I'll search for more information about that" BEFORE calling the tool. This ensures the user knows you're working on their request.**
+
 **Current Time**: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
 
     // Add long-term conversation summaries if available
@@ -1997,6 +2022,16 @@ export class Scheduler {
   stop(): void {
     this.isRunning = false;
     console.log('🛑 Autonomous Agent Scheduler Stopped');
+  }
+
+  /**
+   * Interrupt current background tasks (Browsing)
+   */
+  interrupt(): void {
+    if (this.isRunning) {
+      console.log('🚦 Scheduler interrupting background tasks...');
+      this.browser.stopBrowsing();
+    }
   }
 
   /**
@@ -3705,10 +3740,14 @@ export class BrowserService {
   private readonly TRACKER_PATH = path.join(process.cwd(), 'data', 'link_tracker.json');
 
   // Limits
-  private readonly MAX_PAGES_PER_HOUR = 20; 
+  private readonly MAX_PAGES_PER_HOUR = 20;
   private readonly LINK_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
   
   private pagesVisitedThisHour = 0;
+
+  // New control flags
+  private isSurfing: boolean = false;
+  private stopSignal: boolean = false;
 
   // Default Favorites (Used if no file exists)
   private readonly DEFAULT_FAVORITES: FavoriteSite[] = [
@@ -3741,121 +3780,247 @@ export class BrowserService {
   }
 
   /**
+   * Signal the browser to stop the current surfing session immediately
+   */
+  public stopBrowsing() {
+    if (this.isSurfing) {
+      console.log('🛑 Interrupt signal received. Stopping autonomous browsing...');
+      this.stopSignal = true;
+    }
+  }
+
+  /**
    * Main Autonomous Surfing Loop
    */
   async surf(intent?: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
+    // Reset flags
+    this.stopSignal = false;
+    this.isSurfing = true;
+
     if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) {
         console.log('💤 Browser resting (Rate limit reached)');
+        this.isSurfing = false;
         return { urlsVisited: [], knowledgeGained: 0 };
     }
 
     const results = { urlsVisited: [] as string[], knowledgeGained: 0 };
 
-    // 1. Pick a Favorite Site (Hub)
-    const hub = this.pickFavorite(intent);
-    if (!hub) {
-        console.log('🤔 No favorites available to visit.');
-        return results;
-    }
+    try {
+        // 1. Pick a Favorite Site (Hub)
+        const hub = this.pickFavorite(intent);
+        if (!hub) {
+            console.log('🤔 No favorites available to visit.');
+            this.isSurfing = false;
+            return results;
+        }
 
-    console.log(`🌐 Browsing Hub: ${hub.url}`);
-    
-    // 2. Extract Article Candidates
-    const candidates = await this.scraper.extractArticleLinks(hub.url);
-    this.pagesVisitedThisHour++; 
-    hub.lastVisited = Date.now();
-    hub.visitCount++;
-    this.saveFavorites();
+        // Check interrupt
+        if (this.stopSignal) { this.isSurfing = false; return results; }
 
-    console.log(`🔍 Found ${candidates.length} candidate articles on ${hub.url}`);
-
-    // 3. Process Candidates (Shuffle to vary browsing)
-    const shuffled = candidates.sort(() => 0.5 - Math.random()).slice(0, 5);
-
-    for (const article of shuffled) {
-        if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) break;
-
-        // 4. Check Stale/Tracker Status
-        const trackInfo = this.linkTracker.get(article.url);
-        const isStale = trackInfo && (Date.now() - trackInfo.lastScraped > this.LINK_STALE_THRESHOLD_MS);
+        console.log(`🌐 Browsing Hub: ${hub.url}`);
         
-        // Skip if visited recently (unless stale)
-        if (trackInfo && !isStale) continue;
+        // 2. Extract Article Candidates
+        const candidates = await this.scraper.extractArticleLinks(hub.url);
+        this.pagesVisitedThisHour++;
+        hub.lastVisited = Date.now();
+        hub.visitCount++;
+        this.saveFavorites();
 
-        // 5. Scrape Article
-        try {
-            console.log(`📖 Reading${isStale ? ' (Update Check)' : ''}: ${article.title}`);
-            const result = await this.scraper.scrapeUrl(article.url, undefined, true);
-            this.pagesVisitedThisHour++;
-            results.urlsVisited.push(article.url);
+        console.log(`🔍 Found ${candidates.length} candidate articles on ${hub.url}`);
 
-            if (result.content.length < 300) {
-                console.log('⏩ Skipping: Content too short');
-                continue;
+        // 3. Process Candidates (Shuffle to vary browsing)
+        const shuffled = candidates.sort(() => 0.5 - Math.random()).slice(0, 5);
+
+        for (const article of shuffled) {
+            // CRITICAL: Check for interrupt signal before every action
+            if (this.stopSignal) {
+                console.log('🛑 Browsing loop interrupted.');
+                break;
             }
+            if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) break;
 
-            // 6. Calculate Hash
-            const currentHash = createHash('md5').update(result.content).digest('hex');
+            // 4. Check Stale/Tracker Status
+            const trackInfo = this.linkTracker.get(article.url);
+            const isStale = trackInfo && (Date.now() - trackInfo.lastScraped > this.LINK_STALE_THRESHOLD_MS);
+            
+            // Skip if visited recently (unless stale)
+            if (trackInfo && !isStale) continue;
 
-            // 7. Check for Changes (Local)
-            if (trackInfo && trackInfo.contentHash === currentHash) {
-                console.log('⏩ Skipping: Content unchanged');
-                this.updateLinkTracker(article.url, currentHash);
-                continue;
-            }
+            // 5. Scrape Article
+            try {
+                console.log(`📖 Reading${isStale ? ' (Update Check)' : ''}: ${article.title}`);
+                const result = await this.scraper.scrapeUrl(article.url, undefined, true);
+                this.pagesVisitedThisHour++;
+                results.urlsVisited.push(article.url);
 
-            // 8. Check for Changes (Global KB)
-            const globalExists = await this.kb.hasContentHash(currentHash);
-            if (globalExists) {
-                 console.log('⏩ Skipping: Content exists in KB (Duplicate/Syndicated)');
-                 this.updateLinkTracker(article.url, currentHash);
-                 continue;
-            }
+                if (result.content.length < 300) {
+                    console.log('⏩ Skipping: Content too short');
+                    continue;
+                }
 
-            console.log(`✨ New/Updated Content Found! (Hash: ${currentHash.substring(0,8)})`);
+                // 6. Calculate Hash
+                const currentHash = createHash('md5').update(result.content).digest('hex');
 
-            // 9. Generate Google Search Checklist
-            let finalContent = result.content;
-            let tags = ['autonomous_browse', hub.category];
-            if (trackInfo) tags.push('updated_content'); // Mark as update
+                // 7. Check for Changes (Local)
+                if (trackInfo && trackInfo.contentHash === currentHash) {
+                    console.log('⏩ Skipping: Content unchanged');
+                    this.updateLinkTracker(article.url, currentHash);
+                    continue;
+                }
 
-            if (this.googleSearch && this.openai) {
-                const checklist = await this.generateSearchChecklist(article.title, result.content);
-                if (checklist.length > 0) {
-                    console.log(`🕵️ Enrichment Checklist (${checklist.length} items)`);
-                    const enrichmentData = await this.processChecklist(checklist);
-                    if (enrichmentData) {
-                        finalContent += `\n\n--- 🔍 Research Context ---\n${enrichmentData}`;
-                        tags.push('enriched');
+                // 8. Check for Changes (Global KB)
+                const globalExists = await this.kb.hasContentHash(currentHash);
+                if (globalExists) {
+                     console.log('⏩ Skipping: Content exists in KB (Duplicate/Syndicated)');
+                     this.updateLinkTracker(article.url, currentHash);
+                     continue;
+                }
+
+                console.log(`✨ New/Updated Content Found! (Hash: ${currentHash.substring(0,8)})`);
+
+                // 9. Generate Google Search Checklist
+                let finalContent = result.content;
+                let tags = ['autonomous_browse', hub.category];
+                if (trackInfo) tags.push('updated_content'); // Mark as update
+
+                if (this.googleSearch && this.openai) {
+                    const checklist = await this.generateSearchChecklist(article.title, result.content);
+                    if (checklist.length > 0) {
+                        console.log(`🕵️ Enrichment Checklist (${checklist.length} items)`);
+                        const enrichmentData = await this.processChecklist(checklist);
+                        if (enrichmentData) {
+                            finalContent += `\n\n--- 🔍 Research Context ---\n${enrichmentData}`;
+                            tags.push('enriched');
+                        }
                     }
                 }
+
+                // 10. Save Knowledge
+                await this.kb.learnDocument({
+                    content: finalContent,
+                    source: article.url,
+                    category: hub.category,
+                    tags: tags,
+                    timestamp: new Date(),
+                    contentHash: currentHash
+                });
+
+                results.knowledgeGained++;
+                this.updateLinkTracker(article.url, currentHash);
+
+                // 11. Discovery (Chance to add new domain to favorites)
+                if (Math.random() < 0.05) {
+                    this.maybeDiscoverNewFavorite(article.url, hub.category);
+                }
+
+            } catch (e) {
+                console.error(`Failed to process article ${article.url}:`, e);
             }
-
-            // 10. Save Knowledge
-            await this.kb.learnDocument({
-                content: finalContent,
-                source: article.url,
-                category: hub.category,
-                tags: tags,
-                timestamp: new Date(),
-                contentHash: currentHash
-            });
-
-            results.knowledgeGained++;
-            this.updateLinkTracker(article.url, currentHash);
-
-            // 11. Discovery (Chance to add new domain to favorites)
-            if (Math.random() < 0.05) {
-                this.maybeDiscoverNewFavorite(article.url, hub.category);
-            }
-
-        } catch (e) {
-            console.error(`Failed to process article ${article.url}:`, e);
         }
+    } catch (e) {
+        console.error('Error during surfing:', e);
+    } finally {
+        this.isSurfing = false;
+        this.stopSignal = false;
     }
     
     this.saveLinkTracker();
     return results;
+  }
+
+  /**
+   * Deep Research Task: Bypasses hourly limits to find specific answers
+   * Performs: Search -> Scrape -> Summarize -> Repeat if needed
+   */
+  async performDeepResearch(query: string): Promise<string> {
+    console.log(`🕵️ Starting Deep Research for: "${query}"`);
+    
+    if (!this.googleSearch || !this.openai) {
+        return "Deep research unavailable (Missing Google Search or OpenAI configuration).";
+    }
+
+    let summary = "";
+    const maxIterations = 2; // Prevent infinite loops
+    let currentQuery = query;
+
+    for (let i = 0; i < maxIterations; i++) {
+        console.log(`🕵️ Deep Research Iteration ${i + 1}/${maxIterations}: Searching for "${currentQuery}"`);
+        
+        // 1. Google Search
+        const searchResults = await this.googleSearch.search(currentQuery, 3);
+        
+        if (searchResults.length === 0) break;
+
+        // 2. Scrape Top Results (Bypassing hourly limit logic by not incrementing pagesVisitedThisHour)
+        const scrapedContents = [];
+        for (const result of searchResults) {
+            try {
+                // Check interrupt just in case the user spams messages
+                if (this.stopSignal) break;
+
+                console.log(`📖 Deep Research Reading: ${result.title}`);
+                const scrapeResult = await this.scraper.scrapeUrl(result.link, undefined, true); // Force mobile view
+                if (scrapeResult.content.length > 200) {
+                    scrapedContents.push(`Source: ${result.link}\nTitle: ${result.title}\nContent: ${scrapeResult.content.substring(0, 3000)}`);
+                }
+            } catch (e) {
+                console.warn(`Failed to scrape ${result.link} for research`);
+            }
+        }
+
+        if (scrapedContents.length === 0) {
+             if (i === maxIterations - 1) return "I couldn't find any readable websites for your query. The search results were either blocked or contained no readable content.";
+             continue;
+        }
+
+        // 3. Analyze & Synthesize
+        const researchPrompt = `
+        User Question: "${query}"
+        
+        I have gathered information from the following sources:
+        ${scrapedContents.join('\n\n---\n\n')}
+
+        Task:
+        Provide a natural, conversational answer to the user's question based on the information gathered.
+        If you can answer the question clearly, provide the answer in a friendly, WhatsApp-appropriate format.
+        If the information is insufficient to answer the question, explain what you found and suggest what additional information might be needed.
+        `;
+
+        const response = await this.openai.generateTextResponse(researchPrompt);
+
+        // Check if the response seems to answer the question (contains relevant information)
+        const lowerResponse = response.toLowerCase();
+        const lowerQuery = query.toLowerCase();
+        
+        // Simple heuristic: if response contains key terms from query and is substantial
+        const queryWords = lowerQuery.split(/\s+/).filter(word => word.length > 3);
+        const matchingWords = queryWords.filter(word => lowerResponse.includes(word));
+        
+        if (matchingWords.length >= queryWords.length * 0.5 && response.length > 50) {
+            // Save this new knowledge to the DB for future speed
+            await this.kb.learnDocument({
+                content: `Deep Research on "${query}":\n${response.trim()}`,
+                source: "deep_research_task",
+                category: "research",
+                tags: ["deep_research", "user_query"],
+                timestamp: new Date()
+            });
+            
+            return response.trim();
+        } else {
+            // Update query for next iteration if needed
+            if (i < maxIterations - 1) {
+                console.log(`🕵️ Information insufficient. Continuing research...`);
+                // Try a more specific query for next iteration
+                currentQuery = query + " detailed explanation";
+                summary = "I found some related information but need to search more specifically.";
+            } else {
+                return response.trim(); // Return whatever we got
+            }
+        }
+    }
+
+    return "After searching multiple sources, I couldn't find a definitive answer to your question. The information available was either incomplete or didn't directly address your specific query.";
   }
 
   // --- Helpers ---
@@ -6627,6 +6792,7 @@ export class TextChunker {
 import { Router, Request, Response } from 'express';
 import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
+import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 
 /**
  * Dashboard API routes for the web interface
@@ -6832,22 +6998,42 @@ export class DashboardRoutes {
     // Chat endpoint for testing the bot
     this.router.post('/api/chat', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { message, userId = 'web-user' } = req.body;
+        const { message } = req.body;
+        const webUiUserId = process.env.WEB_UI_USER_ID || 'web-ui-user';
         
         if (!message) {
           return res.status(400).json({ error: 'Message is required' });
         }
 
         const agent = getAutonomousAgent();
+        const historyStore = new HistoryStorePostgres();
         
         // Log the chat activity
-        this.logActivity(`Chat message from ${userId}: ${message.substring(0, 50)}...`);
+        this.logActivity(`Web UI chat message from ${webUiUserId}: ${message.substring(0, 50)}...`);
+        
+        // Store user message in database like normal WhatsApp messages
+        await historyStore.storeMessage({
+          userId: webUiUserId,
+          message: message,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
         
         // Process the message through the autonomous agent using web interface method
-        const response = await agent.handleWebMessage(userId, message);
+        const response = await agent.handleWebMessage(webUiUserId, message);
+        
+        // Store bot response in database
+        await historyStore.storeMessage({
+          userId: webUiUserId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
         
         // Log the response
-        this.logActivity(`Bot response to ${userId}: ${response.substring(0, 50)}...`);
+        this.logActivity(`Bot response to ${webUiUserId}: ${response.substring(0, 50)}...`);
         
         res.json({ success: true, response });
       } catch (error) {
@@ -7518,6 +7704,40 @@ export class PrismaDatabaseUtils {
         oldProcessedMessages: 0,
       };
     }
+  }
+}
+
+---
+./src/tools/DeepResearchTool.ts
+---
+// src/tools/DeepResearchTool.ts
+import { BaseTool } from '../core/BaseTool';
+import { BrowserService } from '../services/BrowserService';
+
+export class DeepResearchTool extends BaseTool {
+  name = 'deep_research';
+  description = 'Perform an extensive, deep online research task. Use this ONLY when standard "web_search" or "search_knowledge" fails to provide a sufficient answer. This tool takes longer but searches and reads multiple websites.';
+  
+  parameters = {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'The specific question or topic to research deeply.',
+      }
+    },
+    required: ['query'],
+    additionalProperties: false,
+  };
+
+  constructor(private browserService: BrowserService) {
+    super();
+  }
+
+  async execute(args: any): Promise<string> {
+    const { query } = args;
+    // Note: The Agent will call this, which calls the BrowserService logic
+    return await this.browserService.performDeepResearch(query);
   }
 }
 
