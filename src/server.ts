@@ -20,7 +20,7 @@ class AutonomousServer {
     this.dashboardRoutes = new DashboardRoutes();
     
     this.setupMiddleware();
-    this.setupRoutes();
+    // Note: setupRoutes() will be called after agent initialization in start() method
   }
 
   private setupMiddleware(): void {
@@ -111,8 +111,11 @@ class AutonomousServer {
     try {
       console.log('🚀 Starting Autonomous WhatsApp Agent Server...');
       
-      // Start the autonomous agent
+      // Start the autonomous agent first
       await startAutonomousAgent();
+      
+      // Now set up routes after agent is initialized
+      this.setupRoutes();
       
       // Determine host based on environment variable or fallback to 0.0.0.0 for external access
       const host = process.env.HOST || '0.0.0.0';
