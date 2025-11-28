@@ -79,7 +79,9 @@ export class WebhookRoutes {
       // Verify signature if app secret is provided
       if (this.appSecret) {
         const signature = req.headers['x-hub-signature-256'] as string;
+        // FIX: Use rawBody captured by middleware in server.ts
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
+        
         if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
           console.warn('Invalid webhook signature');
           res.sendStatus(401);
@@ -89,10 +91,9 @@ export class WebhookRoutes {
 
       const data: WhatsAppMessage = req.body;
 
-      // Handle immediate validation response
-      // WhatsApp sometimes sends test events that are not messages
       if (!data.entry || !Array.isArray(data.entry)) {
-          return void res.sendStatus(200);
+          res.sendStatus(200);
+          return;
       }
 
       for (const entry of data.entry) {
@@ -102,29 +103,52 @@ export class WebhookRoutes {
 
             if (messages && messages.length > 0) {
               for (const message of messages) {
-                // 1. Mark as read immediately to stop retries
+                // Mark message as read immediately
                 if (this.whatsappService) {
-                   await this.whatsappService.markMessageAsRead(message.id);
+                    await this.whatsappService.markMessageAsRead(message.id);
                 }
 
-                // 2. Check for duplicates
+                // Check if this message has already been processed
                 const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
                 if (alreadyProcessed) continue;
 
+                // Mark message as processed
                 await this.processedMessageService.markMessageAsProcessed(
                   message.id,
                   message.from,
                   message.type
                 );
 
+                const agent = getAutonomousAgent();
+
                 if (message.type === 'text' && message.text) {
-                  // Pass to autonomous agent without awaiting (prevents timeouts)
-                  const agent = getAutonomousAgent();
+                  // Text Message
                   agent.handleIncomingMessage(
                     message.from,
                     message.text.body,
                     message.id
-                  ).catch(err => console.error('Agent processing error:', err));
+                  ).catch(err => console.error('Agent text processing error:', err));
+
+                } else if (message.type === 'image' && message.image) {
+                  // Image Message
+                  console.log(`🖼️ Processing image message from ${message.from}`);
+                  
+                  // Extract caption if available
+                  const caption = message.image.caption;
+                  
+                  agent.handleImageMessage(
+                    message.from,
+                    message.image.id,
+                    message.image.mime_type,
+                    message.image.sha256,
+                    caption
+                  ).catch(err => console.error('Agent image processing error:', err));
+
+                } else if (message.type === 'audio' && message.audio) {
+                  console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
+                  console.log('⚠️ Audio processing not yet implemented in autonomous agent');
+                } else {
+                  console.log(`Unsupported message type: ${message.type}`);
                 }
               }
             }

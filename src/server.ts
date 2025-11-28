@@ -29,8 +29,14 @@ class AutonomousServer {
     // Cookie parser middleware
     this.app.use(cookieParser());
     
-    // JSON parsing middleware
-    this.app.use(express.json({ limit: '10mb' }));
+    // JSON parsing middleware - CRITICAL FIX FOR SIGNATURE VERIFICATION
+    // We must capture the raw buffer before JSON parsing happens
+    this.app.use(express.json({
+      limit: '10mb',
+      verify: (req: any, res, buf) => {
+        req.rawBody = buf;
+      }
+    }));
     
     // URL-encoded parsing middleware
     this.app.use(express.urlencoded({ extended: true }));

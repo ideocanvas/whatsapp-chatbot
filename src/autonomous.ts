@@ -7,6 +7,7 @@ import { ToolRegistry } from './core/ToolRegistry';
 import { BrowserService } from './services/BrowserService';
 import { ActionQueueService } from './services/ActionQueueService';
 import { WhatsAppService } from './services/whatsappService';
+import { MediaService } from './services/mediaService';
 import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
 import { WebScrapeService, createWebScrapeService } from './services/webScrapeService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
@@ -34,6 +35,7 @@ class AutonomousWhatsAppAgent {
   private browser?: BrowserService;
   private actionQueue?: ActionQueueService;
   private whatsapp?: WhatsAppService;
+  private mediaService?: MediaService; // Add MediaService
   private openai?: OpenAIService;
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
   private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
@@ -72,6 +74,7 @@ class AutonomousWhatsAppAgent {
       };
 
       this.whatsapp = new WhatsAppService(whatsappConfig, process.env.DEV_MODE === 'true');
+      this.mediaService = new MediaService(whatsappConfig); // Initialize MediaService
 
       // CRITICAL FIX: Link ActionQueue to WhatsApp Service
       this.actionQueue.registerMessageSender(async (userId, content) => {
@@ -225,6 +228,55 @@ class AutonomousWhatsAppAgent {
       
       // Fallback response
       const fallback = "Sorry, I encountered an issue. Please try again.";
+      if (process.env.DEV_MODE !== 'true') {
+        await this.whatsapp.sendMessage(userId, fallback);
+      }
+    }
+  }
+
+  /**
+   * NEW: Handle incoming Image messages
+   */
+  async handleImageMessage(userId: string, imageId: string, mimeType: string, sha256: string, caption?: string): Promise<void> {
+    if (!this.isInitialized || !this.agent || !this.whatsapp || !this.mediaService) {
+      throw new Error('Agent not initialized');
+    }
+
+    // 1. INTERRUPT BACKGROUND TASKS
+    if (this.scheduler) {
+        this.scheduler.interrupt();
+    }
+
+    console.log(`🖼️ Incoming IMAGE from ${userId}`);
+
+    try {
+      // 1. Download Media
+      const mediaInfo = await this.mediaService.downloadAndSaveMedia(imageId, mimeType, sha256, 'image');
+      
+      // 2. Analyze using Vision AI
+      console.log(`👁️ Analyzing image: ${mediaInfo.filename}`);
+      const analysis = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
+      
+      // 3. Construct Augmented Message for Agent
+      // We present the image analysis as system context or augmented user message
+      const augmentedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${caption ? `User Caption: "${caption}"` : 'No caption provided.'}`;
+      
+      console.log(`📝 Processing analyzed image as text context...`);
+      
+      // 4. Pass to standard agent handler
+      const response = await this.agent.handleUserMessage(userId, augmentedMessage);
+
+      if (process.env.DEV_MODE === 'true') {
+        console.log(`💬 Response to ${userId}: ${response}`);
+      } else {
+        await this.whatsapp.sendMessage(userId, response);
+      }
+
+      console.log(`✅ Image processed for ${userId}`);
+
+    } catch (error) {
+      console.error(`❌ Error processing image from ${userId}:`, error);
+      const fallback = "I received your image but had trouble analyzing it. Please try again.";
       if (process.env.DEV_MODE !== 'true') {
         await this.whatsapp.sendMessage(userId, fallback);
       }

@@ -26,6 +26,7 @@ export interface WhatsAppMessage {
             id: string;
             mime_type: string;
             sha256: string;
+            caption?: string;
           };
           audio?: {
             id: string;
