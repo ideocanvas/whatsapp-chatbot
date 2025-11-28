@@ -1,46 +1,74 @@
-# WhatsApp ChatBot (TypeScript)
+# 🤖 Autonomous WhatsApp Agent (TypeScript)
 
-A TypeScript-based WhatsApp chat bot that integrates with Facebook's WhatsApp Business API to receive and respond to messages with advanced AI capabilities.
+A complete autonomous agent system that transforms from a **Reactive Bot** to an **Intelligent Assistant** with autonomous browsing, proactive messaging, and a comprehensive web dashboard.
 
-## Features
+## 🎯 Overview
 
-### Core Functionality
-- ✅ Receive WhatsApp messages via webhooks
-- ✅ Send automated responses to users
-- ✅ Message read receipts
-- ✅ Signature verification for security
-- ✅ TypeScript support with proper type definitions
-- ✅ Express.js HTTP server
-- ✅ Environment configuration
+This is a complete architectural transformation from a **Reactive Bot** (Input → Output) to an **Autonomous Agent** (Loop → Decision → Action). The system now behaves like a proactive assistant that learns, browses, and initiates conversations based on user interests.
 
-### AI Capabilities
-- ✅ **OpenAI Integration** - Intelligent text responses using GPT models
-- ✅ **AI Image Analysis** - Detailed image content analysis using OpenAI Vision
-- ✅ **Response Cleaning** - Automatic removal of internal thinking tags
-- ✅ **Tool Calling** - OpenAI function calling for external tool integration
+## 🚀 Key Features
 
-### Media Support
-- ✅ Image file support (download and info)
-- ✅ Audio file support (download and transcription)
-- ✅ Media file storage and management
+### 🤖 Autonomous Agent System
 
-### Advanced Features
-- ✅ **Google Search Integration** - Real-time information retrieval
-- ✅ **Web Scraping** - Direct content extraction from websites
-- ✅ **Comprehensive Logging** - Detailed monitoring of AI responses and tool usage
-- ✅ **Error Handling** - Robust error handling and fallback mechanisms
+- **Three-Tier Memory**: Short-term context (1h), long-term knowledge (vector DB), conversation history (SQL)
+- **Intelligent Scheduler**: 1-minute autonomous loop with mode switching (idle/proactive/reactive)
+- **Agent Brain**: LLM orchestration with tool calling and mobile optimization
+- **Autonomous Browsing**: 10 pages/hour limit with 2-5 second delays between pages
+- **Proactive Messaging**: User interest discovery and relevant content sharing
 
-## Prerequisites
+### 🌐 Web Dashboard
 
-Before running this bot, you need:
+- **Real-time Monitoring**: System stats, activity logs, memory visualization
+- **Interactive Chat**: Test the bot directly in the web interface
+- **Memory Exploration**: View context, knowledge base, and conversation history
+- **Simulation Controls**: Trigger browsing sessions and proactive messaging
 
-1. **Facebook Developer Account**: Create an app at https://developers.facebook.com
+### 🔧 Core Capabilities
+
+- **WhatsApp Integration**: Full WhatsApp Business API support
+- **AI Intelligence**: OpenAI integration with tool calling
+- **Knowledge Acquisition**: Autonomous web surfing and content embedding
+- **Mobile Optimization**: 50-word response limit, natural spacing, emoji integration
+- **Extensible Tools**: Web search (10 results/request, 3 request limit), news scraping, history recall, and more
+
+## 🏗️ Architecture
+
+### Three-Tier Memory System
+
+- **Short-Term (Hot)**: [`ContextManager`](src/memory/ContextManager.ts) - 1-hour in-memory conversation context with auto-interest discovery
+- **Long-Term (Cold)**: [`KnowledgeBase`](src/memory/KnowledgeBase.ts) - Vector database for facts learned from autonomous browsing
+- **History (Logs)**: [`HistoryStore`](src/memory/HistoryStore.ts) - SQL-based conversation logs for recall and analysis
+
+### Autonomous Loop Engine
+
+- **Scheduler**: [`Scheduler`](src/core/Scheduler.ts) - 1-minute tick system managing idle/proactive modes
+- **Agent**: [`Agent`](src/core/Agent.ts) - Decision-making brain with tool orchestration and mobile optimization
+- **BrowserService**: [`BrowserService`](src/services/BrowserService.ts) - Autonomous web surfing for knowledge acquisition
+
+### Web Interface
+
+- **Dashboard**: Real-time system statistics and activity monitoring
+- **Chat Interface**: Interactive testing environment
+- **Memory Visualization**: Explore all three memory tiers
+- **API Endpoints**: RESTful API for system control and data access
+
+## 🛠️ Prerequisites
+
+### Required Setup
+
+1. **Facebook Developer Account**: Create an app at <https://developers.facebook.com>
 2. **WhatsApp Business Account**: Set up a WhatsApp Business account
 3. **Access Token**: Get your access token from Facebook Developer Console
 4. **Phone Number ID**: Get your WhatsApp phone number ID
 5. **Webhook URL**: A publicly accessible HTTPS URL (use ngrok for development)
 
-## Installation
+### Optional AI Configuration
+
+- **OpenAI API Key**: For advanced AI capabilities
+- **Google Search API**: For real-time information retrieval
+- **PostgreSQL Database**: For persistent memory storage (optional)
+
+## 📥 Installation
 
 ```bash
 # Clone the repository
@@ -52,408 +80,361 @@ npm install
 
 # Copy environment variables
 cp .env.example .env
+
+# Initialize database (optional, for persistent memory)
+npx prisma generate
+npx prisma db push
 ```
 
-## Configuration
+## ⚙️ Configuration
 
-Edit the `.env` file with your WhatsApp Business API credentials:
+Edit the `.env` file with your credentials:
 
 ```env
 # WhatsApp Business API Configuration
 WHATSAPP_ACCESS_TOKEN=your_access_token_here
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
-
-# AI Configuration File Settings
-AI_CONFIG_PATH=config/ai
-AI_CONFIG_FILE=default.json
-
-# WhatsApp Business API Configuration
 WHATSAPP_VERIFY_TOKEN=your_verify_token_here
 WHATSAPP_APP_SECRET=your_app_secret_here
+
+# AI Configuration (File-based or Environment)
+AI_CONFIG_PATH=config/ai
+AI_CONFIG_FILE=default.json
+# OR use environment variables:
+# OPENAI_API_KEY=your_api_key_here
+# OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Server Configuration
 PORT=3000
 WEBHOOK_URL=https://your-domain.com/webhook
+HOST=localhost  # or 0.0.0.0 for network access
 
-# Audio Transcription Service (Optional)
-AUDIO_SERVICE_API_URL=https://api.example.com/audio/
-AUDIO_SERVICE_API_KEY=your_audio_service_api_key_here
-```
+# Autonomous Agent Settings
+CHATBOT_NAME=Lucy  # Customize bot name
+DEV_MODE=true      # Development mode (logs to console)
 
-## OpenAI Features
+# Database Configuration (Optional)
+DATABASE_URL=postgresql://user:pass@localhost:5432/whatsapp_agent
 
-The bot now includes advanced AI capabilities powered by OpenAI:
-
-### Intelligent Text Responses
-- Uses GPT models to generate natural, contextual responses to text messages
-- Falls back to basic responses if OpenAI is not configured or fails
-- Handles a wide variety of questions and conversations
-
-### AI Image Analysis
-- Uses OpenAI Vision to analyze image content
-- Provides detailed descriptions of images including objects, people, text, colors, and context
-- Automatically processes images sent to the bot via WhatsApp
-
-### Configuration
-The bot now uses config files for AI model configuration instead of environment variables. This allows for multiple AI model configurations and easier switching between different providers.
-
-**Configuration File Structure:**
-Create JSON files in the `config/ai/` directory with the following structure:
-
-```json
-{
-  "name": "Configuration Name",
-  "description": "Description of this configuration",
-  "config": {
-    "apiKey": "your_api_key_here",
-    "baseURL": "https://api.provider.com/v1",
-    "model": "model-name",
-    "visionModel": "vision-model-name",
-    "temperature": 0.7,
-    "maxTokens": 1000,
-    "enableToolCalling": true,
-    "embeddingModel": "embedding-model",
-    "prompts": {
-      "textResponse": "Custom prompt template...",
-      "imageAnalysis": "Custom image analysis prompt...",
-      "toolCalling": "Custom tool calling prompt...",
-      "errorResponse": "Custom error response...",
-      "searchLimit": "Custom search limit response..."
-    }
-  }
-}
-```
-
-**Setup Steps:**
-1. Create config files in `config/ai/` directory (see examples provided)
-2. Update your `.env` file to specify which config file to use:
-   ```env
-   AI_CONFIG_PATH=config/ai
-   AI_CONFIG_FILE=default.json
-   ```
-3. The bot will automatically load the specified configuration
-
-**Supported Providers:**
-- [OpenAI](https://platform.openai.com/api-keys) - Official OpenAI API
-- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) - Microsoft Azure OpenAI
-- [Anthropic Claude](https://console.anthropic.com/) - Anthropic's Claude models
-- [Google Gemini](https://aistudio.google.com/) - Google's Gemini models
-- Local LLM servers (LM Studio, Ollama, etc.)
-- Any other OpenAI-compatible API endpoint
-
-**Example Config Files:**
-- `default.json` - Default configuration based on current setup
-- `openai.json` - Configuration for OpenAI API models
-- `local-llm.json` - Configuration for locally hosted models
-
-### Testing OpenAI Integration
-
-**Test Configuration:**
-```bash
-npm run test:openai:config
-```
-
-**Full Integration Test (requires valid API credentials):**
-```bash
-npm run test:openai
-```
-
-The bot will automatically fall back to basic responses if OpenAI is not configured or encounters errors.
-
-**Legacy Environment Variable Support:**
-The bot maintains backward compatibility with environment variables. If no config file is found or specified, it will fall back to reading from:
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
-- `OPENAI_VISION_MODEL`
-- `OPENAI_TEMPERATURE`
-- `OPENAI_MAX_TOKENS`
-- `OPENAI_ENABLE_TOOL_CALLING`
-- `OPENAI_EMBEDDING_MODEL`
-
-### Response Cleaning
-The bot automatically removes internal thinking tags (`<think>...</think>`) from OpenAI responses before sending them to users, ensuring clean and professional output.
-
-**Example:**
-```
-Before: <think>User asked about weather...</think>Hello!<think>Preparing response...</think>The weather is sunny.
-After: Hello! The weather is sunny.
-```
-
-**Features:**
-- Automatic removal of thinking tags and internal AI thought processes
-- Whitespace cleanup and formatting
-- Graceful handling of responses without thinking tags
-- No additional configuration required
-
-## Tool Calling and Google Search Integration
-
-The bot includes advanced tool calling capabilities with Google Search integration for real-time information retrieval.
-
-### Features
-- **Web Search**: Perform Google searches using Custom Search API
-- **Tool Calling**: OpenAI function calling for intelligent tool selection
-- **Real-time Information**: Access current news, facts, and updates
-- **Automatic Integration**: Search results automatically incorporated into responses
-
-### Setup Requirements
-
-**Google Custom Search API:**
-1. Create a Google Cloud project at https://console.cloud.google.com/
-2. Enable Custom Search API
-3. Create API key and Search Engine ID
-4. Add to `.env`:
-```env
+# Google Search API (Optional)
 GOOGLE_SEARCH_API_KEY=your_api_key_here
 GOOGLE_SEARCH_ENGINE_ID=your_engine_id_here
-OPENAI_ENABLE_TOOL_CALLING=true
 ```
 
-### Search Trigger Keywords
-The bot automatically triggers search for messages containing:
-- Current/latest information requests
-- News and updates
-- "What is", "Who is", "When is", "Where is", "How to"
-- Search/find/look up requests
-- Weather, stock prices, scores, results
+## 🤖 Autonomous Agent Features
 
-### Usage Examples
-- **User**: "What's the latest news about AI?" → Bot performs Google search
-- **User**: "Who won the last World Cup?" → Bot searches for factual information
-- **User**: "What's the weather in Tokyo?" → Bot provides current weather info
+### Three-Tier Memory System
 
-### Web Scraping Tool
-The bot includes a powerful web scraping tool using Playwright for direct content extraction from websites:
+- **Short-Term Context**: 1-hour conversation window with automatic user interest discovery
+- **Long-Term Knowledge**: Vector database storing facts learned from autonomous browsing
+- **Conversation History**: SQL-based logs for recall and analysis
 
-**Features:**
-- Real-time content extraction from specific URLs
-- JavaScript support for modern websites
-- CSS selector targeting for precise content extraction
-- Multiple URL support in single operations
-- Automatic content cleaning and formatting
+### Autonomous Browsing
 
-**Tool Schema:**
-```json
-{
-  "name": "web_scrape",
-  "description": "Scrape content from URLs to get real-time information",
-  "parameters": {
-    "urls": ["https://example.com"],
-    "selector": "article"  // Optional CSS selector
-  }
-}
-```
+- **10 pages/hour limit** with intelligent URL selection
+- **Intent-based surfing** based on knowledge gaps and user interests
+- **Mobile-optimized scraping** for efficient content extraction
+- **Automatic knowledge embedding** into vector database
 
-**Usage Patterns:**
-1. **Search + Scrape**: Use Google search to find URLs, then scrape content
-2. **Direct URL**: Scrape specific URLs provided by users
-3. **Multi-source**: Scrape multiple sources for comprehensive information
+### Proactive Messaging
 
-**Common Selectors:**
-- `article` - Main article content
-- `main` - Main content area
-- `.content` - Content container
-- `#content` - Content container by ID
+- **User interest auto-discovery** from conversation patterns
+- **Content relevance matching** using vector similarity
+- **Rate-limited delivery** with 15-minute cooldown per user
+- **Intelligent decision-making** via LLM evaluation
 
-## Development Setup
+### Mobile Optimization
 
-### Using ngrok for local development
+- **50-word response limit** unless requested
+- **Natural spacing** for WhatsApp readability
+- **No markdown blocks** or complex formatting
+- **Emoji integration** for personality
 
-1. Install ngrok: https://ngrok.com/download
-2. Start ngrok:
-   ```bash
-   ngrok http 3000
-   ```
-3. Copy the HTTPS URL (e.g., `https://abc123.ngrok.io`)
-4. Update your `.env` file: `WEBHOOK_URL=https://abc123.ngrok.io`
+## 🌐 Web Dashboard
 
-### Running the bot
+### Real-time Monitoring
+
+- **System Stats**: Active users, knowledge documents, scheduler ticks, browsing sessions
+- **Activity Log**: Live monitoring of autonomous activities and system events
+- **Auto-refresh**: Automatic updates every 5 seconds with manual control
+
+### Interactive Features
+
+- **Test Chat**: Interactive chat interface to test the bot's responses
+- **Memory Visualization**: Explore context, knowledge base, and conversation history
+- **Simulation Controls**: Trigger browsing sessions and proactive messaging
+
+### API Endpoints
+
+- `GET /api/status` - Comprehensive system statistics
+- `GET /api/activity` - Recent activity log (last 50 entries)
+- `POST /api/chat` - Send message to the bot and get response
+- `GET /api/memory/{context|knowledge|history}` - Memory data access
+- `POST /api/search/knowledge` - Search knowledge base content
+
+## 🔧 Tool System
+
+### Available Tools
+
+- **Web Search**: Google Search API integration for real-time information
+- **News Scraping**: Direct content extraction from news websites
+- **History Recall**: Access conversation history and user interactions
+- **Browser Automation**: Autonomous web surfing for knowledge acquisition
+
+### Extensible Architecture
+
+- **BaseTool Pattern**: Easy creation of new tools without core changes
+- **Tool Registry**: Dynamic tool management and registration
+- **OpenAI Function Calling**: Intelligent tool selection and execution
+
+## 🚀 Quick Start
+
+### Running the Autonomous Agent
 
 ```bash
-# Development mode with auto-reload
-npm run dev
+# Development mode (messages logged to console, no WhatsApp sending)
+npm run autonomous:dev
 
-# Build TypeScript
-npm run build
+# Production mode (messages sent to WhatsApp)
+npm run autonomous
 
-# Start production server
-npm start
+# Watch mode (auto-restart on changes)
+npm run autonomous:watch
 
-# Watch mode
-npm run watch
-
-# Test audio service functionality
-npm run test:audio
-
-# Test audio integration with actual files
-npm run test:audio:integration
+# Test the autonomous system
+npm run web:test
 ```
 
-## WhatsApp API Setup
+### Accessing the Web Dashboard
 
-1. **Create Facebook App**:
-   - Go to https://developers.facebook.com/apps
-   - Create a new app with "Business" type
-   - Add WhatsApp product
+Once the server is running, access the dashboard at:
 
-2. **Configure Webhook**:
-   - In your Facebook app, go to WhatsApp > Configuration
-   - Set webhook URL: `https://your-domain.com/webhook`
-   - Set verify token (must match WHATSAPP_VERIFY_TOKEN in .env)
-   - Subscribe to `messages` webhook field
+- **Local**: <http://localhost:3000>
+- **Network**: http://[your-ip]:3000 (if HOST=0.0.0.0)
 
-3. **Test the bot**:
-   - Send a message to your WhatsApp number
-   - The bot should respond automatically
+### Using ngrok for Development
 
-## API Endpoints
+```bash
+# Install ngrok: https://ngrok.com/download
+ngrok http 3000
 
-- **GET /webhook**: Webhook verification endpoint
-- **POST /webhook**: Main webhook handler for WhatsApp messages
-- **GET /health**: Health check endpoint
-
-## Bot Commands
-
-The bot responds to these commands:
-
-- `hello` - Welcome message
-- `help` - List of available commands
-- `time` - Current time
-- `info` - Information about the bot
-
-## Media Support
-
-The bot now supports receiving and processing media files:
-
-### Image Files
-- ✅ Download and save images to `data/media/` folder
-- ✅ Respond with file information (filename, size, MIME type, SHA256 hash)
-- ✅ Support for JPEG, PNG, GIF, WebP formats
-
-### Audio Files
-- ✅ Download and save audio files to `data/media/` folder
-- ✅ Respond with file information
-- ✅ Optional audio transcription (requires external service)
-- ✅ Support for MP3, WAV, OGG, M4A, AAC formats
-
-### Audio Transcription
-To enable audio transcription, configure these environment variables:
-```env
-AUDIO_SERVICE_API_URL=https://your-audio-service.com/
-AUDIO_SERVICE_API_KEY=your-api-key-here
+# Update .env with the ngrok URL
+WEBHOOK_URL=https://abc123.ngrok.io
 ```
 
-The bot will attempt to transcribe audio files and include the transcribed text in the response.
-
-## Project Structure
+## 📂 Project Structure
 
 ```
 whatsapp-chatbot/
 ├── src/
-│   ├── types/
-│   │   ├── whatsapp.ts         # WhatsApp API type definitions
-│   │   └── conversation.ts     # Conversation management types
-│   ├── services/
-│   │   ├── whatsappService.ts  # WhatsApp API client
-│   │   ├── mediaService.ts     # Media download and processing
-│   │   ├── openaiService.ts    # OpenAI integration for AI responses
-│   │   ├── googleSearchService.ts # Google Search API integration
-│   │   ├── webScrapeService.ts # Web scraping with Playwright
-│   │   ├── conversationStorageService.ts # Conversation management
-│   │   ├── processedMessageService.ts # Message processing state
-│   │   └── newsScrapeService.ts # News scraping functionality
-│   ├── handlers/
-│   │   └── messageHandler.ts   # Message processing logic
-│   ├── utils/
-│   │   ├── crypto.ts           # Signature verification
-│   │   ├── logger.ts           # Comprehensive logging system
-│   │   └── responseCleaner.ts  # Response cleaning utilities
-│   ├── tools/
-│   │   └── index.ts            # Tool calling system
-│   ├── routes/
-│   │   └── webhook.ts          # Express routes
-│   └── index.ts                # Main entry point
-├── data/
-│   └── media/                  # Storage for received media files
-├── test/                       # Test files
-├── test-data/                  # Test data
+│   ├── core/                    # Core Agent Components
+│   │   ├── Agent.ts            # The Brain (LLM Orchestration)
+│   │   ├── Scheduler.ts        # The Heartbeat (1-minute ticks)
+│   │   ├── ToolRegistry.ts     # Dynamic Tool Management
+│   │   └── BaseTool.ts         # Tool Interface
+│   ├── memory/                 # Three-Tier Memory System
+│   │   ├── ContextManager.ts   # Short-term (1h window)
+│   │   ├── KnowledgeBase.ts    # Long-term Vector Store
+│   │   └── HistoryStore.ts     # Conversation Logs (SQL)
+│   ├── services/              # Autonomous Services
+│   │   ├── BrowserService.ts  # Autonomous Web Surfing
+│   │   ├── ActionQueueService.ts # Rate-limited Messaging
+│   │   ├── WhatsappService.ts # Enhanced with proactive support
+│   │   └── OpenAIService.ts   # LLM Integration
+│   ├── config/               # Configuration
+│   │   ├── autonomous.json   # Behavior settings
+│   │   └── databaseConfig.ts # Database configuration switcher
+│   ├── routes/              # API Routes
+│   │   ├── dashboard.ts     # Web interface API
+│   │   └── webhook.ts       # WhatsApp webhook handler
+│   ├── tools/               # Extensible Tool System
+│   │   ├── WebSearchTool.ts # Google Search integration
+│   │   ├── RecallHistoryTool.ts # Conversation history access
+│   │   └── ScrapeNewsTool.ts # News scraping capabilities
+│   ├── autonomous.ts        # Main Autonomous Agent Entry Point
+│   └── server.ts           # Main Server with Web Dashboard
+├── web/                    # Web Interface
+│   └── index.html         # Dashboard HTML/CSS/JS
+├── config/                # Configuration Files
+│   └── ai/               # AI Model Configurations
+├── prisma/               # Database Schema
+├── test/                 # Test Files
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
 └── README.md
 ```
 
-## Logging and Monitoring
+## 🔄 Autonomous Behavior Patterns
 
-The bot includes comprehensive logging for all AI responses and tool calling activities:
+### Idle Mode (No Active Users)
 
-### Log Types
-- **🤖 AI Response**: Logs all AI-generated responses with model information and token counts
-- **🛠️ Tool Call**: Logs tool execution requests, results, and timing information
-- **🔍 Search**: Logs Google search API requests and responses with timing
-- **🧠 Decision**: Logs response generation decisions and search triggers
-- **❌ Error**: Logs errors and failures with context information
+1. Browser surfs predefined URLs
+2. Extracts knowledge and embeds into vector store
+3. Builds knowledge base for future proactive messaging
 
-### Log Features
-- **Structured Logging**: Consistent log format with timestamps and emoji indicators
-- **Real-time Console Output**: Immediate feedback during development
-- **In-memory Storage**: Configurable log retention (default: 1000 entries)
-- **Programmatic Access**: Filter and retrieve logs by type or limit
+### Proactive Mode (Active Users)
 
-### Usage Examples
-```typescript
-import { logger } from './utils/logger';
+1. Checks user interests from conversation context
+2. Searches knowledge base for relevant content
+3. Asks LLM if content should be shared
+4. Queues message with appropriate delay and priority
 
-// Log AI responses
-logger.logAIResponse('Response generated', {
-  model: 'gpt-4',
-  tokens: 150,
-  tool_calls: 1
-});
+### Reactive Mode (User Messages)
 
-// Get filtered logs
-const searchLogs = logger.getLogs({ type: 'search' });
-const recentLogs = logger.getLogs({ limit: 10 });
+1. Processes through agent with tool calling
+2. Uses 3-tier memory for context and knowledge
+3. Optimizes response for mobile interface
+4. Auto-discovers user interests for future proactive messages
+
+## 📊 Monitoring & Logging
+
+### Real-time Dashboard
+
+- **System Status**: Active users, knowledge documents, scheduler ticks, browsing sessions
+- **Activity Log**: Live monitoring of autonomous activities
+- **Memory Visualization**: Explore all three memory tiers
+- **Chat Testing**: Interactive testing environment
+
+### Comprehensive Logging
+
+- **AI Response**: Logs all AI-generated responses with model information
+- **Tool Call**: Logs tool execution requests, results, and timing
+- **Search**: Logs Google search API requests and responses
+- **Decision**: Logs response generation decisions and search triggers
+- **Error**: Logs errors and failures with context information
+
+## 🎯 Configuration
+
+### Autonomous Behavior Settings
+
+Edit [`src/config/autonomous.json`](src/config/autonomous.json) to customize:
+
+```json
+{
+  "autonomous": {
+    "scheduler": {
+      "tickIntervalMs": 60000,
+      "browsingChanceWhenUsersActive": 0.3,
+      "proactiveCheckChance": 0.5
+    },
+    "browser": {
+      "maxPagesPerHour": 10,
+      "dailyUrls": ["https://techcrunch.com", "https://news.ycombinator.com"],
+      "mobileMode": true,
+      "pageDelayMs": {
+        "min": 2000,
+        "max": 5000
+      }
+    },
+    "memory": {
+      "shortTermTtlMs": 3600000,
+      "longTermCleanupDays": 30
+    },
+    "messaging": {
+      "rateLimitDelayMs": 2000,
+      "proactiveCooldownMs": 900000,
+      "mobileOptimization": {
+        "maxWords": 50,
+        "removeMarkdown": true
+      }
+    }
+  }
+}
 ```
 
-### Environment Variables for Logging
-```env
-# Enable detailed logging (default: enabled)
-LOG_LEVEL=debug
+## 📊 Rate Limits and Quotas
 
-# Disable logging
-LOG_LEVEL=silent
+### Website Surfing Limits
+- **Maximum Pages per Hour**: 10 pages
+- **Page Load Delay**: 2-5 seconds between pages
+- **Daily URL Sources**: TechCrunch, Hacker News, Hong Kong Free Press, BBC World, CNBC World
+- **Mobile Optimization**: Enabled for efficient scraping
+
+### Google Search Limits
+- **Results per Request**: 10 results (Google API maximum)
+- **Maximum Requests**: 3 requests per search operation
+- **Total Results**: Up to 30 unique results per search
+- **Request Delay**: 500ms between requests to avoid rate limiting
+- **Duplicate Removal**: Automatic removal of duplicate URLs
+
+### Tool Calling Limits
+- **Maximum Tool Rounds**: 10 rounds per conversation
+- **Rate Limit Delay**: 2 seconds between actions
+- **Proactive Cooldown**: 15 minutes between proactive messages per user
+- **Retry Limit**: 3 retries with 30-second backoff
+
+## 📋 Available Scripts
+
+```bash
+# Development
+npm run dev                    # Standard development server
+npm run autonomous:dev        # Autonomous agent with web dashboard
+npm run autonomous:watch      # Watch mode with auto-restart
+npm run dev:test              # Development testing
+
+# Production
+npm run build                 # Build TypeScript
+npm start                     # Start production server
+npm run autonomous           # Start autonomous agent
+
+# Testing
+npm run test                 # Run all tests
+npm run test:watch          # Watch mode testing
+npm run web:test            # Test autonomous system
+
+# Database
+npx prisma generate          # Generate database client
+npx prisma db push          # Push schema to database
+npx prisma studio           # Open database GUI
 ```
 
-## Security Features
+## 🔒 Security Features
 
 - **Signature Verification**: Validates webhook requests using HMAC-SHA256
 - **Environment Variables**: Sensitive credentials stored in .env file
 - **HTTPS Required**: Webhook only works with HTTPS URLs
+- **Rate Limiting**: Action queue prevents spam and API abuse
 
-## Error Handling
+## 🐛 Troubleshooting
 
-The bot includes comprehensive error handling:
-- Invalid webhook signatures
-- Missing environment variables
-- API request failures
-- Message processing errors
+### Common Issues
 
-## Production Deployment
+1. **"Agent not initialized"** - Ensure autonomous agent is started with `npm run autonomous:dev`
+2. **Web dashboard not loading** - Check if server is running on correct port
+3. **WhatsApp messages not processing** - Verify webhook configuration and ngrok setup
+4. **Database connection errors** - Check DATABASE_URL in .env file
+5. **AI service errors** - Verify OpenAI API key or config file settings
 
-### Docker (Optional)
+### Development Mode
 
-Create a `Dockerfile`:
+Enable development mode to test without WhatsApp:
 
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-EXPOSE 3000
-CMD ["npm", "start"]
+```env
+DEV_MODE=true
+```
+
+### Debug Information
+
+Access system status via API:
+
+```bash
+curl http://localhost:3000/api/status
+```
+
+## 🚀 Production Deployment
+
+### Docker Deployment
+
+Use the provided [`Dockerfile`](Dockerfile) and [`docker-compose.yml`](docker-compose.yml):
+
+```bash
+# Build and run with Docker Compose
+docker-compose up -d
+
+# Or build manually
+docker build -t whatsapp-autonomous-agent .
+docker run -p 3000:3000 whatsapp-autonomous-agent
 ```
 
 ### Environment Variables for Production
@@ -461,107 +442,25 @@ CMD ["npm", "start"]
 ```env
 NODE_ENV=production
 PORT=3000
+HOST=0.0.0.0
 WEBHOOK_URL=https://your-production-domain.com
+DEV_MODE=false
 ```
 
-## Testing
+## 📚 Additional Documentation
 
-### Testing Audio Service
+- **[AUTONOMOUS_ARCHITECTURE.md](AUTONOMOUS_ARCHITECTURE.md)** - Complete autonomous agent architecture details
+- **[WEB_INTERFACE.md](WEB_INTERFACE.md)** - Web dashboard features and API documentation
+- **[POSTGRES_MIGRATION.md](POSTGRES_MIGRATION.md)** - Database setup and migration guide
+- **[DEV_MODE_GUIDE.md](DEV_MODE_GUIDE.md)** - Development mode usage and testing
 
-### Testing OpenAI Integration
-```bash
-npm run test:openai
-```
-Tests OpenAI text response generation and embedding creation. Requires OPENAI_API_KEY to be configured.
+## 🎯 Future Enhancements
 
-### Basic Audio Testing
-```bash
-npm run test:audio
-```
-Tests the audio service functionality including file formatting, MIME type detection, and response formatting.
+- **Advanced Analytics**: User behavior patterns and engagement metrics
+- **Multi-modal Support**: Image and audio proactive content
+- **Cluster Deployment**: Scalable autonomous agent instances
+- **Plugin System**: Community-developed tools and extensions
 
-### Audio Integration Testing
-```bash
-npm run test:audio:integration
-```
-Tests with actual audio files in the `data/media/` folder and attempts transcription if configured.
+---
 
-### Testing Workflow
-1. Start the bot: `npm run dev`
-2. Send an audio message to your WhatsApp number
-3. Audio file will be saved to `data/media/`
-4. Run integration test: `npm run test:audio:integration`
-5. Check transcription results and file handling
-
-## Deployment Guide
-
-### Step 1: Environment Setup
-```bash
-# Copy environment template
-cp .env.example .env
-
-# Edit .env file with your credentials
-nano .env  # or use your preferred editor
-```
-
-### Step 2: Configure WhatsApp Business API
-1. Go to https://developers.facebook.com/apps
-2. Create a new Business app
-3. Add WhatsApp product
-4. Get your credentials:
-   - Access Token
-   - Phone Number ID
-   - App Secret
-5. Set up webhook with your public URL
-
-### Step 3: Configure Audio Service (Optional)
-For audio transcription, add these to your `.env`:
-```env
-AUDIO_SERVICE_API_URL=https://your-audio-service.com/
-AUDIO_SERVICE_API_KEY=your-api-key-here
-```
-
-### Step 4: Start the Bot
-```bash
-# Development mode
-npm run dev
-
-# Or production mode
-npm run build
-npm start
-```
-
-### Step 5: Test the Setup
-```bash
-# Test basic audio service functionality
-npm run test:audio
-
-# Test with actual audio files (after receiving messages)
-npm run test:audio:integration
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"Invalid signature format"** - Ensure webhook verification uses raw body
-2. **Audio transcription fails** - Check audio service configuration
-3. **Media files not saving** - Verify `data/media/` directory permissions
-4. **Webhook verification fails** - Check verify token matches Facebook app settings
-5. **API calls failing** - Verify WhatsApp access token and phone number ID
-6. **TypeScript compilation errors** - Run `npm run build` to check for issues
-
-### Debug Mode
-Enable detailed logging by setting `NODE_ENV=development` in your `.env` file.
-
-### File Permissions
-Ensure the `data/media/` directory has write permissions:
-```bash
-chmod 755 data
-chmod 755 data/media
-```
-
-### Network Configuration
-- Ensure your server has a public HTTPS URL (use ngrok for development)
-- Configure firewall to allow incoming webhook requests
-- Verify SSL certificates if using custom domain
+**Note**: This is a complete architectural transformation from reactive bot to autonomous agent. The system now proactively learns, browses, and initiates conversations based on user interests, transforming your WhatsApp bot into an intelligent, learning assistant.
