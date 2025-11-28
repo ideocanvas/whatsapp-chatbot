@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getAutonomousAgent } from '../autonomous';
+import express from 'express';
 
 /**
  * Dashboard API routes for the web interface
@@ -8,18 +9,72 @@ import { getAutonomousAgent } from '../autonomous';
 export class DashboardRoutes {
   private router: Router;
   private activityLog: Array<{timestamp: string; message: string; type?: string}> = [];
+  private dashboardPassword: string;
 
   constructor() {
     this.router = Router();
+    this.dashboardPassword = process.env.DASHBOARD_PASSWORD || 'admin';
     this.setupRoutes();
     
     // Initialize with startup message
     this.logActivity('System started - Dashboard API initialized');
   }
 
+  /**
+   * Check if user is authenticated
+   */
+  private isAuthenticated(req: Request): boolean {
+    return req.cookies?.dashboardAuth === this.dashboardPassword;
+  }
+
+  /**
+   * Require authentication middleware
+   */
+  private requireAuth(req: Request, res: Response, next: Function): void {
+    if (this.isAuthenticated(req)) {
+      next();
+    } else {
+      res.status(401).json({ error: 'Authentication required' });
+    }
+  }
+
   private setupRoutes(): void {
+    // Login endpoint
+    this.router.post('/api/login', (req: Request, res: Response) => {
+      const { password } = req.body;
+      
+      if (password === this.dashboardPassword) {
+        // Set authentication cookie (valid for 24 hours)
+        res.cookie('dashboardAuth', this.dashboardPassword, {
+          httpOnly: true,
+          maxAge: 24 * 60 * 60 * 1000, // 24 hours
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict'
+        });
+        
+        this.logActivity('User logged in to dashboard');
+        res.json({ success: true });
+      } else {
+        this.logActivity('Failed login attempt', 'warning');
+        res.status(401).json({ error: 'Invalid password' });
+      }
+    });
+
+    // Logout endpoint
+    this.router.post('/api/logout', (req: Request, res: Response) => {
+      res.clearCookie('dashboardAuth');
+      this.logActivity('User logged out from dashboard');
+      res.json({ success: true });
+    });
+
+    // Check authentication status
+    this.router.get('/api/auth/status', (req: Request, res: Response) => {
+      res.json({ authenticated: this.isAuthenticated(req) });
+    });
+
+    // Protected routes - require authentication
     // System status endpoint
-    this.router.get('/api/status', async (req: Request, res: Response) => {
+    this.router.get('/api/status', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
         const status = await agent.getStatus();
@@ -30,7 +85,7 @@ export class DashboardRoutes {
     });
 
     // Bot info endpoint
-    this.router.get('/api/bot-info', (req: Request, res: Response) => {
+    this.router.get('/api/bot-info', this.requireAuth.bind(this), (req: Request, res: Response) => {
       res.json({
         name: process.env.CHATBOT_NAME || 'Autonomous WhatsApp Agent',
         version: '1.0.0',
@@ -39,12 +94,12 @@ export class DashboardRoutes {
     });
 
     // Activity log endpoint
-    this.router.get('/api/activity', (req: Request, res: Response) => {
+    this.router.get('/api/activity', this.requireAuth.bind(this), (req: Request, res: Response) => {
       res.json(this.activityLog.slice(-50)); // Last 50 activities
     });
 
     // Memory data endpoints
-    this.router.get('/api/memory/context', async (req: Request, res: Response) => {
+    this.router.get('/api/memory/context', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
         const status = await agent.getStatus();
@@ -78,7 +133,7 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.get('/api/memory/knowledge', async (req: Request, res: Response) => {
+    this.router.get('/api/memory/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
         
@@ -126,7 +181,7 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.get('/api/memory/history', async (req: Request, res: Response) => {
+    this.router.get('/api/memory/history', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
         const status = await agent.getStatus();
@@ -147,7 +202,7 @@ export class DashboardRoutes {
     });
 
     // Chat endpoint for testing the bot
-    this.router.post('/api/chat', async (req: Request, res: Response) => {
+    this.router.post('/api/chat', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { message, userId = 'web-user' } = req.body;
         
@@ -175,7 +230,7 @@ export class DashboardRoutes {
     });
 
     // Autonomous activity simulation endpoints
-    this.router.post('/api/simulate/browse', async (req: Request, res: Response) => {
+    this.router.post('/api/simulate/browse', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { intent } = req.body;
         const agent = getAutonomousAgent();
@@ -194,7 +249,7 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.post('/api/simulate/proactive', async (req: Request, res: Response) => {
+    this.router.post('/api/simulate/proactive', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { userId = 'web-user', content } = req.body;
         const agent = getAutonomousAgent();
@@ -213,7 +268,7 @@ export class DashboardRoutes {
     });
 
     // Knowledge search endpoint
-    this.router.post('/api/search/knowledge', async (req: Request, res: Response) => {
+    this.router.post('/api/search/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { query } = req.body;
         
@@ -261,7 +316,7 @@ export class DashboardRoutes {
     });
 
     // Manual browsing trigger endpoint
-    this.router.post('/api/browse/now', async (req: Request, res: Response) => {
+    this.router.post('/api/browse/now', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { intent } = req.body;
         const agent = getAutonomousAgent();
@@ -286,7 +341,7 @@ export class DashboardRoutes {
     });
 
     // Force knowledge update endpoint
-    this.router.post('/api/knowledge/refresh', async (req: Request, res: Response) => {
+    this.router.post('/api/knowledge/refresh', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
         
@@ -308,13 +363,35 @@ export class DashboardRoutes {
       }
     });
 
-    // Serve the web interface
+    // Serve static files from web directory (login.html should be accessible without auth)
+    this.router.use(express.static('web'));
+
+    // Serve the web interface - protect index.html with authentication
     this.router.get('/', (req: Request, res: Response) => {
+      // Redirect to login if not authenticated
+      if (!this.isAuthenticated(req)) {
+        return res.redirect('/login.html');
+      }
       res.sendFile('web/index.html', { root: process.cwd() });
     });
 
-    // Serve static files from web directory
-    this.router.use(express.static('web'));
+    // Serve login page route
+    this.router.get('/login', (req: Request, res: Response) => {
+      // If already authenticated, redirect to dashboard
+      if (this.isAuthenticated(req)) {
+        return res.redirect('/');
+      }
+      res.redirect('/login.html');
+    });
+
+    // Protect direct access to index.html
+    this.router.get('/index.html', (req: Request, res: Response) => {
+      // Redirect to login if not authenticated
+      if (!this.isAuthenticated(req)) {
+        return res.redirect('/login.html');
+      }
+      res.sendFile('web/index.html', { root: process.cwd() });
+    });
   }
 
   /**
@@ -344,6 +421,3 @@ export class DashboardRoutes {
     return this.router;
   }
 }
-
-// Import Express for static file serving
-import express from 'express';

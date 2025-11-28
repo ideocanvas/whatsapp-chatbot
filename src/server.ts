@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import { startAutonomousAgent } from './autonomous';
 import { DashboardRoutes } from './routes/dashboard';
 import { WebhookRoutes } from './routes/webhook';
@@ -23,6 +24,9 @@ class AutonomousServer {
   }
 
   private setupMiddleware(): void {
+    // Cookie parser middleware
+    this.app.use(cookieParser());
+    
     // JSON parsing middleware
     this.app.use(express.json({ limit: '10mb' }));
     
@@ -110,8 +114,8 @@ class AutonomousServer {
       // Start the autonomous agent
       await startAutonomousAgent();
       
-      // Determine host based on environment variable or fallback to environment-based default
-      const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost');
+      // Determine host based on environment variable or fallback to 0.0.0.0 for external access
+      const host = process.env.HOST || '0.0.0.0';
       
       // Start the HTTP server
       this.app.listen(this.port, host, () => {
