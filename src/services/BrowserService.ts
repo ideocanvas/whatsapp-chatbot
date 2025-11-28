@@ -268,7 +268,7 @@ export class BrowserService {
         }
 
         if (scrapedContents.length === 0) {
-             if (i === maxIterations - 1) return "I searched but couldn't read any of the websites found.";
+             if (i === maxIterations - 1) return "I couldn't find any readable websites for your query. The search results were either blocked or contained no readable content.";
              continue;
         }
 
@@ -280,36 +280,46 @@ export class BrowserService {
         ${scrapedContents.join('\n\n---\n\n')}
 
         Task:
-        1. Answer the user's question based ONLY on these sources.
-        2. If the answer is found, start with "FOUND:".
-        3. If the answer is missing, start with "MISSING:" and suggest a better search query to find it.
+        Provide a natural, conversational answer to the user's question based on the information gathered.
+        If you can answer the question clearly, provide the answer in a friendly, WhatsApp-appropriate format.
+        If the information is insufficient to answer the question, explain what you found and suggest what additional information might be needed.
         `;
 
         const response = await this.openai.generateTextResponse(researchPrompt);
 
-        if (response.startsWith("FOUND:")) {
+        // Check if the response seems to answer the question (contains relevant information)
+        const lowerResponse = response.toLowerCase();
+        const lowerQuery = query.toLowerCase();
+        
+        // Simple heuristic: if response contains key terms from query and is substantial
+        const queryWords = lowerQuery.split(/\s+/).filter(word => word.length > 3);
+        const matchingWords = queryWords.filter(word => lowerResponse.includes(word));
+        
+        if (matchingWords.length >= queryWords.length * 0.5 && response.length > 50) {
             // Save this new knowledge to the DB for future speed
             await this.kb.learnDocument({
-                content: `Deep Research on "${query}":\n${response.replace("FOUND:", "").trim()}`,
+                content: `Deep Research on "${query}":\n${response.trim()}`,
                 source: "deep_research_task",
                 category: "research",
                 tags: ["deep_research", "user_query"],
                 timestamp: new Date()
             });
             
-            return response.replace("FOUND:", "").trim();
-        } else if (response.startsWith("MISSING:")) {
-            // Update query for next iteration
-            const newQuery = response.replace("MISSING:", "").trim();
-            console.log(`🕵️ Content missing. Refined query: "${newQuery}"`);
-            currentQuery = newQuery;
-            summary = "I found some related info but not the exact answer yet."; // Intermediate status
+            return response.trim();
         } else {
-            return response; // Fallback
+            // Update query for next iteration if needed
+            if (i < maxIterations - 1) {
+                console.log(`🕵️ Information insufficient. Continuing research...`);
+                // Try a more specific query for next iteration
+                currentQuery = query + " detailed explanation";
+                summary = "I found some related information but need to search more specifically.";
+            } else {
+                return response.trim(); // Return whatever we got
+            }
         }
     }
 
-    return "I conducted extensive research but couldn't find a specific answer to your question in the available sources.";
+    return "After searching multiple sources, I couldn't find a definitive answer to your question. The information available was either incomplete or didn't directly address your specific query.";
   }
 
   // --- Helpers ---
