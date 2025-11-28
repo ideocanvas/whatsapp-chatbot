@@ -2,7 +2,6 @@ import 'dotenv/config';
 import { Scheduler } from './core/Scheduler';
 import { Agent } from './core/Agent';
 import { ContextManager } from './memory/ContextManager';
-import { KnowledgeBase } from './memory/KnowledgeBase';
 import { ToolRegistry } from './core/ToolRegistry';
 import { BrowserService } from './services/BrowserService';
 import { ActionQueueService } from './services/ActionQueueService';
@@ -13,10 +12,9 @@ import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './service
 import { WebSearchTool } from './tools/WebSearchTool';
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
-import { HistoryStore } from './memory/HistoryStore';
 import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
 import { NewsProcessorService } from './services/newsProcessorService';
-import { VectorStoreService } from './services/vectorStoreService';
+import { DatabaseConfig } from './config/databaseConfig';
 import type { KnowledgeDocument } from './memory/KnowledgeBase';
 
 /**
@@ -29,13 +27,14 @@ class AutonomousWhatsAppAgent {
   private scheduler?: Scheduler;
   private agent?: Agent;
   private contextMgr?: ContextManager;
-  private kb?: KnowledgeBase;
+  private kb?: any; // KnowledgeBase or KnowledgeBasePostgres
   private tools?: ToolRegistry;
   private browser?: BrowserService;
   private actionQueue?: ActionQueueService;
   private whatsapp?: WhatsAppService;
   private openai?: OpenAIService;
-  private historyStore?: HistoryStore;
+  private historyStore?: any; // HistoryStore or HistoryStorePostgres
+  private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
   private isInitialized: boolean = false;
 
   constructor() {
@@ -50,11 +49,13 @@ class AutonomousWhatsAppAgent {
       // 1. Initialize Core Services
       this.openai = await createOpenAIServiceFromConfig();
       this.contextMgr = new ContextManager();
-      this.kb = new KnowledgeBase(this.openai);
-      this.actionQueue = new ActionQueueService();
       
-      // NEW: Initialize History Store
-      this.historyStore = new HistoryStore();
+      // Initialize database services using configuration switcher
+      await DatabaseConfig.initialize();
+      this.kb = DatabaseConfig.getKnowledgeBase(this.openai);
+      this.historyStore = DatabaseConfig.getHistoryStore();
+      this.vectorStore = DatabaseConfig.getVectorStoreService(this.openai);
+      this.actionQueue = new ActionQueueService();
 
       // WhatsApp configuration
       const whatsappConfig = {
@@ -75,10 +76,9 @@ class AutonomousWhatsAppAgent {
       this.browser = new BrowserService(scraper, this.kb);
       
       // Initialize News Stack
-      const vectorStore = new VectorStoreService(this.openai);
       // Mock GoogleSearchService for processor if not available, or initialize properly
       const searchService = createGoogleSearchServiceFromEnv();
-      const newsProcessor = new NewsProcessorService(this.openai, searchService, vectorStore);
+      const newsProcessor = new NewsProcessorService(this.openai, searchService, this.vectorStore);
       const newsService = createNewsScrapeService(scraper, newsProcessor);
 
       // 3. Initialize Tool Registry
@@ -238,18 +238,21 @@ class AutonomousWhatsAppAgent {
   /**
    * Get system status and statistics
    */
-  getStatus() {
+  async getStatus() {
     if (!this.isInitialized || !this.agent || !this.scheduler || !this.contextMgr || !this.kb || !this.browser || !this.actionQueue || !this.tools) {
       return { status: 'Not initialized' };
     }
 
+    const dbStats = await DatabaseConfig.getDatabaseStats();
+
     return {
       status: 'Running',
+      database: dbStats,
       agent: this.agent.getStats(),
       scheduler: this.scheduler.getStatus(),
       memory: {
         context: this.contextMgr.getStats(),
-        knowledge: this.kb.getStats()
+        knowledge: await (this.kb as any).getStats()
       },
       browser: this.browser.getStats(),
       queue: this.actionQueue.getQueueStats(),
@@ -263,14 +266,14 @@ class AutonomousWhatsAppAgent {
   /**
    * Get actual knowledge content for dashboard display
    */
-  getKnowledgeContent(limit: number = 10): Array<{id: string; title: string; content: string; source: string; category: string; timestamp: string}> {
+  async getKnowledgeContent(limit: number = 10): Promise<Array<{id: string; title: string; content: string; source: string; category: string; timestamp: string}>> {
     if (!this.isInitialized || !this.kb) {
       return [];
     }
     
     try {
-      const documents = this.kb.getRecentDocuments(limit);
-      return documents.map(doc => ({
+      const documents = await (this.kb as any).getRecentDocuments(limit);
+      return documents.map((doc: any) => ({
         id: doc.id,
         title: `${doc.category} - ${doc.source}`,
         content: doc.content,
@@ -287,14 +290,14 @@ class AutonomousWhatsAppAgent {
   /**
    * Search knowledge content for dashboard
    */
-  searchKnowledgeContent(query: string, limit: number = 10): Array<{id: string; title: string; content: string; source: string; category: string; timestamp: string}> {
+  async searchKnowledgeContent(query: string, limit: number = 10): Promise<Array<{id: string; title: string; content: string; source: string; category: string; timestamp: string}>> {
     if (!this.isInitialized || !this.kb) {
       return [];
     }
     
     try {
-      const documents = this.kb.searchContent(query, limit);
-      return documents.map(doc => ({
+      const documents = await (this.kb as any).searchContent(query, limit);
+      return documents.map((doc: any) => ({
         id: doc.id,
         title: `${doc.category} - ${doc.source}`,
         content: doc.content,

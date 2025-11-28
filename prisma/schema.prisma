@@ -1,0 +1,79 @@
+// Prisma schema for WhatsApp Chatbot
+// This schema supports both PostgreSQL and SQLite for migration
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Conversation logs for long-term conversation history
+model ConversationLog {
+  id          String   @id @default(uuid())
+  userId      String
+  message     String
+  role        Role
+  timestamp   DateTime
+  messageType MessageType
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([timestamp])
+  @@index([role])
+}
+
+// Knowledge base for storing facts learned from autonomous browsing
+model Knowledge {
+  id             String   @id @default(uuid())
+  content        String
+  vector         Bytes    // BLOB storage for embeddings
+  source         String?
+  category       String?
+  tags           Json?    // JSON array of tags
+  timestamp      DateTime
+  relevanceScore Float?   @default(0.0)
+
+  @@index([category])
+  @@index([timestamp])
+  @@index([relevanceScore])
+}
+
+// Processed messages to prevent duplicate processing
+model ProcessedMessage {
+  messageId     String   @id
+  processedAt   DateTime @default(now())
+  senderNumber String?
+  messageType   String?
+
+  @@index([processedAt])
+}
+
+// Vector store documents for RAG searches
+model Document {
+  id       String   @id @default(uuid())
+  content  String
+  vector   Bytes    // BLOB storage for embeddings
+  source   String?
+  date     String?
+  category String?
+  title    String?
+  createdAt DateTime @default(now())
+
+  @@index([category])
+  @@index([createdAt])
+}
+
+enum Role {
+  user
+  assistant
+}
+
+enum MessageType {
+  text
+  image
+  audio
+}
