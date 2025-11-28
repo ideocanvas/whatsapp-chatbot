@@ -19,10 +19,10 @@ export class DashboardRoutes {
 
   private setupRoutes(): void {
     // System status endpoint
-    this.router.get('/api/status', (req: Request, res: Response) => {
+    this.router.get('/api/status', async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
-        const status = agent.getStatus();
+        const status = await agent.getStatus();
         res.json(status);
       } catch (error) {
         res.status(500).json({ error: 'Agent not initialized' });
@@ -44,10 +44,10 @@ export class DashboardRoutes {
     });
 
     // Memory data endpoints
-    this.router.get('/api/memory/context', (req: Request, res: Response) => {
+    this.router.get('/api/memory/context', async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
-        const status = agent.getStatus();
+        const status = await agent.getStatus();
         
         // Use real context data from ContextManager stats
         const contextStats = status.memory?.context || { activeUsers: 0, totalMessages: 0 };
@@ -78,16 +78,16 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.get('/api/memory/knowledge', (req: Request, res: Response) => {
+    this.router.get('/api/memory/knowledge', async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
         
         // Get actual knowledge content from the autonomous agent
-        const knowledgeContent = agent.getKnowledgeContent(20); // Get up to 20 recent documents
+        const knowledgeContent = await agent.getKnowledgeContent(20); // Get up to 20 recent documents
         
         // If we have real content, show it
         if (knowledgeContent.length > 0) {
-          const knowledgeData = knowledgeContent.map(doc => ({
+          const knowledgeData = knowledgeContent.map((doc: any) => ({
             id: doc.id,
             title: doc.title,
             timestamp: doc.timestamp,
@@ -126,10 +126,10 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.get('/api/memory/history', (req: Request, res: Response) => {
+    this.router.get('/api/memory/history', async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
-        const status = agent.getStatus();
+        const status = await agent.getStatus();
         
         // Use activity log as real history data
         const historyData = this.activityLog.slice(-20).map((log, index) => ({
@@ -227,10 +227,10 @@ export class DashboardRoutes {
         this.logActivity(`Knowledge search: "${query}"`);
         
         // Search actual knowledge content
-        const searchResults = agent.searchKnowledgeContent(query, 10);
+        const searchResults = await agent.searchKnowledgeContent(query, 10);
         
         // Format results with relevance scoring
-        const formattedResults = searchResults.map((doc, index) => ({
+        const formattedResults = searchResults.map((doc: any, index: number) => ({
           id: doc.id,
           title: doc.title,
           timestamp: doc.timestamp,

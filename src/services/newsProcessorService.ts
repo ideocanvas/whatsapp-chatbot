@@ -1,17 +1,17 @@
 import { OpenAIService } from './openaiService';
 import { GoogleSearchService } from './googleSearchService';
-import { VectorStoreService } from './vectorStoreService'; // UPDATED
+import { VectorStoreServicePostgres } from './VectorStoreServicePostgres';
 import { NewsArticle } from './newsScrapeService';
 
 export class NewsProcessorService {
   private openaiService: OpenAIService;
   private googleService: GoogleSearchService;
-  private vectorStore: VectorStoreService; // UPDATED
+  private vectorStore: VectorStoreServicePostgres;
 
   constructor(
     openaiService: OpenAIService,
     googleService: GoogleSearchService,
-    vectorStore: VectorStoreService // UPDATED
+    vectorStore: VectorStoreServicePostgres
   ) {
     this.openaiService = openaiService;
     this.googleService = googleService;

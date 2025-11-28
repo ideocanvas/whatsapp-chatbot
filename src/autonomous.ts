@@ -15,7 +15,7 @@ import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
 import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
 import { NewsProcessorService } from './services/newsProcessorService';
 import { DatabaseConfig } from './config/databaseConfig';
-import type { KnowledgeDocument } from './memory/KnowledgeBase';
+import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point

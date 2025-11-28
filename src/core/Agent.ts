@@ -1,7 +1,7 @@
 import { OpenAIService } from '../services/openaiService';
 import { ContextManager } from '../memory/ContextManager';
 import { ToolRegistry } from './ToolRegistry';
-import { KnowledgeBase } from '../memory/KnowledgeBase';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ActionQueueService } from '../services/ActionQueueService';
 
 /**
@@ -14,7 +14,7 @@ export class Agent {
   constructor(
     private openai: OpenAIService,
     private contextMgr: ContextManager,
-    private kb: KnowledgeBase,
+    private kb: KnowledgeBasePostgres,
     private tools: ToolRegistry,
     private actionQueue: ActionQueueService
   ) {

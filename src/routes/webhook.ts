@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { WhatsAppService } from '../services/whatsappService';
 import { MediaService } from '../services/mediaService';
-import { ProcessedMessageService } from '../services/processedMessageService';
+import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
 import { CryptoUtils } from '../utils/crypto';
 import { WhatsAppMessage } from '../types/whatsapp';
 import { getToolSchemas } from '../tools';
@@ -10,13 +10,13 @@ import { getAutonomousAgent } from '../autonomous';
 
 export class WebhookRoutes {
   private router: Router;
-  private processedMessageService: ProcessedMessageService;
+  private processedMessageService: ProcessedMessageServicePostgres;
   private verifyToken: string;
   private appSecret: string;
 
   constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string, whatsappConfig: any) {
     this.router = Router();
-    this.processedMessageService = new ProcessedMessageService();
+    this.processedMessageService = new ProcessedMessageServicePostgres();
     this.verifyToken = verifyToken;
     this.appSecret = appSecret;
     this.setupRoutes();

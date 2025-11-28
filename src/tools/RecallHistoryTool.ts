@@ -1,5 +1,5 @@
 import { BaseTool } from '../core/BaseTool';
-import { HistoryStore } from '../memory/HistoryStore';
+import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 
 export class RecallHistoryTool extends BaseTool {
   name = 'recall_history';
@@ -21,7 +21,7 @@ export class RecallHistoryTool extends BaseTool {
     additionalProperties: false,
   };
 
-  constructor(private historyStore: HistoryStore) {
+  constructor(private historyStore: HistoryStorePostgres) {
     super();
   }
 

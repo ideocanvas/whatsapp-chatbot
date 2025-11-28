@@ -1,4 +1,4 @@
-import { KnowledgeBase } from '../memory/KnowledgeBase';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { WebScrapeService } from './webScrapeService';
 
 /**
@@ -26,7 +26,7 @@ export class BrowserService {
 
   constructor(
     private scraper: WebScrapeService,
-    private kb: KnowledgeBase
+    private kb: KnowledgeBasePostgres
   ) {
     // Reset hourly counter
     setInterval(() => { 

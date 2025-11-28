@@ -17,7 +17,7 @@ async function testAutonomousAgent() {
 
     // 2. Check system status
     console.log('\n2. Checking system status...');
-    const status = agent.getStatus();
+    const status = await agent.getStatus();
     console.log('System Status:', {
       status: status.status,
       memory: {
@@ -41,7 +41,7 @@ async function testAutonomousAgent() {
 
     // 5. Check if user interests were discovered
     console.log('\n5. Checking user interest discovery...');
-    const statusAfterMessages = agent.getStatus();
+    const statusAfterMessages = await agent.getStatus();
     console.log('After messages - User should have discovered interests');
 
     // 6. Wait for autonomous browsing to occur
@@ -71,8 +71,8 @@ async function testAutonomousAgent() {
     console.log('You should see browsing sessions and potential proactive checks in the logs');
 
     // Keep the process alive to observe autonomous behavior
-    setInterval(() => {
-      const currentStatus = agent.getStatus();
+    setInterval(async () => {
+      const currentStatus = await agent.getStatus();
       if (currentStatus.status === 'Running') {
         console.log(`⏰ System running - Ticks: ${currentStatus.scheduler?.tickCount || 0}`);
       }

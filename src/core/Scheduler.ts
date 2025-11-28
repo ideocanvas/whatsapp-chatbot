@@ -3,7 +3,7 @@ import { ContextManager } from '../memory/ContextManager';
 import { WhatsAppService } from '../services/whatsappService';
 import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
-import { KnowledgeBase } from '../memory/KnowledgeBase';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 
 /**
  * The Heartbeat of the autonomous agent system.
@@ -26,7 +26,7 @@ export class Scheduler {
     private whatsapp: WhatsAppService,
     private agent: Agent,
     private actionQueue: ActionQueueService,
-    private kb: KnowledgeBase
+    private kb: KnowledgeBasePostgres
   ) {}
 
   /**
@@ -48,7 +48,11 @@ export class Scheduler {
     setInterval(() => this.tick(), 60 * 1000); // 1 minute
 
     // Set up periodic maintenance
-    setInterval(() => this.maintenance(), 5 * 60 * 1000); // 5 minutes
+    setInterval(() => {
+      this.maintenance().catch(error => {
+        console.error('❌ Maintenance error:', error);
+      });
+    }, 5 * 60 * 1000); // 5 minutes
   }
 
   /**
@@ -99,7 +103,7 @@ export class Scheduler {
     this.stats.browsingSessions++;
 
     // Determine browsing intent based on recent knowledge gaps
-    const intent = this.determineBrowsingIntent();
+    const intent = await this.determineBrowsingIntent();
     
     const result = await this.browser.surf(intent);
     this.stats.knowledgeLearned += result.knowledgeGained;
@@ -200,8 +204,8 @@ export class Scheduler {
   /**
    * Determine browsing intent based on knowledge gaps
    */
-  private determineBrowsingIntent(): string | undefined {
-    const knowledgeStats = this.kb.getStats();
+  private async determineBrowsingIntent(): Promise<string | undefined> {
+    const knowledgeStats = await this.kb.getStats();
     
     // If we have few documents, browse broadly
     if (knowledgeStats.totalDocuments < 10) {
@@ -209,12 +213,12 @@ export class Scheduler {
     }
 
     // Find category with least knowledge
-    const categoryCounts = knowledgeStats.categories.reduce((acc, category) => {
+    const categoryCounts = knowledgeStats.categories.reduce((acc: Record<string, number>, category: string) => {
       acc[category] = (acc[category] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    const leastKnownCategory = Object.keys(categoryCounts).reduce((a, b) => 
+    const leastKnownCategory = Object.keys(categoryCounts).reduce((a, b) =>
       categoryCounts[a] < categoryCounts[b] ? a : b
     );
 
@@ -240,14 +244,14 @@ export class Scheduler {
   /**
    * Periodic maintenance tasks
    */
-  private maintenance(): void {
+  private async maintenance(): Promise<void> {
     console.log('🧹 Running maintenance tasks');
     
     // Clean up expired contexts
     const expiredCount = this.contextMgr.cleanupExpiredContexts();
     
     // Clean up old knowledge
-    const oldKnowledgeCount = this.kb.cleanupOldKnowledge(30); // 30 days
+    const oldKnowledgeCount = await this.kb.cleanupOldKnowledge(30); // 30 days
     
     if (expiredCount > 0 || oldKnowledgeCount > 0) {
       console.log(`📊 Maintenance: ${expiredCount} expired contexts, ${oldKnowledgeCount} old knowledge documents`);

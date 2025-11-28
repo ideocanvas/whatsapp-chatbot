@@ -1,7 +1,7 @@
 import { GoogleSearchService } from '../services/googleSearchService';
 import { WebScrapeService, createWebScrapeService } from '../services/webScrapeService';
 import { NewsScrapeService, createNewsScrapeService, NewsArticle } from '../services/newsScrapeService';
-import { VectorStoreService } from '../services/vectorStoreService'; // Updated
+import { VectorStoreServicePostgres } from '../services/VectorStoreServicePostgres';
 import { NewsProcessorService } from '../services/newsProcessorService'; // New
 import { OpenAIService, createOpenAIServiceFromConfig } from '../services/openaiService';
 
@@ -17,7 +17,7 @@ export interface ToolFunction {
 export const availableTools: { [key: string]: ToolFunction } = {};
 let webScrapeService: WebScrapeService | undefined;
 export let newsScrapeService: NewsScrapeService;
-let vectorStoreService: VectorStoreService; // Updated global reference
+let vectorStoreService: VectorStoreServicePostgres; // Updated global reference
 let mediaService: any; // Will be initialized later
 
 // Tool schemas for OpenAI function calling
@@ -156,7 +156,7 @@ export async function initializeTools(searchService: GoogleSearchService, mediaS
   const openaiService = await createOpenAIServiceFromConfig();
 
   // 2. Initialize Vector Store (The Better RAG)
-  vectorStoreService = new VectorStoreService(openaiService);
+  vectorStoreService = new VectorStoreServicePostgres(openaiService);
 
   // 3. Initialize News Processor
   const newsProcessor = new NewsProcessorService(openaiService, searchService, vectorStoreService);
