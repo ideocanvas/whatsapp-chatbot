@@ -1,66 +1,64 @@
-/**
- * Short-term memory manager with 1-hour TTL for active conversations.
- * Stores the last hour of conversation verbatim for immediate context.
- * Implements rolling summarization to archive expired conversations.
- */
+import { SummaryStore } from './SummaryStore';
+
 interface ConversationContext {
   userId: string;
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: number }>;
   lastInteraction: number;
-  userInterests?: string[]; // Auto-discovered user interests for proactive messaging
+  userInterests: string[];
+  messageCountSinceAnalysis: number; // New counter for periodic LLM analysis
 }
 
 export class ContextManager {
   private activeContexts: Map<string, ConversationContext> = new Map();
   private readonly TTL_MS = 60 * 60 * 1000; // 1 Hour
-  private summaryStore?: any; // SummaryStore instance
-  private openai?: any; // OpenAIService instance
+  private readonly ANALYSIS_INTERVAL = 5; // Analyze interests every 5 messages
+  private summaryStore?: SummaryStore;
+  private openai?: any;
 
-  /**
-   * Set dependencies for summarization functionality
-   */
   setDependencies(summaryStore: any, openai: any) {
     this.summaryStore = summaryStore;
     this.openai = openai;
   }
 
-  /**
-   * Get conversation history for a user (filtered by TTL)
-   */
   getHistory(userId: string): any[] {
     const ctx = this.activeContexts.get(userId);
     if (!ctx) return [];
     
-    // Filter out expired messages
     const now = Date.now();
     ctx.messages = ctx.messages.filter(m => (now - m.timestamp) < this.TTL_MS);
     
     return ctx.messages.map(({ role, content }) => ({ role, content }));
   }
 
-  /**
-   * Add a message to the conversation context
-   */
   addMessage(userId: string, role: 'user' | 'assistant', content: string) {
     if (!this.activeContexts.has(userId)) {
-      this.activeContexts.set(userId, { 
-        userId, 
-        messages: [], 
+      this.activeContexts.set(userId, {
+        userId,
+        messages: [],
         lastInteraction: Date.now(),
-        userInterests: []
+        userInterests: [],
+        messageCountSinceAnalysis: 0
       });
     }
     const ctx = this.activeContexts.get(userId)!;
     ctx.messages.push({ role, content, timestamp: Date.now() });
     ctx.lastInteraction = Date.now();
     
-    // Auto-discover user interests from message content
-    this.updateUserInterests(userId, content);
+    // Only analyze user messages for interests
+    if (role === 'user') {
+        ctx.messageCountSinceAnalysis++;
+        
+        // 1. Immediate: Quick Regex Check (Strict Mode)
+        this.updateUserInterestsRegex(userId, content);
+
+        // 2. Periodic: Deep LLM Analysis
+        if (ctx.messageCountSinceAnalysis >= this.ANALYSIS_INTERVAL) {
+            this.analyzeInterestsWithLLM(userId, ctx.messages);
+            ctx.messageCountSinceAnalysis = 0;
+        }
+    }
   }
 
-  /**
-   * Get active users (those with interactions within the TTL window)
-   */
   getActiveUsers(): string[] {
     const now = Date.now();
     return Array.from(this.activeContexts.values())
@@ -68,173 +66,143 @@ export class ContextManager {
       .map(ctx => ctx.userId);
   }
 
-  /**
-   * Get user interests for proactive messaging
-   */
   getUserInterests(userId: string): string[] {
     const ctx = this.activeContexts.get(userId);
     return ctx?.userInterests || [];
   }
 
   /**
-   * Update user interests based on message content
+   * [UPDATED] Strict Regex: Only matches clear intent patterns
+   * Prevents "I hate news" from triggering the "news" tag.
    */
-  private updateUserInterests(userId: string, content: string) {
+  private updateUserInterestsRegex(userId: string, content: string) {
     const ctx = this.activeContexts.get(userId);
     if (!ctx) return;
 
-    // Extract potential interests from message content
-    const interests = this.extractInterests(content);
-    
-    // Add new interests, avoiding duplicates
-    interests.forEach(interest => {
-      if (!ctx.userInterests!.includes(interest)) {
-        ctx.userInterests!.push(interest);
-      }
-    });
-
-    // Keep only the most recent 10 interests
-    if (ctx.userInterests!.length > 10) {
-      ctx.userInterests = ctx.userInterests!.slice(-10);
-    }
-  }
-
-  /**
-   * Extract potential interests from message content
-   */
-  private extractInterests(content: string): string[] {
-    const interests: string[] = [];
     const lowerContent = content.toLowerCase();
+    const interests: string[] = [];
 
-    // Common interest patterns
-    const interestPatterns = [
-      /(tech|technology|programming|coding|ai|artificial intelligence|machine learning)/gi,
-      /(business|finance|stock|market|economy|investment)/gi,
-      /(sports|football|basketball|tennis|soccer|game)/gi,
-      /(news|current events|headlines|breaking)/gi,
-      /(travel|vacation|holiday|destination)/gi,
-      /(food|cooking|recipe|restaurant|cuisine)/gi,
-      /(music|song|artist|album|concert)/gi,
-      /(movie|film|cinema|actor|director)/gi,
-      /(gaming|video game|console|pc gaming)/gi,
-      /(health|fitness|exercise|wellness|diet)/gi
+    // Pattern: "I like/love/want/interested in X"
+    const intentPrefixes = [
+        "i like", "i love", "interested in", "tell me about", "news about", "updates on", "looking for"
     ];
 
-    interestPatterns.forEach(pattern => {
-      const matches = lowerContent.match(pattern);
-      if (matches) {
-        matches.forEach(match => {
-          const interest = match.toLowerCase();
-          if (!interests.includes(interest)) {
-            interests.push(interest);
-          }
-        });
+    // Check if message starts with or contains affirmative intent
+    const hasIntent = intentPrefixes.some(prefix => lowerContent.includes(prefix));
+
+    if (!hasIntent) return; // Skip regex extraction if no clear intent word
+
+    // Category Keywords
+    const categories = {
+        'tech': ['tech', 'technology', 'programming', 'coding', 'ai', 'software'],
+        'finance': ['business', 'finance', 'stock', 'market', 'economy', 'crypto'],
+        'sports': ['sports', 'football', 'basketball', 'soccer', 'game'],
+        'news': ['news', 'headlines', 'events', 'world'], // "General News"
+        'science': ['science', 'space', 'biology', 'physics']
+    };
+
+    for (const [category, keywords] of Object.entries(categories)) {
+        if (keywords.some(k => lowerContent.includes(k))) {
+            interests.push(category);
+        }
+    }
+
+    // Add unique interests
+    interests.forEach(interest => {
+      if (!ctx.userInterests.includes(interest)) {
+        ctx.userInterests.push(interest);
+        console.log(`🎯 Discovered interest via Regex for ${userId}: ${interest}`);
       }
     });
-
-    return interests;
   }
 
   /**
-   * Check if a user is interested in a specific topic
+   * [NEW] Deep Analysis: Uses LLM to refine interest list based on conversation context.
+   * This removes incorrect tags and adds subtle ones.
    */
-  isUserInterestedIn(userId: string, topic: string): boolean {
-    const interests = this.getUserInterests(userId);
-    const lowerTopic = topic.toLowerCase();
-    
-    return interests.some(interest => 
-      interest.toLowerCase().includes(lowerTopic) || 
-      lowerTopic.includes(interest.toLowerCase())
-    );
+  private async analyzeInterestsWithLLM(userId: string, messages: any[]): Promise<void> {
+      if (!this.openai) return;
+
+      const ctx = this.activeContexts.get(userId);
+      if (!ctx) return;
+
+      // Take last 10 messages for context
+      const recentHistory = messages.slice(-10).map(m => `${m.role}: ${m.content}`).join('\n');
+      const currentInterests = ctx.userInterests.join(', ');
+
+      const prompt = `
+Analyze the user's interests based on this conversation history.
+Current Tags: [${currentInterests}]
+
+Conversation:
+${recentHistory}
+
+Task:
+1. Identify clear topics the user is interested in.
+2. Remove tags that are incorrect (e.g., user said "I hate sports" but has "sports" tag).
+3. Return ONLY a JSON array of strings (lowercase).
+
+Example output: ["tech", "ai", "startups"]
+`;
+
+      try {
+          const response = await this.openai.generateTextResponse(prompt);
+          const jsonMatch = response.match(/\[.*\]/s);
+          
+          if (jsonMatch) {
+              const newInterests = JSON.parse(jsonMatch[0]);
+              if (Array.isArray(newInterests)) {
+                  ctx.userInterests = newInterests; // Overwrite with high-quality LLM list
+                  console.log(`🧠 LLM refined interests for ${userId}: ${ctx.userInterests.join(', ')}`);
+              }
+          }
+      } catch (e) {
+          console.error('Failed to analyze interests with LLM', e);
+      }
   }
 
-  /**
-   * Clean up expired contexts (run periodically)
-   * Now includes summarization of expired conversations
-   */
   async cleanupExpiredContexts(): Promise<number> {
     const now = Date.now();
     let removedCount = 0;
 
     for (const [userId, ctx] of this.activeContexts.entries()) {
       if (now - ctx.lastInteraction >= this.TTL_MS) {
-        // Summarize and archive the conversation before deleting
         await this.summarizeAndArchive(userId, ctx.messages);
         this.activeContexts.delete(userId);
         removedCount++;
       }
     }
-
-    if (removedCount > 0) {
-      console.log(`🧹 Cleaned up ${removedCount} expired contexts`);
-    }
-
     return removedCount;
   }
 
-  /**
-   * Summarize and archive a conversation when it expires
-   */
   private async summarizeAndArchive(userId: string, messages: any[]): Promise<void> {
-    if (!this.summaryStore || !this.openai) {
-      console.log('⚠️ Summarization dependencies not set, skipping archive');
-      return;
-    }
-
-    // Only summarize conversations with enough content
-    if (messages.length < 5) {
-      console.log(`📝 Skipping summary for ${userId}: only ${messages.length} messages`);
-      return;
-    }
+    if (!this.summaryStore || !this.openai) return;
+    if (messages.length < 3) return;
 
     try {
-      const prompt = `Summarize this conversation in 3 bullet points, focusing on user preferences, key facts, and important context. Keep it concise but informative:
+      // We also do a final interest extraction here to save for long-term if needed
+      await this.analyzeInterestsWithLLM(userId, messages);
 
-${JSON.stringify(messages, null, 2)}
-
-Summary:`;
-
+      const prompt = `Summarize this conversation in 3 bullet points:\n${JSON.stringify(messages)}`;
       const summary = await this.openai.generateTextResponse(prompt);
-      
-      // Store the summary in long-term memory
       await this.summaryStore.storeSummary(userId, summary, messages);
-      
-      console.log(`📝 Archived conversation for ${userId}: ${summary.substring(0, 100)}...`);
     } catch (error) {
-      console.error('❌ Failed to summarize and archive conversation:', error);
+      console.error('❌ Failed to summarize:', error);
     }
   }
-
-  /**
-   * Get long-term conversation summaries for a user
-   */
+  
   async getLongTermSummaries(userId: string): Promise<string[]> {
-    if (!this.summaryStore) {
-      console.log('⚠️ SummaryStore not available, returning empty summaries');
-      return [];
-    }
-
+    if (!this.summaryStore) return [];
     try {
       return await this.summaryStore.getRecentSummaries(userId, 3);
     } catch (error) {
-      console.error('❌ Failed to get long-term summaries:', error);
       return [];
     }
   }
 
-  /**
-   * Get statistics about active contexts
-   */
-  getStats(): { activeUsers: number; totalMessages: number } {
+  getStats() {
     let totalMessages = 0;
-    
-    this.activeContexts.forEach(ctx => {
-      totalMessages += ctx.messages.length;
-    });
-
-    return {
-      activeUsers: this.activeContexts.size,
-      totalMessages
-    };
+    this.activeContexts.forEach(ctx => totalMessages += ctx.messages.length);
+    return { activeUsers: this.activeContexts.size, totalMessages };
   }
 }

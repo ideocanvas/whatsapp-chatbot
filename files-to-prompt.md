@@ -869,6 +869,7 @@ import { ToolRegistry } from './core/ToolRegistry';
 import { BrowserService } from './services/BrowserService';
 import { ActionQueueService } from './services/ActionQueueService';
 import { WhatsAppService } from './services/whatsappService';
+import { MediaService } from './services/mediaService';
 import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
 import { WebScrapeService, createWebScrapeService } from './services/webScrapeService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
@@ -896,6 +897,7 @@ class AutonomousWhatsAppAgent {
   private browser?: BrowserService;
   private actionQueue?: ActionQueueService;
   private whatsapp?: WhatsAppService;
+  private mediaService?: MediaService; // Add MediaService
   private openai?: OpenAIService;
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
   private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
@@ -934,6 +936,7 @@ class AutonomousWhatsAppAgent {
       };
 
       this.whatsapp = new WhatsAppService(whatsappConfig, process.env.DEV_MODE === 'true');
+      this.mediaService = new MediaService(whatsappConfig); // Initialize MediaService
 
       // CRITICAL FIX: Link ActionQueue to WhatsApp Service
       this.actionQueue.registerMessageSender(async (userId, content) => {
@@ -1087,6 +1090,55 @@ class AutonomousWhatsAppAgent {
       
       // Fallback response
       const fallback = "Sorry, I encountered an issue. Please try again.";
+      if (process.env.DEV_MODE !== 'true') {
+        await this.whatsapp.sendMessage(userId, fallback);
+      }
+    }
+  }
+
+  /**
+   * NEW: Handle incoming Image messages
+   */
+  async handleImageMessage(userId: string, imageId: string, mimeType: string, sha256: string, caption?: string): Promise<void> {
+    if (!this.isInitialized || !this.agent || !this.whatsapp || !this.mediaService) {
+      throw new Error('Agent not initialized');
+    }
+
+    // 1. INTERRUPT BACKGROUND TASKS
+    if (this.scheduler) {
+        this.scheduler.interrupt();
+    }
+
+    console.log(`🖼️ Incoming IMAGE from ${userId}`);
+
+    try {
+      // 1. Download Media
+      const mediaInfo = await this.mediaService.downloadAndSaveMedia(imageId, mimeType, sha256, 'image');
+      
+      // 2. Analyze using Vision AI
+      console.log(`👁️ Analyzing image: ${mediaInfo.filename}`);
+      const analysis = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
+      
+      // 3. Construct Augmented Message for Agent
+      // We present the image analysis as system context or augmented user message
+      const augmentedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${caption ? `User Caption: "${caption}"` : 'No caption provided.'}`;
+      
+      console.log(`📝 Processing analyzed image as text context...`);
+      
+      // 4. Pass to standard agent handler
+      const response = await this.agent.handleUserMessage(userId, augmentedMessage);
+
+      if (process.env.DEV_MODE === 'true') {
+        console.log(`💬 Response to ${userId}: ${response}`);
+      } else {
+        await this.whatsapp.sendMessage(userId, response);
+      }
+
+      console.log(`✅ Image processed for ${userId}`);
+
+    } catch (error) {
+      console.error(`❌ Error processing image from ${userId}:`, error);
+      const fallback = "I received your image but had trouble analyzing it. Please try again.";
       if (process.env.DEV_MODE !== 'true') {
         await this.whatsapp.sendMessage(userId, fallback);
       }
@@ -1419,8 +1471,14 @@ class AutonomousServer {
     // Cookie parser middleware
     this.app.use(cookieParser());
     
-    // JSON parsing middleware
-    this.app.use(express.json({ limit: '10mb' }));
+    // JSON parsing middleware - CRITICAL FIX FOR SIGNATURE VERIFICATION
+    // We must capture the raw buffer before JSON parsing happens
+    this.app.use(express.json({
+      limit: '10mb',
+      verify: (req: any, res, buf) => {
+        req.rawBody = buf;
+      }
+    }));
     
     // URL-encoded parsing middleware
     this.app.use(express.urlencoded({ extended: true }));
@@ -1435,10 +1493,7 @@ class AutonomousServer {
   }
 
   private setupRoutes(): void {
-    // Dashboard routes (web interface)
-    this.app.use('/', this.dashboardRoutes.getRouter());
-    
-    // Webhook routes (WhatsApp integration) - enable if configured, regardless of dev mode
+    // 1. Setup Webhook Routes FIRST (Priority over catch-all dashboard)
     const whatsappConfig = {
       accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
       phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
@@ -1448,7 +1503,6 @@ class AutonomousServer {
     if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
       const isDevMode = process.env.DEV_MODE === 'true';
       const whatsappService = new WhatsAppService(whatsappConfig, isDevMode);
-      const mediaService = new MediaService(whatsappConfig);
       
       this.webhookRoutes = new WebhookRoutes(
         whatsappService,
@@ -1457,14 +1511,13 @@ class AutonomousServer {
         whatsappConfig
       );
       
+      // Mount at /webhook
       this.app.use('/webhook', this.webhookRoutes.getRouter());
-      console.log(`✅ WhatsApp webhook routes enabled (${isDevMode ? 'development' : 'production'} mode)`);
-      if (isDevMode) {
-        console.log('💡 Development mode: Messages will be logged to console');
-      }
-    } else {
-      console.log('⚠️ WhatsApp webhook routes disabled - missing configuration');
+      console.log(`✅ WhatsApp webhook routes enabled`);
     }
+
+    // 2. Setup Dashboard Routes (Web Interface) - Acts as catch-all for '/'
+    this.app.use('/', this.dashboardRoutes.getRouter());
 
     // Health check endpoint
     this.app.get('/health', (req, res) => {
@@ -6370,6 +6423,7 @@ export interface WhatsAppMessage {
             id: string;
             mime_type: string;
             sha256: string;
+            caption?: string;
           };
           audio?: {
             id: string;
@@ -7277,12 +7331,14 @@ import { getAutonomousAgent } from '../autonomous';
 export class WebhookRoutes {
   private router: Router;
   private processedMessageService: ProcessedMessageServicePostgres;
+  private whatsappService: WhatsAppService; // Added property
   private verifyToken: string;
   private appSecret: string;
 
   constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string, whatsappConfig: any) {
     this.router = Router();
     this.processedMessageService = new ProcessedMessageServicePostgres();
+    this.whatsappService = whatsappService; // Store the service instance
     this.verifyToken = verifyToken;
     this.appSecret = appSecret;
     this.setupRoutes();
@@ -7290,18 +7346,22 @@ export class WebhookRoutes {
 
   private setupRoutes(): void {
     // Webhook verification endpoint (GET)
-    this.router.get('/webhook', (req: Request, res: Response) => {
+    this.router.get('/', (req: Request, res: Response) => {
       this.handleWebhookVerification(req, res);
     });
 
     // Webhook message handler (POST)
-    this.router.post('/webhook', (req: Request, res: Response) => {
+    this.router.post('/', (req: Request, res: Response) => {
       this.handleWebhookMessage(req, res);
     });
 
-    // Health check endpoint
+    // Health check endpoint (webhook-specific)
     this.router.get('/health', (req: Request, res: Response) => {
-      res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+      res.status(200).json({
+        status: 'OK',
+        service: 'webhook',
+        timestamp: new Date().toISOString()
+      });
     });
 
     // Dev mode API endpoint (only available in dev mode)
@@ -7316,14 +7376,21 @@ export class WebhookRoutes {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
+    
+    // Log verification attempt for debugging
+    console.log(`Webhook Verification: Mode=${mode}, Token=${token?.toString().substring(0,3)}...`);
+
     if (mode && token) {
       if (mode === 'subscribe' && token === this.verifyToken) {
-        console.log('Webhook verified successfully!');
+        console.log('✅ Webhook verified successfully!');
+        // WhatsApp expects the challenge string directly, not JSON
         res.status(200).send(challenge);
       } else {
-        console.log('Webhook verification failed!');
+        console.warn('❌ Webhook verification failed! Token mismatch.');
         res.sendStatus(403);
       }
+    } else {
+        res.sendStatus(400);
     }
   }
 
@@ -7332,8 +7399,9 @@ export class WebhookRoutes {
       // Verify signature if app secret is provided
       if (this.appSecret) {
         const signature = req.headers['x-hub-signature-256'] as string;
-        // Use raw body for signature verification (stored by body-parser middleware)
+        // FIX: Use rawBody captured by middleware in server.ts
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
+        
         if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
           console.warn('Invalid webhook signature');
           res.sendStatus(401);
@@ -7343,7 +7411,11 @@ export class WebhookRoutes {
 
       const data: WhatsAppMessage = req.body;
 
-      // Process each entry
+      if (!data.entry || !Array.isArray(data.entry)) {
+          res.sendStatus(200);
+          return;
+      }
+
       for (const entry of data.entry) {
         for (const change of entry.changes) {
           if (change.field === 'messages') {
@@ -7351,35 +7423,48 @@ export class WebhookRoutes {
 
             if (messages && messages.length > 0) {
               for (const message of messages) {
-                // Check if this message has already been processed
-                const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
-
-                if (alreadyProcessed) {
-                  console.log(`Skipping duplicate message: ${message.id} (already processed)`);
-                  continue;
+                // Mark message as read immediately
+                if (this.whatsappService) {
+                    await this.whatsappService.markMessageAsRead(message.id);
                 }
 
-                // Mark message as processed immediately to prevent race conditions
+                // Check if this message has already been processed
+                const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
+                if (alreadyProcessed) continue;
+
+                // Mark message as processed
                 await this.processedMessageService.markMessageAsProcessed(
                   message.id,
                   message.from,
                   message.type
                 );
 
+                const agent = getAutonomousAgent();
+
                 if (message.type === 'text' && message.text) {
-                  // USE AUTONOMOUS AGENT HERE
-                  const agent = getAutonomousAgent(); // Get the singleton agent
-                  await agent.handleIncomingMessage(
+                  // Text Message
+                  agent.handleIncomingMessage(
                     message.from,
                     message.text.body,
                     message.id
-                  );
+                  ).catch(err => console.error('Agent text processing error:', err));
+
                 } else if (message.type === 'image' && message.image) {
-                  // TODO: Handle image messages with autonomous agent
-                  console.log(`🖼️ Image message from ${message.from} (ID: ${message.image.id})`);
-                  console.log('⚠️ Image processing not yet implemented in autonomous agent');
+                  // Image Message
+                  console.log(`🖼️ Processing image message from ${message.from}`);
+                  
+                  // Extract caption if available
+                  const caption = message.image.caption;
+                  
+                  agent.handleImageMessage(
+                    message.from,
+                    message.image.id,
+                    message.image.mime_type,
+                    message.image.sha256,
+                    caption
+                  ).catch(err => console.error('Agent image processing error:', err));
+
                 } else if (message.type === 'audio' && message.audio) {
-                  // TODO: Handle audio messages with autonomous agent
                   console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
                   console.log('⚠️ Audio processing not yet implemented in autonomous agent');
                 } else {

@@ -239,6 +239,61 @@ Your decision:`;
   }
 
   /**
+   * [NEW] Batch Process News: Deduplicates and Summarizes
+   * Takes a list of raw content, groups duplicates, and returns a single digest message.
+   */
+  async generateNewsDigest(userId: string, rawNewsItems: string[]): Promise<string | null> {
+    if (!rawNewsItems || rawNewsItems.length === 0) return null;
+
+    const userInterests = this.contextMgr.getUserInterests(userId);
+    
+    // If no interests are defined, we strictly do not generate a digest (as requested)
+    if (userInterests.length === 0) {
+        console.log(`🔕 skipping digest for ${userId}: No user interests defined.`);
+        return null;
+    }
+
+    const prompt = `
+You are a smart news editor for WhatsApp.
+I have a list of raw news snippets found by a web scraper. There are likely duplicates (same story from different sources).
+
+**User Interests:** ${userInterests.join(', ')}
+
+**Raw News Items:**
+${rawNewsItems.map((item, i) => `[${i+1}] ${item.substring(0, 300)}...`).join('\n')}
+
+**Task:**
+1. Group duplicates (stories about the same event).
+2. Select the top 3 most distinct stories that STRICTLY match the User Interests.
+3. If a story does not match the interests, discard it.
+4. Summarize each selected story into exactly ONE sentence.
+
+**Output Format:**
+Return ONLY the final message to send to the user. Use emojis.
+Example:
+"Here is your news update 📰:
+• [One sentence summary of story 1]
+• [One sentence summary of story 2]
+"
+
+If NO stories match the user's interests, respond exactly with: "NO_MATCHES"
+`;
+
+    try {
+      const response = await this.openai.generateTextResponse(prompt);
+      
+      if (response.includes('NO_MATCHES')) {
+        return null;
+      }
+
+      return this.optimizeForMobile(response);
+    } catch (error) {
+      console.error('Error generating news digest:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get agent statistics
    */
   getStats() {
