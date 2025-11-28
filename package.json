@@ -4,7 +4,7 @@
   "description": "WhatsApp Chat Bot using Facebook WhatsApp API",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx prisma generate && tsc",
     "start": "ts-node src/server.ts",
     "dev": "ts-node src/server.ts",
     "watch": "nodemon",

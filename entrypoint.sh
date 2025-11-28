@@ -33,11 +33,23 @@ fi
 mkdir -p data/conversations
 chmod 755 data data/conversations
 
+# Check if Prisma schema exists
+if [ ! -f "prisma/schema.prisma" ]; then
+    echo "Error: Prisma schema file not found at prisma/schema.prisma"
+    echo "Please ensure the prisma directory is properly copied"
+    exit 1
+fi
+
 # Generate Prisma client if not already generated
 echo "Checking Prisma client..."
 if [ ! -d "node_modules/.prisma" ] || [ ! -f "node_modules/.prisma/client/index.js" ]; then
     echo "Prisma client not found, generating..."
     npx prisma generate
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to generate Prisma client"
+        exit 1
+    fi
+    echo "✅ Prisma client generated successfully"
 else
     echo "Prisma client already generated"
 fi

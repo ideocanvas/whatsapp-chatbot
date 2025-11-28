@@ -100,6 +100,7 @@ COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist
 COPY --chown=whatsapp-bot:nodejs .env.example ./
 COPY --chown=whatsapp-bot:nodejs data/ ./data/
 COPY --chown=whatsapp-bot:nodejs config/ ./config/
+COPY --chown=whatsapp-bot:nodejs prisma/ ./prisma/
 COPY --chown=whatsapp-bot:nodejs entrypoint.sh ./
 
 # Create data directory if it doesn't exist
