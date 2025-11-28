@@ -13,6 +13,7 @@ import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './service
 import { WebSearchTool } from './tools/WebSearchTool';
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
+import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
 import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
 import { NewsProcessorService } from './services/newsProcessorService';
 import { DatabaseConfig } from './config/databaseConfig';
@@ -98,6 +99,11 @@ class AutonomousWhatsAppAgent {
       // Register NEW Tools
       this.tools.registerTool(new RecallHistoryTool(this.historyStore));
       this.tools.registerTool(new ScrapeNewsTool(newsService));
+      
+      // Register Deep Research Tool
+      if (this.browser) {
+          this.tools.registerTool(new DeepResearchTool(this.browser));
+      }
 
       // 4. Initialize Agent
       this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue);
@@ -194,6 +200,11 @@ class AutonomousWhatsAppAgent {
       throw new Error('Agent not initialized');
     }
 
+    // 1. INTERRUPT BACKGROUND TASKS
+    if (this.scheduler) {
+        this.scheduler.interrupt();
+    }
+
     console.log(`📱 Incoming message from ${userId}: ${message.substring(0, 50)}...`);
 
     try {
@@ -226,6 +237,11 @@ class AutonomousWhatsAppAgent {
   async handleWebMessage(userId: string, message: string): Promise<string> {
     if (!this.isInitialized || !this.agent) {
       throw new Error('Agent not initialized');
+    }
+
+    // 1. INTERRUPT BACKGROUND TASKS
+    if (this.scheduler) {
+        this.scheduler.interrupt();
     }
 
     console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}...`);

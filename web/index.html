@@ -250,9 +250,9 @@
                     <button class="text-gray-500 hover:text-gray-700 p-1">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     </button>
-                    <input type="text" x-model="chatInput" @keypress.enter="sendMessage()" 
+                    <input type="text" x-model="chatInput" @keydown.enter="sendMessage()"
                            class="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
-                           placeholder="Type a message">
+                           placeholder="Type a message (press Enter to send)">
                     <button @click="sendMessage()" class="p-2 bg-wa-teal text-white rounded-full hover:bg-wa-accent transition-colors shadow-sm">
                         <svg class="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"></path></svg>
                     </button>
@@ -404,7 +404,7 @@
                         const res = await fetch('/api/chat', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: text, userId: 'web-admin' }),
+                            body: JSON.stringify({ message: text }),
                             credentials: 'include'
                         });
                         const data = await res.json();

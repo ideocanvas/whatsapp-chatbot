@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
+import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 
 /**
  * Dashboard API routes for the web interface
@@ -206,22 +207,42 @@ export class DashboardRoutes {
     // Chat endpoint for testing the bot
     this.router.post('/api/chat', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { message, userId = 'web-user' } = req.body;
+        const { message } = req.body;
+        const webUiUserId = process.env.WEB_UI_USER_ID || 'web-ui-user';
         
         if (!message) {
           return res.status(400).json({ error: 'Message is required' });
         }
 
         const agent = getAutonomousAgent();
+        const historyStore = new HistoryStorePostgres();
         
         // Log the chat activity
-        this.logActivity(`Chat message from ${userId}: ${message.substring(0, 50)}...`);
+        this.logActivity(`Web UI chat message from ${webUiUserId}: ${message.substring(0, 50)}...`);
+        
+        // Store user message in database like normal WhatsApp messages
+        await historyStore.storeMessage({
+          userId: webUiUserId,
+          message: message,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
         
         // Process the message through the autonomous agent using web interface method
-        const response = await agent.handleWebMessage(userId, message);
+        const response = await agent.handleWebMessage(webUiUserId, message);
+        
+        // Store bot response in database
+        await historyStore.storeMessage({
+          userId: webUiUserId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
         
         // Log the response
-        this.logActivity(`Bot response to ${userId}: ${response.substring(0, 50)}...`);
+        this.logActivity(`Bot response to ${webUiUserId}: ${response.substring(0, 50)}...`);
         
         res.json({ success: true, response });
       } catch (error) {

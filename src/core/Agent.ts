@@ -146,6 +146,12 @@ Your decision:`;
 4. **Tool Usage**: Use available tools when you need current information or specific actions.
 5. **Context Awareness**: Reference recent conversation naturally when relevant.
 
+**TOOL SELECTION PRIORITY:**
+1. Check 'recall_history' first if the user refers to the past.
+2. Use 'search_knowledge' for general facts you might have learned.
+3. Use 'web_search' for quick lookups of current information.
+4. **IMPORTANT**: If 'search_knowledge' and 'web_search' yield no results, YOU MUST use 'deep_research' to find the answer. Do not give up without trying deep research.
+
 **Current Time**: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
 
     // Add long-term conversation summaries if available

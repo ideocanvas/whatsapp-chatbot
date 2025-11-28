@@ -39,10 +39,14 @@ export class BrowserService {
   private readonly TRACKER_PATH = path.join(process.cwd(), 'data', 'link_tracker.json');
 
   // Limits
-  private readonly MAX_PAGES_PER_HOUR = 20; 
+  private readonly MAX_PAGES_PER_HOUR = 20;
   private readonly LINK_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
   
   private pagesVisitedThisHour = 0;
+
+  // New control flags
+  private isSurfing: boolean = false;
+  private stopSignal: boolean = false;
 
   // Default Favorites (Used if no file exists)
   private readonly DEFAULT_FAVORITES: FavoriteSite[] = [
@@ -75,121 +79,237 @@ export class BrowserService {
   }
 
   /**
+   * Signal the browser to stop the current surfing session immediately
+   */
+  public stopBrowsing() {
+    if (this.isSurfing) {
+      console.log('🛑 Interrupt signal received. Stopping autonomous browsing...');
+      this.stopSignal = true;
+    }
+  }
+
+  /**
    * Main Autonomous Surfing Loop
    */
   async surf(intent?: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
+    // Reset flags
+    this.stopSignal = false;
+    this.isSurfing = true;
+
     if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) {
         console.log('💤 Browser resting (Rate limit reached)');
+        this.isSurfing = false;
         return { urlsVisited: [], knowledgeGained: 0 };
     }
 
     const results = { urlsVisited: [] as string[], knowledgeGained: 0 };
 
-    // 1. Pick a Favorite Site (Hub)
-    const hub = this.pickFavorite(intent);
-    if (!hub) {
-        console.log('🤔 No favorites available to visit.');
-        return results;
-    }
+    try {
+        // 1. Pick a Favorite Site (Hub)
+        const hub = this.pickFavorite(intent);
+        if (!hub) {
+            console.log('🤔 No favorites available to visit.');
+            this.isSurfing = false;
+            return results;
+        }
 
-    console.log(`🌐 Browsing Hub: ${hub.url}`);
-    
-    // 2. Extract Article Candidates
-    const candidates = await this.scraper.extractArticleLinks(hub.url);
-    this.pagesVisitedThisHour++; 
-    hub.lastVisited = Date.now();
-    hub.visitCount++;
-    this.saveFavorites();
+        // Check interrupt
+        if (this.stopSignal) { this.isSurfing = false; return results; }
 
-    console.log(`🔍 Found ${candidates.length} candidate articles on ${hub.url}`);
-
-    // 3. Process Candidates (Shuffle to vary browsing)
-    const shuffled = candidates.sort(() => 0.5 - Math.random()).slice(0, 5);
-
-    for (const article of shuffled) {
-        if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) break;
-
-        // 4. Check Stale/Tracker Status
-        const trackInfo = this.linkTracker.get(article.url);
-        const isStale = trackInfo && (Date.now() - trackInfo.lastScraped > this.LINK_STALE_THRESHOLD_MS);
+        console.log(`🌐 Browsing Hub: ${hub.url}`);
         
-        // Skip if visited recently (unless stale)
-        if (trackInfo && !isStale) continue;
+        // 2. Extract Article Candidates
+        const candidates = await this.scraper.extractArticleLinks(hub.url);
+        this.pagesVisitedThisHour++;
+        hub.lastVisited = Date.now();
+        hub.visitCount++;
+        this.saveFavorites();
 
-        // 5. Scrape Article
-        try {
-            console.log(`📖 Reading${isStale ? ' (Update Check)' : ''}: ${article.title}`);
-            const result = await this.scraper.scrapeUrl(article.url, undefined, true);
-            this.pagesVisitedThisHour++;
-            results.urlsVisited.push(article.url);
+        console.log(`🔍 Found ${candidates.length} candidate articles on ${hub.url}`);
 
-            if (result.content.length < 300) {
-                console.log('⏩ Skipping: Content too short');
-                continue;
+        // 3. Process Candidates (Shuffle to vary browsing)
+        const shuffled = candidates.sort(() => 0.5 - Math.random()).slice(0, 5);
+
+        for (const article of shuffled) {
+            // CRITICAL: Check for interrupt signal before every action
+            if (this.stopSignal) {
+                console.log('🛑 Browsing loop interrupted.');
+                break;
             }
+            if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) break;
 
-            // 6. Calculate Hash
-            const currentHash = createHash('md5').update(result.content).digest('hex');
+            // 4. Check Stale/Tracker Status
+            const trackInfo = this.linkTracker.get(article.url);
+            const isStale = trackInfo && (Date.now() - trackInfo.lastScraped > this.LINK_STALE_THRESHOLD_MS);
+            
+            // Skip if visited recently (unless stale)
+            if (trackInfo && !isStale) continue;
 
-            // 7. Check for Changes (Local)
-            if (trackInfo && trackInfo.contentHash === currentHash) {
-                console.log('⏩ Skipping: Content unchanged');
-                this.updateLinkTracker(article.url, currentHash);
-                continue;
-            }
+            // 5. Scrape Article
+            try {
+                console.log(`📖 Reading${isStale ? ' (Update Check)' : ''}: ${article.title}`);
+                const result = await this.scraper.scrapeUrl(article.url, undefined, true);
+                this.pagesVisitedThisHour++;
+                results.urlsVisited.push(article.url);
 
-            // 8. Check for Changes (Global KB)
-            const globalExists = await this.kb.hasContentHash(currentHash);
-            if (globalExists) {
-                 console.log('⏩ Skipping: Content exists in KB (Duplicate/Syndicated)');
-                 this.updateLinkTracker(article.url, currentHash);
-                 continue;
-            }
+                if (result.content.length < 300) {
+                    console.log('⏩ Skipping: Content too short');
+                    continue;
+                }
 
-            console.log(`✨ New/Updated Content Found! (Hash: ${currentHash.substring(0,8)})`);
+                // 6. Calculate Hash
+                const currentHash = createHash('md5').update(result.content).digest('hex');
 
-            // 9. Generate Google Search Checklist
-            let finalContent = result.content;
-            let tags = ['autonomous_browse', hub.category];
-            if (trackInfo) tags.push('updated_content'); // Mark as update
+                // 7. Check for Changes (Local)
+                if (trackInfo && trackInfo.contentHash === currentHash) {
+                    console.log('⏩ Skipping: Content unchanged');
+                    this.updateLinkTracker(article.url, currentHash);
+                    continue;
+                }
 
-            if (this.googleSearch && this.openai) {
-                const checklist = await this.generateSearchChecklist(article.title, result.content);
-                if (checklist.length > 0) {
-                    console.log(`🕵️ Enrichment Checklist (${checklist.length} items)`);
-                    const enrichmentData = await this.processChecklist(checklist);
-                    if (enrichmentData) {
-                        finalContent += `\n\n--- 🔍 Research Context ---\n${enrichmentData}`;
-                        tags.push('enriched');
+                // 8. Check for Changes (Global KB)
+                const globalExists = await this.kb.hasContentHash(currentHash);
+                if (globalExists) {
+                     console.log('⏩ Skipping: Content exists in KB (Duplicate/Syndicated)');
+                     this.updateLinkTracker(article.url, currentHash);
+                     continue;
+                }
+
+                console.log(`✨ New/Updated Content Found! (Hash: ${currentHash.substring(0,8)})`);
+
+                // 9. Generate Google Search Checklist
+                let finalContent = result.content;
+                let tags = ['autonomous_browse', hub.category];
+                if (trackInfo) tags.push('updated_content'); // Mark as update
+
+                if (this.googleSearch && this.openai) {
+                    const checklist = await this.generateSearchChecklist(article.title, result.content);
+                    if (checklist.length > 0) {
+                        console.log(`🕵️ Enrichment Checklist (${checklist.length} items)`);
+                        const enrichmentData = await this.processChecklist(checklist);
+                        if (enrichmentData) {
+                            finalContent += `\n\n--- 🔍 Research Context ---\n${enrichmentData}`;
+                            tags.push('enriched');
+                        }
                     }
                 }
+
+                // 10. Save Knowledge
+                await this.kb.learnDocument({
+                    content: finalContent,
+                    source: article.url,
+                    category: hub.category,
+                    tags: tags,
+                    timestamp: new Date(),
+                    contentHash: currentHash
+                });
+
+                results.knowledgeGained++;
+                this.updateLinkTracker(article.url, currentHash);
+
+                // 11. Discovery (Chance to add new domain to favorites)
+                if (Math.random() < 0.05) {
+                    this.maybeDiscoverNewFavorite(article.url, hub.category);
+                }
+
+            } catch (e) {
+                console.error(`Failed to process article ${article.url}:`, e);
             }
-
-            // 10. Save Knowledge
-            await this.kb.learnDocument({
-                content: finalContent,
-                source: article.url,
-                category: hub.category,
-                tags: tags,
-                timestamp: new Date(),
-                contentHash: currentHash
-            });
-
-            results.knowledgeGained++;
-            this.updateLinkTracker(article.url, currentHash);
-
-            // 11. Discovery (Chance to add new domain to favorites)
-            if (Math.random() < 0.05) {
-                this.maybeDiscoverNewFavorite(article.url, hub.category);
-            }
-
-        } catch (e) {
-            console.error(`Failed to process article ${article.url}:`, e);
         }
+    } catch (e) {
+        console.error('Error during surfing:', e);
+    } finally {
+        this.isSurfing = false;
+        this.stopSignal = false;
     }
     
     this.saveLinkTracker();
     return results;
+  }
+
+  /**
+   * Deep Research Task: Bypasses hourly limits to find specific answers
+   * Performs: Search -> Scrape -> Summarize -> Repeat if needed
+   */
+  async performDeepResearch(query: string): Promise<string> {
+    console.log(`🕵️ Starting Deep Research for: "${query}"`);
+    
+    if (!this.googleSearch || !this.openai) {
+        return "Deep research unavailable (Missing Google Search or OpenAI configuration).";
+    }
+
+    let summary = "";
+    const maxIterations = 2; // Prevent infinite loops
+    let currentQuery = query;
+
+    for (let i = 0; i < maxIterations; i++) {
+        console.log(`🕵️ Deep Research Iteration ${i + 1}/${maxIterations}: Searching for "${currentQuery}"`);
+        
+        // 1. Google Search
+        const searchResults = await this.googleSearch.search(currentQuery, 3);
+        
+        if (searchResults.length === 0) break;
+
+        // 2. Scrape Top Results (Bypassing hourly limit logic by not incrementing pagesVisitedThisHour)
+        const scrapedContents = [];
+        for (const result of searchResults) {
+            try {
+                // Check interrupt just in case the user spams messages
+                if (this.stopSignal) break;
+
+                console.log(`📖 Deep Research Reading: ${result.title}`);
+                const scrapeResult = await this.scraper.scrapeUrl(result.link, undefined, true); // Force mobile view
+                if (scrapeResult.content.length > 200) {
+                    scrapedContents.push(`Source: ${result.link}\nTitle: ${result.title}\nContent: ${scrapeResult.content.substring(0, 3000)}`);
+                }
+            } catch (e) {
+                console.warn(`Failed to scrape ${result.link} for research`);
+            }
+        }
+
+        if (scrapedContents.length === 0) {
+             if (i === maxIterations - 1) return "I searched but couldn't read any of the websites found.";
+             continue;
+        }
+
+        // 3. Analyze & Synthesize
+        const researchPrompt = `
+        User Question: "${query}"
+        
+        I have gathered information from the following sources:
+        ${scrapedContents.join('\n\n---\n\n')}
+
+        Task:
+        1. Answer the user's question based ONLY on these sources.
+        2. If the answer is found, start with "FOUND:".
+        3. If the answer is missing, start with "MISSING:" and suggest a better search query to find it.
+        `;
+
+        const response = await this.openai.generateTextResponse(researchPrompt);
+
+        if (response.startsWith("FOUND:")) {
+            // Save this new knowledge to the DB for future speed
+            await this.kb.learnDocument({
+                content: `Deep Research on "${query}":\n${response.replace("FOUND:", "").trim()}`,
+                source: "deep_research_task",
+                category: "research",
+                tags: ["deep_research", "user_query"],
+                timestamp: new Date()
+            });
+            
+            return response.replace("FOUND:", "").trim();
+        } else if (response.startsWith("MISSING:")) {
+            // Update query for next iteration
+            const newQuery = response.replace("MISSING:", "").trim();
+            console.log(`🕵️ Content missing. Refined query: "${newQuery}"`);
+            currentQuery = newQuery;
+            summary = "I found some related info but not the exact answer yet."; // Intermediate status
+        } else {
+            return response; // Fallback
+        }
+    }
+
+    return "I conducted extensive research but couldn't find a specific answer to your question in the available sources.";
   }
 
   // --- Helpers ---

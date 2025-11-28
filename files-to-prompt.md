@@ -1586,7 +1586,7 @@ async function testAutonomousAgent() {
         knowledgeDocuments: status.memory?.knowledge?.totalDocuments || 0
       },
       tools: status.tools?.count || 0,
-      browser: status.browser?.totalSessions || 0
+      browser: status.browser?.favoritesCount || 0
     });
 
     // 3. Test incoming message handling
@@ -2009,21 +2009,30 @@ export class Scheduler {
     this.stats.lastTick = new Date();
 
     try {
+      // 1. Get STRICTLY active users (last contact < 1 hour)
       const activeUsers = this.contextMgr.getActiveUsers();
-      
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // 1. IDLE MODE: Autonomous Browsing (when no active users or low load)
+      // 2. IDLE MODE: Browse if not too busy or just random
       if (this.shouldBrowse(activeUsers.length)) {
-        await this.idleMode();
+          // Pass a user interest as intent if a user is active!
+          let browseIntent = undefined;
+          if (activeUsers.length > 0) {
+              const randomUser = activeUsers[Math.floor(Math.random() * activeUsers.length)];
+              const interests = this.contextMgr.getUserInterests(randomUser);
+              if (interests.length > 0) {
+                  browseIntent = interests[Math.floor(Math.random() * interests.length)];
+                  console.log(`🎯 Browsing targeted for active user ${randomUser}: ${browseIntent}`);
+              }
+          }
+          await this.idleMode(browseIntent);
       }
 
-      // 2. PROACTIVE MODE: Check active users for relevant content
-      if (this.shouldCheckProactive(activeUsers.length)) {
+      // 3. PROACTIVE MODE: Only for Active Users
+      if (activeUsers.length > 0) {
         await this.proactiveMode(activeUsers);
       }
 
-      // 3. Log tick statistics
       this.logTickStats();
 
     } catch (error) {
@@ -2031,96 +2040,55 @@ export class Scheduler {
     }
   }
 
-  /**
-   * Idle Mode: Autonomous web browsing for knowledge acquisition
-   */
-  private async idleMode(): Promise<void> {
+  private async idleMode(intent?: string): Promise<void> {
     console.log('🌐 Entering Idle Mode: Autonomous Browsing');
     this.stats.browsingSessions++;
-
-    // Determine browsing intent based on recent knowledge gaps
-    const intent = await this.determineBrowsingIntent();
     
+    // Surf with intent if provided, otherwise generic
     const result = await this.browser.surf(intent);
     this.stats.knowledgeLearned += result.knowledgeGained;
-
-    console.log(`📚 Idle Mode Complete: ${result.urlsVisited.length} pages, ${result.knowledgeGained} facts learned`);
   }
 
-  /**
-   * Proactive Mode: Check if we should message active users
-   */
   private async proactiveMode(activeUsers: string[]): Promise<void> {
-    console.log('💬 Entering Proactive Mode: Checking active users');
-    this.stats.proactiveChecks++;
+    console.log(`💬 Proactive Mode: Checking ${activeUsers.length} active users`);
 
     for (const userId of activeUsers) {
-      // Only check 20% of active users per tick to avoid spam
-      if (Math.random() > 0.2) continue;
+      // Check strict cooldown (e.g., don't message twice in 15 mins)
+      if (!this.actionQueue.canSendProactiveMessage(userId)) continue;
 
-      await this.checkUserForProactiveMessage(userId);
-    }
-  }
-
-  /**
-   * Check if a specific user should receive a proactive message
-   */
-  private async checkUserForProactiveMessage(userId: string): Promise<void> {
-    // Check cooldown first
-    if (!this.actionQueue.canSendProactiveMessage(userId)) {
-      const cooldown = this.actionQueue.getProactiveCooldownRemaining(userId);
-      console.log(`⏰ User ${userId} in cooldown: ${Math.round(cooldown / 60000)} minutes remaining`);
-      return;
-    }
-
-    // Find recently learned knowledge relevant to user interests
-    const relevantKnowledge = await this.findRelevantKnowledgeForUser(userId);
-    if (!relevantKnowledge) {
-      console.log(`🤔 No relevant knowledge found for user ${userId}`);
-      return;
-    }
-
-    // Generate proactive message using agent
-    const message = await this.agent.generateProactiveMessage(userId, relevantKnowledge);
-    if (!message) {
-      console.log(`❌ Agent decided not to message user ${userId}`);
-      return;
-    }
-
-    // Queue the proactive message with appropriate delay
-    const actionId = this.actionQueue.queueMessage(userId, message, {
-      isProactive: true,
-      delayMs: 5000 + Math.random() * 10000, // 5-15 second delay
-      priority: 7 // Medium-high priority
-    });
-
-    this.stats.messagesSent++;
-    console.log(`📤 Proactive message queued for ${userId}: ${message.substring(0, 50)}...`);
-  }
-
-  /**
-   * Find knowledge relevant to a user's interests
-   */
-  private async findRelevantKnowledgeForUser(userId: string): Promise<string | null> {
-    const userInterests = this.contextMgr.getUserInterests(userId);
-    if (userInterests.length === 0) return null;
-
-    // Try each interest until we find relevant knowledge
-    for (const interest of userInterests) {
-      try {
-        // Search knowledge base for this interest
-        const knowledge = await this.kb.search(interest, 1, this.mapInterestToCategory(interest));
-        
-        if (knowledge && !knowledge.includes('No relevant knowledge')) {
-          console.log(`🎯 Found relevant knowledge for ${userId}'s interest in ${interest}`);
-          return knowledge;
-        }
-      } catch (error) {
-        console.error(`❌ Error searching knowledge for interest ${interest}:`, error);
+      // Find knowledge specifically learned RECENTLY (last 1 hour) that matches interests
+      const relevantContent = await this.findFreshRelevantContent(userId);
+      
+      if (relevantContent) {
+          const message = await this.agent.generateProactiveMessage(userId, relevantContent);
+          if (message) {
+              this.actionQueue.queueMessage(userId, message, { isProactive: true, priority: 8 });
+              this.stats.messagesSent++;
+          }
       }
     }
+  }
 
-    return null;
+
+  /**
+   * Find content learned in the last hour that matches user interests
+   */
+  private async findFreshRelevantContent(userId: string): Promise<string | null> {
+      const interests = this.contextMgr.getUserInterests(userId);
+      if (interests.length === 0) return null;
+
+      // We need a way to search specifically for *recent* docs in KB matching tags
+      // This uses a specific search logic on the KB
+      for (const interest of interests) {
+          // This relies on the KnowledgeBase having a method to find *fresh* content by tag/query
+          // We can use the existing search but filter the string results or add a new method to KB
+          // For now, using standard search but looking for the "🆕" indicator added by KB
+          const knowledge = await this.kb.search(interest, 1);
+          if (knowledge && knowledge.includes('🆕')) {
+              return knowledge; // Found something fresh
+          }
+      }
+      return null;
   }
 
   /**
@@ -2137,44 +2105,13 @@ export class Scheduler {
     return 'general';
   }
 
-  /**
-   * Determine browsing intent based on knowledge gaps
-   */
-  private async determineBrowsingIntent(): Promise<string | undefined> {
-    const knowledgeStats = await this.kb.getStats();
-    
-    // If we have few documents, browse broadly
-    if (knowledgeStats.totalDocuments < 10) {
-      return undefined; // Browse everything
-    }
 
-    // Find category with least knowledge
-    const categoryCounts = knowledgeStats.categories.reduce((acc: Record<string, number>, category: string) => {
-      acc[category] = (acc[category] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-
-    const leastKnownCategory = Object.keys(categoryCounts).reduce((a, b) =>
-      categoryCounts[a] < categoryCounts[b] ? a : b
-    );
-
-    return leastKnownCategory;
-  }
-
-  /**
-   * Decide if we should browse in this tick
-   */
   private shouldBrowse(activeUserCount: number): boolean {
-    // Browse if no active users OR random chance when users are active
-    return activeUserCount === 0 || Math.random() > 0.7; // 30% chance when users active
+    return true; // Always try to browse if browser limit allows
   }
 
-  /**
-   * Decide if we should check for proactive messages
-   */
   private shouldCheckProactive(activeUserCount: number): boolean {
-    // Only check if we have active users
-    return activeUserCount > 0 && Math.random() > 0.5; // 50% chance per tick
+    return activeUserCount > 0;
   }
 
   /**
@@ -2912,6 +2849,42 @@ export class KnowledgeBasePostgres {
   }
 
   /**
+   * Check if a source URL has already been processed and stored
+   */
+  async hasDocument(url: string): Promise<boolean> {
+    try {
+      const count = await prisma.knowledge.count({
+        where: { source: url }
+      });
+      return count > 0;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a specific content hash already exists in the database.
+   * This is used to detect if an article (even with a different URL)
+   * has already been learned.
+   */
+  async hasContentHash(hash: string): Promise<boolean> {
+    try {
+      const tag = `hash:${hash}`;
+      const count = await prisma.knowledge.count({
+        where: {
+          tags: {
+            string_contains: tag
+          }
+        }
+      });
+      return count > 0;
+    } catch (error) {
+      console.error('Error checking content hash:', error);
+      return false;
+    }
+  }
+
+  /**
    * Add a new document learned from browsing
    */
   async learnDocument(document: {
@@ -2920,33 +2893,33 @@ export class KnowledgeBasePostgres {
     tags: string[];
     timestamp: Date;
     category?: string;
+    contentHash?: string;
   }): Promise<void> {
-    if (!document.content || document.content.trim().length < 10) {
-      console.log('📝 Skipping empty or too short document');
-      return;
+    if (!document.content || document.content.trim().length < 50) return;
+
+    // Add hash to tags if provided
+    const finalTags = [...document.tags];
+    if (document.contentHash) {
+      finalTags.push(`hash:${document.contentHash}`);
     }
 
     try {
-      // Create embedding for the content
       const embedding = await this.openaiService.createEmbedding(document.content);
-      
-      // Convert array to Float64Array buffer
       const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
 
-      // Insert into database
       await prisma.knowledge.create({
         data: {
           id: uuidv4(),
-          content: document.content.substring(0, 2000), // Limit content length
+          content: document.content.substring(0, 4000),
           vector: vectorBuffer,
           source: document.source,
           category: document.category || 'general',
-          tags: document.tags,
+          tags: finalTags,
           timestamp: document.timestamp,
         },
       });
 
-      console.log(`💾 Learned new knowledge: [${document.category || 'general'}] ${document.source}`);
+      console.log(`💾 Learned: [${document.category}] ${document.source.substring(0, 40)}...`);
     } catch (error) {
       console.error('❌ Failed to learn document:', error);
     }
@@ -3693,228 +3666,301 @@ export class ActionQueueService {
 ---
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { WebScrapeService } from './webScrapeService';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './googleSearchService';
+import { OpenAIService, createOpenAIServiceFromConfig } from './openaiService';
+import { createHash } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 
-/**
- * Autonomous browser service that simulates "Person" browsing the web.
- * Accumulates knowledge independently of user input for proactive messaging.
- */
+interface FavoriteSite {
+  url: string;
+  category: string;
+  lastVisited: number;
+  visitCount: number;
+  addedAt: number;
+  source: 'default' | 'user_added' | 'discovered';
+}
+
+interface LinkTrackingEntry {
+  url: string;
+  lastScraped: number;
+  contentHash: string;
+}
+
+interface SearchChecklistItem {
+  query: string;
+  reason: string;
+}
+
 export class BrowserService {
-  private dailyList: string[] = [
-    'https://techcrunch.com',
-    'https://news.ycombinator.com',
-    'https://hongkongfp.com',
-    'https://www.bbc.com/news/world',
-    'https://www.cnbc.com/world'
-  ];
+  private favorites: FavoriteSite[] = [];
+  private linkTracker: Map<string, LinkTrackingEntry> = new Map();
   
-  private visitedUrls: Set<string> = new Set();
-  private maxPagesPerHour = 10;
+  private googleSearch?: GoogleSearchService;
+  private openai?: OpenAIService;
+  
+  // Persistence Paths
+  private readonly DATA_DIR = path.join(process.cwd(), 'data');
+  private readonly FAVORITES_PATH = path.join(process.cwd(), 'data', 'favorites.json');
+  private readonly TRACKER_PATH = path.join(process.cwd(), 'data', 'link_tracker.json');
+
+  // Limits
+  private readonly MAX_PAGES_PER_HOUR = 20; 
+  private readonly LINK_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+  
   private pagesVisitedThisHour = 0;
-  private lastSurfingSession: Date | null = null;
-  private surfingStats = {
-    totalSessions: 0,
-    totalPagesVisited: 0,
-    knowledgeLearned: 0
-  };
+
+  // Default Favorites (Used if no file exists)
+  private readonly DEFAULT_FAVORITES: FavoriteSite[] = [
+    { url: 'https://news.ycombinator.com', category: 'tech', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' },
+    { url: 'https://techcrunch.com', category: 'tech', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' },
+    { url: 'https://www.bbc.com/news/world', category: 'world', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' },
+    { url: 'https://hongkongfp.com', category: 'news', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' }
+  ];
 
   constructor(
     private scraper: WebScrapeService,
     private kb: KnowledgeBasePostgres
   ) {
-    // Reset hourly counter
+    this.initialize();
+  }
+
+  private async initialize() {
+    this.loadFavorites();
+    this.loadLinkTracker();
+    
+    try { this.openai = await createOpenAIServiceFromConfig(); } catch (e) { console.error('Browser: OpenAI init failed'); }
+    try { this.googleSearch = createGoogleSearchServiceFromEnv(); } catch (e) { console.warn('Browser: Google Search not configured'); }
+
+    // Hourly Reset
     setInterval(() => { 
-      this.pagesVisitedThisHour = 0; 
-      console.log('🔄 Browser hourly limit reset');
+        this.pagesVisitedThisHour = 0; 
+        console.log('🔄 Browser hourly limit reset');
+        this.saveLinkTracker(); // Periodic save
     }, 3600 * 1000);
   }
 
   /**
-   * Main surfing method - autonomous knowledge acquisition
+   * Main Autonomous Surfing Loop
    */
   async surf(intent?: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
-    if (this.pagesVisitedThisHour >= this.maxPagesPerHour) {
-      console.log('💤 Browser resting (Rate limit reached)');
-      return { urlsVisited: [], knowledgeGained: 0 };
+    if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) {
+        console.log('💤 Browser resting (Rate limit reached)');
+        return { urlsVisited: [], knowledgeGained: 0 };
     }
 
-    // Determine surfing focus based on intent or random selection
-    const urls = this.pickUrlsToSurf(intent);
-    if (urls.length === 0) {
-      console.log('🌐 No URLs to surf');
-      return { urlsVisited: [], knowledgeGained: 0 };
+    const results = { urlsVisited: [] as string[], knowledgeGained: 0 };
+
+    // 1. Pick a Favorite Site (Hub)
+    const hub = this.pickFavorite(intent);
+    if (!hub) {
+        console.log('🤔 No favorites available to visit.');
+        return results;
     }
 
-    const results = {
-      urlsVisited: [] as string[],
-      knowledgeGained: 0
-    };
-
-    for (const url of urls) {
-      if (this.pagesVisitedThisHour >= this.maxPagesPerHour) break;
-
-      try {
-        console.log(`🌐 Bot is surfing: ${url}`);
-        
-        const result = await this.scraper.scrapeUrls([url], undefined, true); // Force mobile mode
-        if (result.length === 0) continue;
-
-        const scrapeResult = result[0];
-        
-        // Extract knowledge & Embed into long-term memory
-        if (scrapeResult.content && scrapeResult.content.length > 100) {
-          await this.kb.learnDocument({
-            content: scrapeResult.content,
-            source: url,
-            tags: ['autonomous_browse', this.extractCategoryFromUrl(url)],
-            timestamp: new Date(),
-            category: this.extractCategoryFromUrl(url)
-          });
-
-          results.knowledgeGained++;
-          this.surfingStats.knowledgeLearned++;
-        }
-
-        this.pagesVisitedThisHour++;
-        this.visitedUrls.add(url);
-        results.urlsVisited.push(url);
-        this.surfingStats.totalPagesVisited++;
-
-        console.log(`✅ Surfed ${url} - Learned: ${results.knowledgeGained} facts`);
-
-        // Small delay between pages to simulate human browsing
-        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
-
-      } catch (error) {
-        console.error(`❌ Surfing failed for ${url}:`, error);
-      }
-    }
-
-    this.lastSurfingSession = new Date();
-    this.surfingStats.totalSessions++;
+    console.log(`🌐 Browsing Hub: ${hub.url}`);
     
-    console.log(`📊 Surfing session completed: ${results.urlsVisited.length} pages, ${results.knowledgeGained} facts learned`);
+    // 2. Extract Article Candidates
+    const candidates = await this.scraper.extractArticleLinks(hub.url);
+    this.pagesVisitedThisHour++; 
+    hub.lastVisited = Date.now();
+    hub.visitCount++;
+    this.saveFavorites();
 
+    console.log(`🔍 Found ${candidates.length} candidate articles on ${hub.url}`);
+
+    // 3. Process Candidates (Shuffle to vary browsing)
+    const shuffled = candidates.sort(() => 0.5 - Math.random()).slice(0, 5);
+
+    for (const article of shuffled) {
+        if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) break;
+
+        // 4. Check Stale/Tracker Status
+        const trackInfo = this.linkTracker.get(article.url);
+        const isStale = trackInfo && (Date.now() - trackInfo.lastScraped > this.LINK_STALE_THRESHOLD_MS);
+        
+        // Skip if visited recently (unless stale)
+        if (trackInfo && !isStale) continue;
+
+        // 5. Scrape Article
+        try {
+            console.log(`📖 Reading${isStale ? ' (Update Check)' : ''}: ${article.title}`);
+            const result = await this.scraper.scrapeUrl(article.url, undefined, true);
+            this.pagesVisitedThisHour++;
+            results.urlsVisited.push(article.url);
+
+            if (result.content.length < 300) {
+                console.log('⏩ Skipping: Content too short');
+                continue;
+            }
+
+            // 6. Calculate Hash
+            const currentHash = createHash('md5').update(result.content).digest('hex');
+
+            // 7. Check for Changes (Local)
+            if (trackInfo && trackInfo.contentHash === currentHash) {
+                console.log('⏩ Skipping: Content unchanged');
+                this.updateLinkTracker(article.url, currentHash);
+                continue;
+            }
+
+            // 8. Check for Changes (Global KB)
+            const globalExists = await this.kb.hasContentHash(currentHash);
+            if (globalExists) {
+                 console.log('⏩ Skipping: Content exists in KB (Duplicate/Syndicated)');
+                 this.updateLinkTracker(article.url, currentHash);
+                 continue;
+            }
+
+            console.log(`✨ New/Updated Content Found! (Hash: ${currentHash.substring(0,8)})`);
+
+            // 9. Generate Google Search Checklist
+            let finalContent = result.content;
+            let tags = ['autonomous_browse', hub.category];
+            if (trackInfo) tags.push('updated_content'); // Mark as update
+
+            if (this.googleSearch && this.openai) {
+                const checklist = await this.generateSearchChecklist(article.title, result.content);
+                if (checklist.length > 0) {
+                    console.log(`🕵️ Enrichment Checklist (${checklist.length} items)`);
+                    const enrichmentData = await this.processChecklist(checklist);
+                    if (enrichmentData) {
+                        finalContent += `\n\n--- 🔍 Research Context ---\n${enrichmentData}`;
+                        tags.push('enriched');
+                    }
+                }
+            }
+
+            // 10. Save Knowledge
+            await this.kb.learnDocument({
+                content: finalContent,
+                source: article.url,
+                category: hub.category,
+                tags: tags,
+                timestamp: new Date(),
+                contentHash: currentHash
+            });
+
+            results.knowledgeGained++;
+            this.updateLinkTracker(article.url, currentHash);
+
+            // 11. Discovery (Chance to add new domain to favorites)
+            if (Math.random() < 0.05) {
+                this.maybeDiscoverNewFavorite(article.url, hub.category);
+            }
+
+        } catch (e) {
+            console.error(`Failed to process article ${article.url}:`, e);
+        }
+    }
+    
+    this.saveLinkTracker();
     return results;
   }
 
-  /**
-   * Pick URLs to surf based on intent or discovery patterns
-   */
-  private pickUrlsToSurf(intent?: string): string[] {
-    const urls: string[] = [];
+  // --- Helpers ---
 
-    if (intent) {
-      // Intent-based surfing (e.g., "find tech news")
-      urls.push(...this.dailyList.filter(url => 
-        url.toLowerCase().includes(intent.toLowerCase()) ||
-        this.urlMatchesIntent(url, intent)
-      ));
-    }
+  private async generateSearchChecklist(title: string, content: string): Promise<SearchChecklistItem[]> {
+    if (!this.openai) return [];
+    // Ask LLM to create a checklist of things to verify
+    const prompt = `Read this news article snippet. Identify 1-2 facts, technical terms, or historical events that need verification or more context. Return valid JSON array only: [{"query": "search query", "reason": "why"}] \n\nTitle: ${title}\nContent: ${content.substring(0, 1000)}...`;
+    try {
+        const raw = await this.openai.generateTextResponse(prompt);
+        const jsonMatch = raw.match(/\[.*\]/s);
+        return jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    } catch (e) { return []; }
+  }
 
-    // If no intent or no matches, use round-robin from daily list
-    if (urls.length === 0) {
-      const availableUrls = this.dailyList.filter(url => !this.visitedUrls.has(url));
-      
-      if (availableUrls.length > 0) {
-        // Pick 1-3 random URLs from available list
-        const count = Math.min(3, availableUrls.length);
-        for (let i = 0; i < count; i++) {
-          const randomIndex = Math.floor(Math.random() * availableUrls.length);
-          urls.push(availableUrls[randomIndex]);
-          // Remove to avoid duplicates in this session
-          availableUrls.splice(randomIndex, 1);
+  private async processChecklist(items: SearchChecklistItem[]): Promise<string> {
+      if (!this.googleSearch) return '';
+      let context = '';
+      for (const item of items) {
+          try {
+              const results = await this.googleSearch.search(item.query, 2);
+              if (results.length > 0) {
+                  context += `Query: ${item.query} (${item.reason})\n` + results.map(r => `- ${r.title}: ${r.snippet}`).join('\n') + '\n\n';
+              }
+              await new Promise(r => setTimeout(r, 1000));
+          } catch (e) {}
+      }
+      return context;
+  }
+
+  private pickFavorite(intent?: string): FavoriteSite | null {
+      this.loadFavorites();
+      let candidates = this.favorites;
+      if (intent) {
+          const filtered = candidates.filter(f => f.category.includes(intent.toLowerCase()) || f.url.includes(intent.toLowerCase()));
+          if (filtered.length > 0) candidates = filtered;
+      }
+      candidates.sort((a, b) => a.lastVisited - b.lastVisited);
+      // Wait at least 2 hours before revisiting same hub
+      const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+      const staleCandidates = candidates.filter(f => f.lastVisited < twoHoursAgo);
+      return staleCandidates.length > 0 ? staleCandidates[0] : (intent && candidates.length > 0 ? candidates[0] : null);
+  }
+
+  private maybeDiscoverNewFavorite(url: string, category: string) {
+      try {
+          const urlObj = new URL(url);
+          const rootUrl = `${urlObj.protocol}//${urlObj.hostname}`;
+          if (!this.favorites.some(f => f.url === rootUrl)) {
+              this.addFavorite(rootUrl, category, 'discovered');
+          }
+      } catch (e) {}
+  }
+
+  // --- Persistence ---
+
+  public addFavorite(url: string, category: string, source: 'user_added' | 'discovered' = 'user_added') {
+      if (this.favorites.some(f => f.url === url)) return;
+      this.favorites.push({ url, category, lastVisited: 0, visitCount: 0, addedAt: Date.now(), source });
+      this.saveFavorites();
+      console.log(`⭐ New favorite added: ${url}`);
+  }
+
+  private updateLinkTracker(url: string, hash: string) {
+      this.linkTracker.set(url, { url, lastScraped: Date.now(), contentHash: hash });
+  }
+
+  private loadFavorites() {
+    try {
+        if (!fs.existsSync(this.DATA_DIR)) fs.mkdirSync(this.DATA_DIR, { recursive: true });
+        if (fs.existsSync(this.FAVORITES_PATH)) {
+            this.favorites = JSON.parse(fs.readFileSync(this.FAVORITES_PATH, 'utf8'));
+        } else {
+            this.favorites = [...this.DEFAULT_FAVORITES];
+            this.saveFavorites();
         }
-      } else {
-        // All daily URLs visited, reset and start over
-        this.visitedUrls.clear();
-        console.log('🔄 Reset visited URLs (daily list exhausted)');
-        return this.pickUrlsToSurf(intent); // Recursive call with reset
-      }
-    }
-
-    return urls.slice(0, 3); // Limit to 3 URLs per session
+    } catch (e) { this.favorites = [...this.DEFAULT_FAVORITES]; }
   }
 
-  /**
-   * Check if URL matches surfing intent
-   */
-  private urlMatchesIntent(url: string, intent: string): boolean {
-    const urlLower = url.toLowerCase();
-    const intentLower = intent.toLowerCase();
-
-    const categoryMapping: { [key: string]: string[] } = {
-      'tech': ['tech', 'technology', 'hacker', 'programming'],
-      'news': ['news', 'headlines', 'current', 'breaking'],
-      'business': ['business', 'finance', 'market', 'economy'],
-      'sports': ['sports', 'game', 'football', 'basketball'],
-      'world': ['world', 'international', 'global']
-    };
-
-    for (const [category, keywords] of Object.entries(categoryMapping)) {
-      if (intentLower.includes(category) || keywords.some(keyword => intentLower.includes(keyword))) {
-        return keywords.some(keyword => urlLower.includes(keyword));
-      }
-    }
-
-    return false;
+  private saveFavorites() {
+      try { fs.writeFileSync(this.FAVORITES_PATH, JSON.stringify(this.favorites, null, 2)); } catch (e) {}
   }
 
-  /**
-   * Extract category from URL for tagging
-   */
-  private extractCategoryFromUrl(url: string): string {
-    const urlLower = url.toLowerCase();
-    
-    if (urlLower.includes('tech') || urlLower.includes('hacker')) return 'tech';
-    if (urlLower.includes('news') || urlLower.includes('headlines')) return 'news';
-    if (urlLower.includes('business') || urlLower.includes('finance')) return 'business';
-    if (urlLower.includes('sports') || urlLower.includes('game')) return 'sports';
-    if (urlLower.includes('world') || urlLower.includes('international')) return 'world';
-    
-    return 'general';
+  private loadLinkTracker() {
+      try {
+          if (fs.existsSync(this.TRACKER_PATH)) {
+              const data = JSON.parse(fs.readFileSync(this.TRACKER_PATH, 'utf8'));
+              this.linkTracker = new Map(data.map((i: any) => [i.url, i]));
+          }
+      } catch (e) { console.error('Error loading link tracker', e); }
   }
 
-  /**
-   * Get browsing statistics
-   */
+  private saveLinkTracker() {
+      try {
+          const data = Array.from(this.linkTracker.values());
+          fs.writeFileSync(this.TRACKER_PATH, JSON.stringify(data, null, 2));
+      } catch (e) { console.error('Error saving link tracker', e); }
+  }
+
   getStats() {
-    return {
-      ...this.surfingStats,
-      pagesVisitedThisHour: this.pagesVisitedThisHour,
-      maxPagesPerHour: this.maxPagesPerHour,
-      lastSurfingSession: this.lastSurfingSession,
-      totalUrlsInMemory: this.visitedUrls.size
-    };
-  }
-
-  /**
-   * Force a surfing session with specific intent
-   */
-  async surfWithIntent(intent: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
-    console.log(`🎯 Intent-based surfing: ${intent}`);
-    return this.surf(intent);
-  }
-
-  /**
-   * Check if browser can surf (rate limit check)
-   */
-  canSurf(): boolean {
-    return this.pagesVisitedThisHour < this.maxPagesPerHour;
-  }
-
-  /**
-   * Get time until next surfing session is available
-   */
-  getTimeUntilNextSurf(): number {
-    if (this.canSurf()) return 0;
-    
-    // Calculate time until hourly reset (simplified)
-    const now = new Date();
-    const nextHour = new Date(now);
-    nextHour.setHours(nextHour.getHours() + 1);
-    nextHour.setMinutes(0, 0, 0);
-    
-    return nextHour.getTime() - now.getTime();
+      return {
+          favoritesCount: this.favorites.length,
+          pagesVisitedThisHour: this.pagesVisitedThisHour,
+          mostVisited: this.favorites.sort((a,b) => b.visitCount - a.visitCount)[0]?.url
+      };
   }
 }
 
@@ -5484,11 +5530,17 @@ export interface WebScrapeResult {
   title: string;
   url: string;
   content: string;
+  links: string[]; // Added links array
   extractedAt: string;
   method: 'html' | 'visual' | 'hybrid';
   mobileView?: boolean;
   viewport?: { width: number; height: number };
   userAgent?: string;
+}
+
+export interface ArticleCandidate {
+  title: string;
+  url: string;
 }
 
 export interface WebScrapeConfig {
@@ -5726,6 +5778,21 @@ export class WebScrapeService {
 
             const pageTitle = await page.title().catch(() => "Untitled");
 
+            // Extract Links BEFORE cleaning content
+            const links = await page.evaluate(() => {
+                const anchors = Array.from(document.querySelectorAll('a[href]'));
+                return anchors
+                    .map((a: any) => ({ href: a.href, text: a.innerText }))
+                    .filter((link: any) =>
+                        link.href.startsWith('http') &&
+                        link.text.trim().length > 10 // Only substantial links
+                    )
+                    .map((link: any) => link.href);
+            });
+            
+            // Unique links
+            const uniqueLinks = [...new Set(links)] as string[];
+
             let extractedContent = await page.evaluate((inputSelector) => {
                 const junkSelectors = [
                     'script', 'style', 'noscript', 'iframe', 'svg',
@@ -5768,6 +5835,7 @@ export class WebScrapeService {
                 title: pageTitle,
                 url,
                 content: extractedContent,
+                links: uniqueLinks, // Return collected links
                 extractedAt: new Date().toISOString(),
                 method,
                 mobileView: useMobileView,
@@ -5788,6 +5856,76 @@ export class WebScrapeService {
         }
     }
     throw new Error('Max retries reached');
+  }
+
+  /**
+   * Scrapes a "Hub" page (homepage/section) to find potential article links.
+   * Uses mobile view for cleaner HTML structure.
+   */
+  async extractArticleLinks(url: string): Promise<ArticleCandidate[]> {
+    await this.initialize();
+    if (!this.browser) throw new Error('Browser not initialized');
+
+    const context = await this.browser.newContext({
+      viewport: { width: 393, height: 852 }, // iPhone 14 Pro
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true,
+      hasTouch: true
+    });
+
+    try {
+      const page = await context.newPage();
+      await page.goto(url, { timeout: 30000, waitUntil: 'domcontentloaded' });
+      
+      // Fast scroll to trigger lazy loading
+      await this.fastSmartScroll(page);
+
+      // Extract links with heuristics
+      const links = await page.evaluate((baseUrl) => {
+        const anchors = Array.from(document.querySelectorAll('a[href]'));
+        const candidates: { title: string; url: string }[] = [];
+        const seenUrls = new Set();
+        const baseDomain = new URL(baseUrl).hostname.replace('www.', '');
+
+        anchors.forEach((a: any) => {
+          let href = a.href;
+          let title = a.innerText.trim();
+
+          // 1. Basic filtering
+          if (!href || href.startsWith('javascript:') || href.startsWith('mailto:') || !title) return;
+          if (title.length < 15) return; // Skip "Home", "More", "Login"
+          
+          try {
+            const urlObj = new URL(href, baseUrl);
+            
+            // 2. Strict Domain Check (Must be internal link)
+            if (!urlObj.hostname.includes(baseDomain)) return;
+            
+            // 3. Remove query params for cleaner URLs
+            const cleanUrl = urlObj.origin + urlObj.pathname;
+
+            // 4. Heuristic: Article URLs usually have >3 path segments or contain date/slug
+            const pathSegments = urlObj.pathname.split('/').filter(p => p.length > 0);
+            if (pathSegments.length < 2) return;
+
+            if (!seenUrls.has(cleanUrl)) {
+              seenUrls.add(cleanUrl);
+              candidates.push({ title, url: cleanUrl });
+            }
+          } catch (e) {}
+        });
+
+        return candidates;
+      }, url);
+
+      return links;
+
+    } catch (error) {
+      console.error(`Failed to extract links from ${url}:`, error);
+      return [];
+    } finally {
+      await context.close();
+    }
   }
 
   private async performOptimizedVisualExtraction(page: Page, url: string): Promise<string> {
@@ -7887,640 +8025,607 @@ export async function cleanupTools(): Promise<void> {
 }
 
 ---
-./web/index.html
+./scripts/check-document-duplicates.ts
 ---
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autonomous Agent | Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-    <!-- Google Fonts for better typography -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        /* WhatsApp-like Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
-        
-        /* Chat Background Pattern */
-        .chat-bg {
-            background-color: #e5ddd5;
-            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 10h10v10H10V10z' fill='%23d1d7db' fill-opacity='0.4'/%3E%3C/svg%3E");
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function checkDocumentDuplicates() {
+  try {
+    console.log('🔍 Checking Document table for duplicates...');
+    
+    // Check for duplicate sources in Document table
+    const duplicates = await prisma.$queryRaw<Array<{source: string, count: number}>>`
+      SELECT source, COUNT(*) as count 
+      FROM "Document" 
+      GROUP BY source 
+      HAVING COUNT(*) > 1
+    `;
+    
+    console.log('📊 Document table duplicate entries found:');
+    if (duplicates.length > 0) {
+      duplicates.forEach((dup: any) => {
+        console.log(`- ${dup.source}: ${dup.count} entries`);
+      });
+    } else {
+      console.log('✅ No duplicate entries found in Document table');
+    }
+    
+    // Get total Document entries
+    const totalEntries = await prisma.document.count();
+    console.log('\n📈 Total Document entries:', totalEntries);
+    
+    // Show some sample entries to verify content
+    const sampleEntries = await prisma.document.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      select: { source: true, category: true, createdAt: true, title: true }
+    });
+    
+    console.log('\n📝 Recent Document entries:');
+    sampleEntries.forEach(entry => {
+      console.log(`- ${entry.source} [${entry.category}] - "${entry.title?.substring(0, 30)}..." - ${entry.createdAt.toISOString()}`);
+    });
+    
+    // Check for content-based duplicates by sampling content
+    console.log('\n🔍 Checking for content-based duplicates...');
+    const allDocuments = await prisma.document.findMany({
+      take: 50, // Sample first 50 to check for content duplicates
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    if (allDocuments.length > 0) {
+      // Simple content comparison for duplicates
+      const contentMap = new Map();
+      let contentDuplicates = 0;
+      
+      for (const doc of allDocuments) {
+        const contentKey = doc.content.substring(0, 100); // First 100 chars as key
+        if (contentMap.has(contentKey)) {
+          contentDuplicates++;
+          console.log(`⚠️ Potential content duplicate: ${doc.source}`);
+        } else {
+          contentMap.set(contentKey, doc);
         }
-        
-        .message-in { 
-            background: #ffffff; 
-            border-radius: 0 12px 12px 12px;
-            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
-        }
-        .message-out { 
-            background: #d9fdd3; 
-            border-radius: 12px 0 12px 12px;
-            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
-        }
+      }
+      
+      if (contentDuplicates > 0) {
+        console.log(`📊 Found ${contentDuplicates} potential content-based duplicates`);
+      } else {
+        console.log('✅ No content-based duplicates detected in sample');
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Error checking Document duplicates:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
 
-        [x-cloak] { display: none !important; }
-    </style>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        wa: {
-                            teal: '#00a884',
-                            dark: '#111b21',
-                            darker: '#202c33',
-                            panel: '#f0f2f5',
-                            accent: '#008069'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-</head>
-<body class="bg-gray-100 h-screen overflow-hidden text-gray-800">
-
-    <div x-data="dashboard()" x-init="init()" class="flex h-full" x-cloak>
-        
-        <!-- Sidebar Navigation -->
-        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 transition-all duration-300" 
-               :class="mobileMenuOpen ? 'translate-x-0 absolute h-full' : '-translate-x-full md:translate-x-0 md:relative'">
-            
-            <!-- Bot Header -->
-            <div class="p-5 border-b border-gray-100 flex items-center space-x-3 bg-wa-panel">
-                <div class="w-10 h-10 rounded-full bg-wa-teal flex items-center justify-center text-white font-bold text-lg shadow-sm">
-                    🤖
-                </div>
-                <div>
-                    <h1 class="font-bold text-gray-800 tracking-tight">Auto Agent</h1>
-                    <div class="flex items-center space-x-1.5">
-                        <span class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></span>
-                        <span class="text-xs text-gray-500 font-medium" x-text="status.agent ? 'Online' : 'Offline'"></span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Navigation Links -->
-            <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
-                <template x-for="item in navItems">
-                    <button @click="activeTab = item.id; mobileMenuOpen = false"
-                            :class="activeTab === item.id ? 'bg-green-50 text-wa-teal font-semibold' : 'text-gray-600 hover:bg-gray-50'"
-                            class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group">
-                        <span x-text="item.icon" class="text-xl group-hover:scale-110 transition-transform"></span>
-                        <span x-text="item.label"></span>
-                    </button>
-                </template>
-            </nav>
-
-            <!-- Bottom Actions -->
-            <div class="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
-                <button @click="triggerBrowsing()" class="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm">
-                    <span>🌐</span> <span>Trigger Browse</span>
-                </button>
-                <button @click="logout()" class="w-full flex items-center justify-center space-x-2 text-red-500 hover:bg-red-50 py-2 rounded-md text-sm font-medium transition-colors">
-                    <span>🚪</span> <span>Logout</span>
-                </button>
-            </div>
-        </aside>
-
-        <!-- Main Content Area -->
-        <main class="flex-1 flex flex-col min-w-0 bg-wa-panel relative">
-            
-            <!-- Mobile Header -->
-            <header class="md:hidden bg-wa-teal text-white p-4 flex items-center justify-between shadow-md">
-                <div class="flex items-center space-x-3">
-                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="focus:outline-none">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
-                    </button>
-                    <span class="font-bold" x-text="getTabTitle()"></span>
-                </div>
-                <div class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-white' : 'bg-red-400'"></div>
-            </header>
-
-            <!-- Toast Notification -->
-            <div class="absolute top-4 right-4 z-50 transform transition-all duration-300"
-                 x-show="notification.show"
-                 x-transition:enter="translate-y-[-20px] opacity-0"
-                 x-transition:enter-end="translate-y-0 opacity-100"
-                 x-transition:leave="opacity-0">
-                <div :class="notification.type === 'error' ? 'bg-red-500' : 'bg-gray-800'" class="text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-3">
-                    <span x-text="notification.type === 'success' ? '✅' : '⚠️'"></span>
-                    <span x-text="notification.message" class="font-medium text-sm"></span>
-                </div>
-            </div>
-
-            <!-- TAB: OVERVIEW -->
-            <div x-show="activeTab === 'overview'" class="p-6 overflow-y-auto h-full space-y-6">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-2xl font-bold text-gray-800">System Overview</h2>
-                    <button @click="refreshAll()" class="p-2 hover:bg-white rounded-full transition-colors" title="Refresh">
-                        🔄
-                    </button>
-                </div>
-                
-                <!-- Stats Cards -->
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Users</p>
-                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.context?.activeUsers || 0">0</h3>
-                            </div>
-                            <div class="p-2 bg-blue-50 text-blue-500 rounded-lg">👥</div>
-                        </div>
-                    </div>
-                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Learned Facts</p>
-                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.knowledge?.totalDocuments || 0">0</h3>
-                            </div>
-                            <div class="p-2 bg-purple-50 text-purple-500 rounded-lg">🧠</div>
-                        </div>
-                    </div>
-                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bot Cycles</p>
-                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.scheduler?.tickCount || 0">0</h3>
-                            </div>
-                            <div class="p-2 bg-orange-50 text-orange-500 rounded-lg">⚡</div>
-                        </div>
-                    </div>
-                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Pages Surfed</p>
-                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.browser?.totalPagesVisited || 0">0</h3>
-                            </div>
-                            <div class="p-2 bg-green-50 text-green-500 rounded-lg">🌍</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Recent Activity Feed -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                    <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                        <h3 class="font-semibold text-gray-700">Live Activity Feed</h3>
-                        <div class="flex items-center space-x-2">
-                            <span class="relative flex h-3 w-3">
-                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                              <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-                            </span>
-                            <span class="text-xs text-gray-500">Live</span>
-                        </div>
-                    </div>
-                    <div class="max-h-96 overflow-y-auto font-mono text-sm bg-gray-900 text-gray-300 p-4 space-y-2">
-                        <template x-for="log in activities.slice(-20).reverse()" :key="log.timestamp">
-                            <div class="flex space-x-3 hover:bg-gray-800 p-1 rounded">
-                                <span class="text-gray-500 whitespace-nowrap" x-text="new Date(log.timestamp).toLocaleTimeString()"></span>
-                                <span :class="{
-                                    'text-blue-400': log.type === 'ai_response',
-                                    'text-yellow-400': log.type === 'tool_call',
-                                    'text-green-400': log.type === 'search',
-                                    'text-red-400': log.type === 'error'
-                                }">
-                                    <span x-text="getLogIcon(log.type)"></span>
-                                    <span x-text="log.message"></span>
-                                </span>
-                            </div>
-                        </template>
-                        <div x-show="activities.length === 0" class="text-gray-600 italic">Waiting for system activity...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- TAB: CHAT -->
-            <div x-show="activeTab === 'chat'" class="flex flex-col h-full bg-[#efeae2]">
-                <!-- Chat Area (WhatsApp Style) -->
-                <div class="flex-1 overflow-y-auto p-4 space-y-4 chat-bg" id="chat-container">
-                    <div class="text-center text-xs text-gray-500 my-4">
-                        <span class="bg-white/60 px-2 py-1 rounded shadow-sm">🔒 Messages are end-to-end encrypted (simulated)</span>
-                    </div>
-
-                    <template x-for="msg in chatMessages" :key="msg.id">
-                        <div class="flex w-full" :class="msg.sender === 'user' ? 'justify-end' : 'justify-start'">
-                            <div class="max-w-[80%] relative p-2 shadow-sm flex flex-col"
-                                 :class="msg.sender === 'user' ? 'message-out' : 'message-in'">
-                                
-                                <!-- Sender Name (for bot) -->
-                                <template x-if="msg.sender === 'bot'">
-                                    <span class="text-xs font-bold text-orange-500 mb-1" x-text="botInfo.name"></span>
-                                </template>
-
-                                <span class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></span>
-                                
-                                <div class="flex justify-end items-center mt-1 space-x-1">
-                                    <span class="text-[10px] text-gray-500" x-text="msg.time"></span>
-                                    <template x-if="msg.sender === 'user'">
-                                        <svg class="w-3 h-3 text-blue-500" viewBox="0 0 16 15" width="16" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.283a.32.32 0 0 0 .484-.033l6.272-8.048a.366.366 0 0 0-.064-.512zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z" fill="currentColor"/></svg>
-                                    </template>
-                                </div>
-                            </div>
-                        </div>
-                    </template>
-                    
-                    <div x-show="isTyping" class="flex justify-start">
-                        <div class="message-in p-3 flex items-center space-x-1">
-                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
-                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Input Area -->
-                <div class="bg-wa-panel p-3 px-4 flex items-center space-x-2 border-t border-gray-200">
-                    <button class="text-gray-500 hover:text-gray-700 p-1">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    </button>
-                    <input type="text" x-model="chatInput" @keypress.enter="sendMessage()" 
-                           class="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
-                           placeholder="Type a message">
-                    <button @click="sendMessage()" class="p-2 bg-wa-teal text-white rounded-full hover:bg-wa-accent transition-colors shadow-sm">
-                        <svg class="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"></path></svg>
-                    </button>
-                </div>
-            </div>
-
-            <!-- TAB: MEMORY -->
-            <div x-show="activeTab === 'memory'" class="p-6 h-full flex flex-col">
-                <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-gray-800">Memory Banks</h2>
-                    <div class="bg-white rounded-lg border p-1 flex">
-                        <button @click="memoryType = 'context'; loadMemoryData()" :class="memoryType === 'context' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Context</button>
-                        <button @click="memoryType = 'knowledge'; loadMemoryData()" :class="memoryType === 'knowledge' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Knowledge</button>
-                    </div>
-                </div>
-
-                <div x-show="memoryType === 'knowledge'" class="mb-4 flex gap-2">
-                    <input type="text" x-model="searchQuery" @keypress.enter="searchKnowledge()" placeholder="Search stored knowledge..." class="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-wa-teal focus:ring-wa-teal px-4 py-2">
-                    <button @click="searchKnowledge()" class="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700">Search</button>
-                </div>
-
-                <div class="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-gray-100 p-0">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50 sticky top-0">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source/ID</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            <template x-for="item in memoryData" :key="item.id">
-                                <tr class="hover:bg-gray-50 transition-colors">
-                                    <td class="px-6 py-4 whitespace-nowrap">
-                                        <div class="text-sm font-medium text-gray-900" x-text="truncate(item.title || item.source || item.id, 20)"></div>
-                                        <div class="text-xs text-wa-teal" x-text="item.category || 'General'"></div>
-                                    </td>
-                                    <td class="px-6 py-4">
-                                        <div class="text-sm text-gray-500 max-h-20 overflow-y-auto" x-text="item.content || item.message"></div>
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
-                                        <div x-text="timeAgo(item.timestamp)"></div>
-                                    </td>
-                                </tr>
-                            </template>
-                            <tr x-show="memoryData.length === 0">
-                                <td colspan="3" class="px-6 py-10 text-center text-gray-500 italic">
-                                    No memory items found. Try a search or trigger browsing.
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-        </main>
-    </div>
-
-    <script>
-        function dashboard() {
-            return {
-                mobileMenuOpen: false,
-                activeTab: 'overview',
-                memoryType: 'context',
-                isTyping: false,
-                chatInput: '',
-                searchQuery: '',
-                notification: { show: false, message: '', type: 'success' },
-                
-                navItems: [
-                    { id: 'overview', label: 'Overview', icon: '📊' },
-                    { id: 'chat', label: 'Live Chat', icon: '💬' },
-                    { id: 'memory', label: 'Memory', icon: '🧠' },
-                    // { id: 'activity', label: 'Logs', icon: '📝' }
-                ],
-
-                botInfo: { name: 'Bot' },
-                status: {},
-                activities: [],
-                memoryData: [],
-                chatMessages: [
-                    { id: 1, sender: 'bot', text: 'Hello! I am online. Ask me to research something!', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
-                ],
-
-                async init() {
-                    // Include credentials to fix the authentication issue
-                    const fetchOptions = { credentials: 'include' };
-                    
-                    try {
-                        const botRes = await fetch('/api/bot-info', fetchOptions);
-                        if (botRes.status === 401) window.location.href = '/login.html';
-                        this.botInfo = await botRes.json();
-                        
-                        await this.refreshAll();
-                        
-                        // Auto-refresh stats every 5s
-                        setInterval(() => {
-                            if (this.activeTab === 'overview') {
-                                this.loadStatus();
-                                this.loadActivities();
-                            }
-                        }, 5000);
-                    } catch (e) {
-                        console.error("Init failed", e);
-                    }
-                },
-
-                async refreshAll() {
-                    const fetchOptions = { credentials: 'include' };
-                    await Promise.all([
-                        fetch('/api/status', fetchOptions).then(r => r.json()).then(d => this.status = d),
-                        fetch('/api/activity', fetchOptions).then(r => r.json()).then(d => this.activities = d),
-                        this.loadMemoryData()
-                    ]);
-                },
-
-                async loadStatus() {
-                    this.status = await fetch('/api/status', { credentials: 'include' }).then(r => r.json());
-                },
-                
-                async loadActivities() {
-                    this.activities = await fetch('/api/activity', { credentials: 'include' }).then(r => r.json());
-                },
-
-                async loadMemoryData() {
-                    try {
-                        const data = await fetch(`/api/memory/${this.memoryType}`, { credentials: 'include' }).then(r => r.json());
-                        this.memoryData = Array.isArray(data) ? data : [];
-                    } catch (e) { this.memoryData = []; }
-                },
-
-                async sendMessage() {
-                    if (!this.chatInput.trim()) return;
-                    
-                    const text = this.chatInput;
-                    this.chatInput = '';
-                    
-                    this.chatMessages.push({
-                        id: Date.now(),
-                        sender: 'user',
-                        text: text,
-                        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-                    });
-                    
-                    this.scrollToBottom();
-                    this.isTyping = true;
-
-                    try {
-                        const res = await fetch('/api/chat', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: text, userId: 'web-admin' }),
-                            credentials: 'include'
-                        });
-                        const data = await res.json();
-                        
-                        this.isTyping = false;
-                        this.chatMessages.push({
-                            id: Date.now(),
-                            sender: 'bot',
-                            text: data.response,
-                            time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-                        });
-                        this.scrollToBottom();
-                        this.loadActivities(); // Update logs
-                    } catch (e) {
-                        this.isTyping = false;
-                        this.showToast('Failed to send message', 'error');
-                    }
-                },
-
-                async searchKnowledge() {
-                    if (!this.searchQuery) return;
-                    try {
-                        const res = await fetch('/api/search/knowledge', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ query: this.searchQuery }),
-                            credentials: 'include'
-                        });
-                        this.memoryData = await res.json();
-                    } catch(e) { this.showToast('Search failed', 'error'); }
-                },
-
-                async triggerBrowsing() {
-                    this.showToast('Browsing initiated...', 'success');
-                    fetch('/api/browse/now', { 
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ intent: 'general' }),
-                        credentials: 'include' 
-                    });
-                },
-
-                async logout() {
-                    await fetch('/api/logout', { method: 'POST', credentials: 'include' });
-                    window.location.href = '/login.html';
-                },
-
-                scrollToBottom() {
-                    this.$nextTick(() => {
-                        const container = document.getElementById('chat-container');
-                        container.scrollTop = container.scrollHeight;
-                    });
-                },
-
-                showToast(msg, type = 'success') {
-                    this.notification = { show: true, message: msg, type };
-                    setTimeout(() => this.notification.show = false, 3000);
-                },
-
-                getTabTitle() {
-                    return this.navItems.find(i => i.id === this.activeTab)?.label || 'Dashboard';
-                },
-
-                getLogIcon(type) {
-                    const map = { 'ai_response': '🤖', 'tool_call': '🛠️', 'search': '🔍', 'error': '❌' };
-                    return map[type] || '📝';
-                },
-
-                truncate(str, n) {
-                    return (str && str.length > n) ? str.substr(0, n-1) + '...' : str;
-                },
-
-                timeAgo(dateString) {
-                    const date = new Date(dateString);
-                    const seconds = Math.floor((new Date() - date) / 1000);
-                    if (seconds < 60) return seconds + "s ago";
-                    const minutes = Math.floor(seconds / 60);
-                    if (minutes < 60) return minutes + "m ago";
-                    const hours = Math.floor(minutes / 60);
-                    if (hours < 24) return hours + "h ago";
-                    return date.toLocaleDateString();
-                }
-            }
-        }
-    </script>
-</body>
-</html>
+checkDocumentDuplicates();
 
 ---
-./web/login.html
+./scripts/check-duplicates.ts
 ---
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Autonomous WhatsApp Agent</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-    <style>
-        .gradient-bg {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function checkDuplicates() {
+  try {
+    // Check for duplicate sources
+    const duplicates = await prisma.$queryRaw`
+      SELECT source, COUNT(*) as count 
+      FROM "Knowledge" 
+      GROUP BY source 
+      HAVING COUNT(*) > 1
+    `;
+    
+    console.log('📊 Duplicate entries found:');
+    if (Array.isArray(duplicates) && duplicates.length > 0) {
+      duplicates.forEach((dup: any) => {
+        console.log(`- ${dup.source}: ${dup.count} entries`);
+      });
+    } else {
+      console.log('✅ No duplicate entries found');
+    }
+    
+    // Get total entries
+    const totalEntries = await prisma.knowledge.count();
+    console.log('\n📈 Total knowledge entries:', totalEntries);
+    
+    // Show some sample entries to verify content
+    const sampleEntries = await prisma.knowledge.findMany({
+      take: 5,
+      orderBy: { timestamp: 'desc' },
+      select: { source: true, category: true, timestamp: true }
+    });
+    
+    console.log('\n📝 Recent entries:');
+    sampleEntries.forEach(entry => {
+      console.log(`- ${entry.source} [${entry.category}] - ${entry.timestamp.toISOString()}`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Error checking duplicates:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+checkDuplicates();
+
+---
+./scripts/identify-content-duplicates.ts
+---
+import { PrismaClient } from '@prisma/client';
+import { OpenAIService, createOpenAIServiceFromEnv } from '../src/services/openaiService';
+
+const prisma = new PrismaClient();
+
+// Helper function to calculate cosine similarity
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  
+  for (let i = 0; i < vecA.length; i++) {
+    dot += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+// Helper function to convert BYTEA to Float64Array
+function bufferToFloat64Array(buffer: Buffer): Float64Array {
+  return new Float64Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 8);
+}
+
+async function identifyContentDuplicates() {
+  let openaiService: OpenAIService | null = null;
+  
+  try {
+    console.log('🔍 Starting content-based duplicate identification...');
+    
+    // Initialize OpenAI service for content comparison
+    try {
+      openaiService = createOpenAIServiceFromEnv();
+    } catch (error) {
+      console.log('⚠️ OpenAI service not available, using basic content comparison');
+    }
+    
+    // Get all knowledge entries
+    const allEntries = await prisma.knowledge.findMany({
+      orderBy: { timestamp: 'desc' }
+    });
+    
+    console.log(`📊 Total entries to analyze: ${allEntries.length}`);
+    
+    const duplicates: Array<{source: string, entries: any[], similarity: number}> = [];
+    const processed = new Set<string>();
+    
+    // Compare entries for similarity
+    for (let i = 0; i < allEntries.length; i++) {
+      const entry1 = allEntries[i];
+      
+      if (processed.has(entry1.id)) continue;
+      
+      const similarEntries = [entry1];
+      
+      for (let j = i + 1; j < allEntries.length; j++) {
+        const entry2 = allEntries[j];
+        
+        if (processed.has(entry2.id)) continue;
+        
+        // Check if entries are similar
+        let currentSimilarity = 0;
+        
+        if (openaiService) {
+          // Use vector similarity for more accurate comparison
+          try {
+            const vec1 = bufferToFloat64Array(entry1.vector);
+            const vec2 = bufferToFloat64Array(entry2.vector);
+            currentSimilarity = cosineSimilarity(Array.from(vec1), Array.from(vec2));
+          } catch (error) {
+            // Fallback to basic content comparison
+            currentSimilarity = calculateBasicSimilarity(entry1.content, entry2.content);
+          }
+        } else {
+          // Use basic content comparison
+          currentSimilarity = calculateBasicSimilarity(entry1.content, entry2.content);
         }
-        .login-card {
-            backdrop-filter: blur(10px);
-            background: rgba(255, 255, 255, 0.95);
+        
+        // Consider entries similar if similarity > 0.8
+        if (currentSimilarity > 0.8) {
+          similarEntries.push(entry2);
+          processed.add(entry2.id);
         }
-    </style>
-</head>
-<body class="gradient-bg min-h-screen flex items-center justify-center p-4">
-    <div x-data="{ password: '', isLoading: false, error: '' }" class="w-full max-w-md">
-        <div class="login-card rounded-2xl shadow-2xl p-8">
-            <!-- Header -->
-            <div class="text-center mb-8">
-                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
-                    </svg>
-                </div>
-                <h1 class="text-2xl font-bold text-gray-800 mb-2">Autonomous WhatsApp Agent</h1>
-                <p class="text-gray-600">Enter your password to access the dashboard</p>
-            </div>
-
-            <!-- Login Form -->
-            <form @submit.prevent="
-                isLoading = true;
-                error = '';
-                fetch('/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: password }),
-                    credentials: 'include' // <--- CRITICAL FIX: Ensures cookies are handled
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        // Force reload to ensure cookie is picked up by server middleware
-                        window.location.href = '/';
-                    } else {
-                        error = data.error || 'Login failed';
-                    }
-                })
-                .catch(err => {
-                    error = 'Connection error. Please try again.';
-                })
-                .finally(() => {
-                    isLoading = false;
-                })
-            ">
-                <!-- Password Input -->
-                <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Password</label>
-                    <input 
-                        x-model="password"
-                        type="password" 
-                        required
-                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200"
-                        placeholder="Enter dashboard password"
-                        :disabled="isLoading"
-                    >
-                </div>
-
-                <!-- Error Message -->
-                <div x-show="error" x-transition class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <p class="text-red-700 text-sm" x-text="error"></p>
-                </div>
-
-                <!-- Submit Button -->
-                <button 
-                    type="submit"
-                    class="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    :disabled="isLoading || !password"
-                >
-                    <span x-show="!isLoading">Login</span>
-                    <span x-show="isLoading" class="flex items-center justify-center">
-                        <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Logging in...
-                    </span>
-                </button>
-            </form>
-
-            <!-- Footer Info -->
-            <div class="mt-6 text-center text-sm text-gray-500">
-                <p>Default password: <code class="bg-gray-100 px-2 py-1 rounded">admin</code></p>
-                <p class="mt-2">Set <code class="bg-gray-100 px-2 py-1 rounded">DASHBOARD_PASSWORD</code> in .env to customize</p>
-            </div>
-        </div>
-
-        <!-- Status Indicator -->
-        <div class="mt-4 text-center">
-            <div x-data="{ status: 'checking' }" 
-                 x-init="
-                    fetch('/api/auth/status')
-                    .then(r => r.json())
-                    .then(data => status = data.authenticated ? 'authenticated' : 'not-authenticated')
-                    .catch(() => status = 'error')
-                 "
-                 class="inline-flex items-center px-3 py-1 rounded-full text-sm"
-                 :class="{
-                    'bg-green-100 text-green-800': status === 'authenticated',
-                    'bg-yellow-100 text-yellow-800': status === 'not-authenticated',
-                    'bg-red-100 text-red-800': status === 'error',
-                    'bg-gray-100 text-gray-800': status === 'checking'
-                 }">
-                <span x-show="status === 'checking'">🔍 Checking authentication...</span>
-                <span x-show="status === 'authenticated'">✅ Already authenticated</span>
-                <span x-show="status === 'not-authenticated'">🔐 Login required</span>
-                <span x-show="status === 'error'">❌ Connection error</span>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // Auto-focus password input on page load
-        document.addEventListener('alpine:init', () => {
-            setTimeout(() => {
-                const input = document.querySelector('input[type="password"]');
-                if (input) input.focus();
-            }, 100);
+      }
+      
+      if (similarEntries.length > 1) {
+        // Calculate average similarity for the group
+        let avgSimilarity = 0;
+        if (similarEntries.length > 1) {
+          // For simplicity, use the first comparison as representative
+          avgSimilarity = 0.85; // Placeholder value
+        }
+        
+        duplicates.push({
+          source: entry1.source || 'unknown',
+          entries: similarEntries,
+          similarity: avgSimilarity
         });
-    </script>
-</body>
-</html>
+      }
+      
+      processed.add(entry1.id);
+    }
+    
+    console.log(`\n📊 Content-based duplicates found: ${duplicates.length}`);
+    
+    if (duplicates.length > 0) {
+      console.log('\n🔍 Duplicate groups:');
+      duplicates.forEach((group, index) => {
+        console.log(`\nGroup ${index + 1}: ${group.source}`);
+        console.log(`  Entries: ${group.entries.length}`);
+        console.log(`  Similarity: ${group.similarity.toFixed(3)}`);
+        
+        group.entries.forEach((entry, idx) => {
+          console.log(`  ${idx + 1}. ${entry.timestamp.toISOString()} - ${entry.content.substring(0, 50)}...`);
+        });
+      });
+    } else {
+      console.log('✅ No content-based duplicates found');
+    }
+    
+    // Show summary by source
+    console.log('\n📈 Summary by source:');
+    const sourceCounts = allEntries.reduce((acc, entry) => {
+      const sourceKey = entry.source || 'unknown';
+      acc[sourceKey] = (acc[sourceKey] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    Object.entries(sourceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([source, count]) => {
+        console.log(`- ${source || 'unknown'}: ${count} entries`);
+      });
+    
+  } catch (error) {
+    console.error('❌ Error identifying duplicates:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+// Basic similarity calculation using Jaccard similarity on words
+function calculateBasicSimilarity(text1: string, text2: string): number {
+  const words1 = new Set(text1.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  const words2 = new Set(text2.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)));
+  const union = new Set([...words1, ...words2]);
+  
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+identifyContentDuplicates();
+
+---
+./scripts/remove-content-duplicates.ts
+---
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+// Helper function to calculate basic content similarity
+function calculateBasicSimilarity(text1: string, text2: string): number {
+  const words1 = new Set(text1.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  const words2 = new Set(text2.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)));
+  const union = new Set([...words1, ...words2]);
+  
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+async function removeContentDuplicates() {
+  try {
+    console.log('🧹 Starting content-based duplicate removal...');
+    
+    // Get all knowledge entries ordered by timestamp (newest first)
+    const allEntries = await prisma.knowledge.findMany({
+      orderBy: { timestamp: 'desc' }
+    });
+    
+    console.log(`📊 Total entries to analyze: ${allEntries.length}`);
+    
+    const entriesToDelete: string[] = []; // IDs of entries to delete
+    const processed = new Set<string>();
+    
+    // Identify content-based duplicates
+    for (let i = 0; i < allEntries.length; i++) {
+      const entry1 = allEntries[i];
+      
+      if (processed.has(entry1.id)) continue;
+      
+      // Skip if this entry is already marked for deletion
+      if (entriesToDelete.includes(entry1.id)) continue;
+      
+      for (let j = i + 1; j < allEntries.length; j++) {
+        const entry2 = allEntries[j];
+        
+        if (processed.has(entry2.id)) continue;
+        if (entriesToDelete.includes(entry2.id)) continue;
+        
+        // Check if entries have similar content
+        const similarity = calculateBasicSimilarity(entry1.content, entry2.content);
+        
+        // Consider entries duplicates if similarity > 0.7
+        if (similarity > 0.7) {
+          console.log(`🔍 Found similar entries: ${entry1.source} (similarity: ${similarity.toFixed(3)})`);
+          console.log(`   Keeping: ${entry1.timestamp.toISOString()}`);
+          console.log(`   Deleting: ${entry2.timestamp.toISOString()}`);
+          
+          // Mark the older entry for deletion
+          entriesToDelete.push(entry2.id);
+          processed.add(entry2.id);
+        }
+      }
+      
+      processed.add(entry1.id);
+    }
+    
+    console.log(`\n🗑️  Entries to remove: ${entriesToDelete.length}`);
+    
+    if (entriesToDelete.length === 0) {
+      console.log('✅ No content-based duplicates found to remove');
+      return;
+    }
+    
+    // Remove the duplicate entries
+    let removedCount = 0;
+    for (const entryId of entriesToDelete) {
+      try {
+        await prisma.knowledge.delete({
+          where: { id: entryId }
+        });
+        removedCount++;
+        console.log(`✅ Removed duplicate entry: ${entryId}`);
+      } catch (error) {
+        console.error(`❌ Failed to remove entry ${entryId}:`, error);
+      }
+    }
+    
+    console.log(`\n🎉 Duplicate removal completed!`);
+    console.log(`📊 Total entries removed: ${removedCount}`);
+    
+    // Verify the cleanup
+    const finalCount = await prisma.knowledge.count();
+    console.log(`📈 Final knowledge entries count: ${finalCount}`);
+    
+    // Show remaining entries by source
+    const remainingEntries = await prisma.knowledge.findMany({
+      orderBy: { timestamp: 'desc' },
+      take: 10
+    });
+    
+    console.log('\n📝 Recent remaining entries:');
+    remainingEntries.forEach(entry => {
+      console.log(`- ${entry.source || 'unknown'} - ${entry.timestamp.toISOString()}`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Error removing duplicates:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+removeContentDuplicates();
+
+---
+./scripts/remove-document-duplicates.ts
+---
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+// Helper function to calculate basic content similarity
+function calculateBasicSimilarity(text1: string, text2: string): number {
+  const words1 = new Set(text1.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  const words2 = new Set(text2.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)));
+  const union = new Set([...words1, ...words2]);
+  
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+async function removeDocumentDuplicates() {
+  try {
+    console.log('🧹 Starting Document table duplicate removal...');
+    
+    // Get all Document entries ordered by creation date (newest first)
+    const allDocuments = await prisma.document.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    console.log(`📊 Total Document entries to analyze: ${allDocuments.length}`);
+    
+    const entriesToDelete: string[] = []; // IDs of entries to delete
+    const processed = new Set<string>();
+    
+    // Identify content-based duplicates
+    for (let i = 0; i < allDocuments.length; i++) {
+      const doc1 = allDocuments[i];
+      
+      if (processed.has(doc1.id)) continue;
+      
+      // Skip if this entry is already marked for deletion
+      if (entriesToDelete.includes(doc1.id)) continue;
+      
+      for (let j = i + 1; j < allDocuments.length; j++) {
+        const doc2 = allDocuments[j];
+        
+        if (processed.has(doc2.id)) continue;
+        if (entriesToDelete.includes(doc2.id)) continue;
+        
+        // Check if documents have similar content
+        const similarity = calculateBasicSimilarity(doc1.content, doc2.content);
+        
+        // Consider documents duplicates if similarity > 0.8
+        if (similarity > 0.8) {
+          console.log(`🔍 Found similar documents: ${doc1.source} (similarity: ${similarity.toFixed(3)})`);
+          console.log(`   Keeping: ${doc1.createdAt.toISOString()} - "${doc1.title?.substring(0, 40)}..."`);
+          console.log(`   Deleting: ${doc2.createdAt.toISOString()} - "${doc2.title?.substring(0, 40)}..."`);
+          
+          // Mark the older entry for deletion
+          entriesToDelete.push(doc2.id);
+          processed.add(doc2.id);
+        }
+      }
+      
+      processed.add(doc1.id);
+    }
+    
+    console.log(`\n🗑️  Document entries to remove: ${entriesToDelete.length}`);
+    
+    if (entriesToDelete.length === 0) {
+      console.log('✅ No Document duplicates found to remove');
+      return;
+    }
+    
+    // Remove the duplicate entries
+    let removedCount = 0;
+    for (const docId of entriesToDelete) {
+      try {
+        await prisma.document.delete({
+          where: { id: docId }
+        });
+        removedCount++;
+        if (removedCount % 50 === 0) {
+          console.log(`✅ Removed ${removedCount} duplicate entries...`);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to remove document ${docId}:`, error);
+      }
+    }
+    
+    console.log(`\n🎉 Document duplicate removal completed!`);
+    console.log(`📊 Total Document entries removed: ${removedCount}`);
+    
+    // Verify the cleanup
+    const finalCount = await prisma.document.count();
+    console.log(`📈 Final Document entries count: ${finalCount}`);
+    
+    // Show remaining entries by source
+    const remainingEntries = await prisma.document.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    });
+    
+    console.log('\n📝 Recent remaining Document entries:');
+    remainingEntries.forEach(doc => {
+      console.log(`- ${doc.source} [${doc.category}] - "${doc.title?.substring(0, 30)}..." - ${doc.createdAt.toISOString()}`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Error removing Document duplicates:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+removeDocumentDuplicates();
+
+---
+./scripts/remove-duplicates.ts
+---
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function removeDuplicates() {
+  try {
+    console.log('🧹 Starting duplicate removal process...');
+    
+    // First, get all duplicate sources
+    const duplicates = await prisma.$queryRaw<Array<{source: string, count: number}>>`
+      SELECT source, COUNT(*) as count
+      FROM "Knowledge"
+      GROUP BY source
+      HAVING COUNT(*) > 1
+    `;
+    
+    if (duplicates.length === 0) {
+      console.log('✅ No duplicates found to remove');
+      return;
+    }
+    
+    console.log(`📊 Found ${duplicates.length} sources with duplicates`);
+    
+    let totalRemoved = 0;
+    
+    // Process each duplicate source
+    for (const dup of duplicates) {
+      console.log(`\n🔧 Processing: ${dup.source} (${dup.count} entries)`);
+      
+      // Get all entries for this source, ordered by timestamp (newest first)
+      const entries = await prisma.knowledge.findMany({
+        where: { source: dup.source },
+        orderBy: { timestamp: 'desc' }
+      });
+      
+      if (entries.length <= 1) continue;
+      
+      // Keep the most recent entry, delete the rest
+      const entriesToDelete = entries.slice(1); // All except the first (most recent)
+      
+      console.log(`🗑️  Removing ${entriesToDelete.length} duplicate entries`);
+      
+      // Delete the duplicate entries
+      for (const entry of entriesToDelete) {
+        await prisma.knowledge.delete({
+          where: { id: entry.id }
+        });
+        totalRemoved++;
+      }
+      
+      console.log(`✅ Kept most recent entry from ${dup.source}`);
+    }
+    
+    console.log(`\n🎉 Duplicate removal completed!`);
+    console.log(`📊 Total entries removed: ${totalRemoved}`);
+    
+    // Verify the cleanup
+    const remainingDuplicates = await prisma.$queryRaw<Array<{source: string, count: number}>>`
+      SELECT source, COUNT(*) as count
+      FROM "Knowledge"
+      GROUP BY source
+      HAVING COUNT(*) > 1
+    `;
+    
+    if (remainingDuplicates.length === 0) {
+      console.log('✅ All duplicates successfully removed');
+    } else {
+      console.log('⚠️ Some duplicates may remain:', remainingDuplicates);
+    }
+    
+    const finalCount = await prisma.knowledge.count();
+    console.log(`📈 Final knowledge entries count: ${finalCount}`);
+    
+  } catch (error) {
+    console.error('❌ Error removing duplicates:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+removeDuplicates();
 
 ---

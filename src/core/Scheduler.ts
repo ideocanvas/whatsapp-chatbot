@@ -64,6 +64,16 @@ export class Scheduler {
   }
 
   /**
+   * Interrupt current background tasks (Browsing)
+   */
+  interrupt(): void {
+    if (this.isRunning) {
+      console.log('🚦 Scheduler interrupting background tasks...');
+      this.browser.stopBrowsing();
+    }
+  }
+
+  /**
    * Main tick function - decides between idle browsing and proactive messaging
    */
   private async tick(): Promise<void> {
