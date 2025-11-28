@@ -33,6 +33,15 @@ fi
 mkdir -p data/conversations
 chmod 755 data data/conversations
 
+# Generate Prisma client if not already generated
+echo "Checking Prisma client..."
+if [ ! -d "node_modules/.prisma" ] || [ ! -f "node_modules/.prisma/client/index.js" ]; then
+    echo "Prisma client not found, generating..."
+    npx prisma generate
+else
+    echo "Prisma client already generated"
+fi
+
 # Install Playwright browsers if not already installed
 echo "Checking Playwright browser installation..."
 if [ ! -d "node_modules/playwright/.local-browsers" ]; then
