@@ -37,11 +37,13 @@
                 fetch('/api/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: password })
+                    body: JSON.stringify({ password: password }),
+                    credentials: 'include' // <--- CRITICAL FIX: Ensures cookies are handled
                 })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
+                        // Force reload to ensure cookie is picked up by server middleware
                         window.location.href = '/';
                     } else {
                         error = data.error || 'Login failed';

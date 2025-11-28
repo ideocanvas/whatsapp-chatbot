@@ -44,12 +44,14 @@ export class DashboardRoutes {
       const { password } = req.body;
       
       if (password === this.dashboardPassword) {
-        // Set authentication cookie (valid for 24 hours)
+        // FIX: Relaxed cookie settings for reliable local/prod development
         res.cookie('dashboardAuth', this.dashboardPassword, {
           httpOnly: true,
           maxAge: 24 * 60 * 60 * 1000, // 24 hours
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'strict'
+          path: '/',
+          // Only set Secure if actually in production and on HTTPS
+          secure: process.env.NODE_ENV === 'production' && req.secure,
+          sameSite: 'lax' // 'strict' can block cookies on some redirects
         });
         
         this.logActivity('User logged in to dashboard');
@@ -363,10 +365,44 @@ export class DashboardRoutes {
       }
     });
 
-    // Serve static files from web directory (login.html should be accessible without auth)
+    // FIX: Improved Middleware to protect HTML files AND the root path
+    this.router.use((req: Request, res: Response, next: Function) => {
+      const path = req.path;
+      
+      // Always allow login page, static assets (css/js/images), and specific public API endpoints
+      if (
+        path === '/login.html' ||
+        path === '/api/login' ||
+        path === '/api/auth/status' ||
+        path === '/health' ||
+        path === '/api' ||
+        path.match(/\.(js|css|png|jpg|ico|json)$/)
+      ) {
+        return next();
+      }
+      
+      // Check authentication
+      if (this.isAuthenticated(req)) {
+        return next();
+      }
+      
+      // If accessing root or html files without auth, redirect to login
+      if (path === '/' || path.endsWith('.html')) {
+        return res.redirect('/login.html');
+      }
+
+      // For protected API endpoints, return 401 instead of redirect
+      if (path.startsWith('/api/')) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      next();
+    });
+
+    // Serve static files from web directory
     this.router.use(express.static('web'));
 
-    // Serve the web interface - protect index.html with authentication
+    // Serve the web interface
     this.router.get('/', (req: Request, res: Response) => {
       // Redirect to login if not authenticated
       if (!this.isAuthenticated(req)) {
@@ -382,15 +418,6 @@ export class DashboardRoutes {
         return res.redirect('/');
       }
       res.redirect('/login.html');
-    });
-
-    // Protect direct access to index.html
-    this.router.get('/index.html', (req: Request, res: Response) => {
-      // Redirect to login if not authenticated
-      if (!this.isAuthenticated(req)) {
-        return res.redirect('/login.html');
-      }
-      res.sendFile('web/index.html', { root: process.cwd() });
     });
   }
 

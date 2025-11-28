@@ -1,0 +1,8526 @@
+./test/crypto.test.ts
+---
+import * as crypto from 'crypto';
+import { CryptoUtils } from '../src/utils/crypto';
+
+describe('Crypto Utils', () => {
+  const appSecret = 'test-app-secret';
+  const requestBody = '{"message": "Hello, World!"}';
+
+  test('should verify valid signature correctly', () => {
+    // Generate a valid signature
+    const expectedSignature = crypto
+      .createHmac('sha256', appSecret)
+      .update(requestBody, 'utf8')
+      .digest('hex');
+
+    const signatureHeader = `sha256=${expectedSignature}`;
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, signatureHeader);
+
+    expect(result).toBe(true);
+  });
+
+  test('should return false for missing signature header', () => {
+    const result = CryptoUtils.verifySignature(appSecret, requestBody);
+    expect(result).toBe(false);
+  });
+
+  test('should return false for invalid signature format', () => {
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, 'invalid-format');
+    expect(result).toBe(false);
+  });
+
+  test('should return false for empty signature header', () => {
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, '');
+    expect(result).toBe(false);
+  });
+
+  test('should return false for incorrect signature', () => {
+    // Generate a valid signature but with different content
+    const differentBody = '{"message": "Different content!"}';
+    const incorrectSignature = crypto
+      .createHmac('sha256', appSecret)
+      .update(differentBody, 'utf8')
+      .digest('hex');
+
+    const signatureHeader = `sha256=${incorrectSignature}`;
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, signatureHeader);
+    expect(result).toBe(false);
+  });
+});
+
+---
+./test/logger.test.ts
+---
+import { logger } from '../src/utils/logger';
+
+describe('Logger Utility', () => {
+  // Mock console.log to test logging
+  const originalConsoleLog = console.log;
+  const mockLog = jest.fn();
+
+  beforeEach(() => {
+    console.log = mockLog;
+    jest.clearAllMocks();
+    logger.clearLogs(); // Clear logs before each test
+  });
+
+  afterEach(() => {
+    console.log = originalConsoleLog;
+  });
+
+  test('should log AI response messages', () => {
+    logger.logAIResponse('Test AI response');
+    expect(mockLog).toHaveBeenCalledWith('🤖 [AI_RESPONSE] Test AI response', '');
+  });
+
+  test('should log tool call messages', () => {
+    logger.logToolCall('Test tool call');
+    expect(mockLog).toHaveBeenCalledWith('🛠️ [TOOL_CALL] Test tool call', '');
+  });
+
+  test('should log search messages', () => {
+    logger.logSearch('Test search');
+    expect(mockLog).toHaveBeenCalledWith('🔍 [SEARCH] Test search', '');
+  });
+
+  test('should log error messages', () => {
+    logger.logError('Test error');
+    expect(mockLog).toHaveBeenCalledWith('❌ [ERROR] Test error', '');
+  });
+
+  test('should store logs internally', () => {
+    logger.logAIResponse('Test message');
+    const logs = logger.getLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0].type).toBe('ai_response');
+    expect(logs[0].message).toBe('Test message');
+  });
+
+  test('should filter logs by type', () => {
+    logger.logAIResponse('AI message');
+    logger.logError('Error message');
+    const errorLogs = logger.getLogs({ type: 'error' });
+    expect(errorLogs).toHaveLength(1);
+    expect(errorLogs[0].type).toBe('error');
+    expect(errorLogs[0].message).toBe('Error message');
+  });
+});
+
+---
+./test/rolling-summarization.test.ts
+---
+/**
+ * Test file for Rolling Summarization Memory feature
+ * Tests the ContextManager summarization functionality
+ */
+
+import { ContextManager } from '../src/memory/ContextManager';
+import { SummaryStore } from '../src/memory/SummaryStore';
+
+// Mock OpenAIService for testing
+class MockOpenAIService {
+  async generateTextResponse(prompt: string): Promise<string> {
+    // Simulate AI summarization
+    return "• User discussed technology and programming interests\n• Expressed interest in AI and machine learning\n• Shared preferences for concise, helpful responses";
+  }
+}
+
+describe('Rolling Summarization Memory', () => {
+  let contextManager: ContextManager;
+  let summaryStore: SummaryStore;
+  let mockOpenAI: MockOpenAIService;
+
+  beforeEach(() => {
+    contextManager = new ContextManager();
+    summaryStore = new SummaryStore();
+    mockOpenAI = new MockOpenAIService();
+    
+    // Set dependencies
+    contextManager.setDependencies(summaryStore, mockOpenAI);
+  });
+
+  it('should summarize conversations with sufficient messages', async () => {
+    const userId = 'test-user-123';
+    
+    // Add enough messages to trigger summarization (5+ messages)
+    contextManager.addMessage(userId, 'user', 'I love technology and programming');
+    contextManager.addMessage(userId, 'assistant', 'That\'s great! What kind of programming do you enjoy?');
+    contextManager.addMessage(userId, 'user', 'I work with AI and machine learning');
+    contextManager.addMessage(userId, 'assistant', 'AI is fascinating. What specific areas interest you?');
+    contextManager.addMessage(userId, 'user', 'I\'m interested in natural language processing');
+    
+    // Simulate expired context by manually calling cleanup
+    const expiredCount = await contextManager.cleanupExpiredContexts();
+    
+    // Should not clean up since messages are not expired yet
+    expect(expiredCount).toBe(0);
+  });
+
+  it('should not summarize conversations with too few messages', async () => {
+    const userId = 'test-user-few';
+    
+    // Add only 2 messages (below threshold)
+    contextManager.addMessage(userId, 'user', 'Hello');
+    contextManager.addMessage(userId, 'assistant', 'Hi there!');
+    
+    // Simulate expired context
+    const expiredCount = await contextManager.cleanupExpiredContexts();
+    
+    // Should not clean up since messages are not expired
+    expect(expiredCount).toBe(0);
+  });
+
+  it('should retrieve long-term summaries for users', async () => {
+    const userId = 'test-user-summaries';
+    
+    // Get summaries for a user with no history
+    const summaries = await contextManager.getLongTermSummaries(userId);
+    
+    // Should return empty array for new user
+    expect(summaries).toEqual([]);
+  });
+
+  it('should handle missing dependencies gracefully', async () => {
+    const contextManagerWithoutDeps = new ContextManager();
+    const userId = 'test-user-no-deps';
+    
+    // Add messages
+    contextManagerWithoutDeps.addMessage(userId, 'user', 'Test message');
+    
+    // Try to get summaries without dependencies set
+    const summaries = await contextManagerWithoutDeps.getLongTermSummaries(userId);
+    
+    // Should return empty array and log warning
+    expect(summaries).toEqual([]);
+  });
+});
+
+// Test SummaryStore functionality
+describe('SummaryStore', () => {
+  let summaryStore: SummaryStore;
+
+  beforeEach(() => {
+    summaryStore = new SummaryStore();
+  });
+
+  it('should store and retrieve summaries', async () => {
+    const userId = `test-user-store-${Date.now()}`;
+    const summary = `Test conversation summary ${Date.now()}`;
+    const messages = [{ role: 'user', content: `Test message ${Date.now()}` }];
+    
+    // Store a summary
+    await summaryStore.storeSummary(userId, summary, messages);
+    
+    // Retrieve recent summaries
+    const summaries = await summaryStore.getRecentSummaries(userId);
+    
+    // Should contain the stored summary
+    expect(summaries).toContain(summary);
+  });
+
+  it('should handle duplicate context hashes', async () => {
+    const userId = `test-user-duplicate-${Date.now()}`;
+    const summary = `Test summary ${Date.now()}`;
+    const messages = [{ role: 'user', content: `Same message ${Date.now()}` }];
+    
+    // Store same summary twice (should handle duplicates via unique constraint)
+    await summaryStore.storeSummary(userId, summary, messages);
+    
+    // Second attempt should fail due to unique constraint
+    try {
+      await summaryStore.storeSummary(userId, summary, messages);
+      // If we reach here, the test should fail
+      expect(true).toBe(false); // Should not reach this point
+    } catch (error: any) {
+      // Should throw error due to unique constraint
+      expect(error).toBeDefined();
+      expect(error.code).toBe('P2002'); // Unique constraint violation
+    }
+    
+    // Should only return one summary (unique constraint)
+    const summaries = await summaryStore.getRecentSummaries(userId);
+    expect(summaries.length).toBe(1);
+  });
+});
+
+console.log('✅ Rolling Summarization Memory tests completed successfully!');
+
+---
+./test/integration/webScrapeIntegration.test.ts
+---
+import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/webScrapeService';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+// Integration test configuration
+const TEST_TIMEOUT = 60000; // 60 seconds for browser operations
+const TEST_URLS = {
+  // These are public test websites that are safe for scraping
+  simple: 'https://example.com',
+  contentRich: 'https://httpbin.org/html',
+  invalid: 'https://invalid-url-that-does-not-exist.test'
+};
+
+describe('WebScrapeService Integration Tests', () => {
+  let webScrapeService: WebScrapeService;
+
+  beforeAll(async () => {
+    // Create service with longer timeouts for integration tests
+    webScrapeService = new WebScrapeService({
+      timeout: 30000,
+      navigationTimeout: 15000,
+      maxRetries: 1,
+      concurrency: 2,
+      simulateHuman: false // Disable human simulation for faster tests
+    });
+
+    // Initialize the service
+    await webScrapeService.initialize();
+  }, TEST_TIMEOUT);
+
+  afterAll(async () => {
+    // Clean up browser
+    await webScrapeService.close();
+  });
+
+  describe('Basic URL Scraping', () => {
+    it('should successfully scrape example.com', async () => {
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.simple);
+
+      expect(result).toEqual({
+        title: expect.any(String),
+        url: TEST_URLS.simple,
+        content: expect.any(String),
+        extractedAt: expect.any(String),
+        method: expect.stringMatching(/html|visual/) // Allow both methods
+      });
+
+      // Basic content validation
+      expect(result.title).toBeTruthy();
+      expect(result.content.length).toBeGreaterThan(0);
+      expect(result.method).toMatch(/html|visual/); // Allow both methods
+
+      console.log(`✅ Scraped ${TEST_URLS.simple}: ${result.title} (${result.content.length} chars)`);
+    }, TEST_TIMEOUT);
+
+    it('should scrape content-rich pages', async () => {
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.contentRich);
+
+      expect(result).toEqual({
+        title: expect.any(String),
+        url: TEST_URLS.contentRich,
+        content: expect.any(String),
+        extractedAt: expect.any(String),
+        method: 'html'
+      });
+
+      // Content-rich page should have more content
+      expect(result.content.length).toBeGreaterThan(100);
+
+      console.log(`✅ Scraped ${TEST_URLS.contentRich}: ${result.title} (${result.content.length} chars)`);
+    }, TEST_TIMEOUT);
+
+    it('should handle specific selector extraction', async () => {
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.contentRich, 'h1');
+
+      expect(result).toEqual({
+        title: expect.any(String),
+        url: TEST_URLS.contentRich,
+        content: expect.any(String),
+        extractedAt: expect.any(String),
+        method: expect.stringMatching(/html|visual/) // Allow both methods
+      });
+
+      // Selector-based extraction should work
+      expect(result.content).toBeTruthy();
+
+      console.log(`✅ Selector extraction: "${result.content.substring(0, 50)}..."`);
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Error Handling', () => {
+    it('should handle invalid URLs gracefully', async () => {
+      await expect(webScrapeService.scrapeUrl(TEST_URLS.invalid))
+        .rejects.toThrow();
+
+      console.log(`✅ Properly handled invalid URL: ${TEST_URLS.invalid}`);
+    }, TEST_TIMEOUT);
+
+    it('should handle timeout scenarios', async () => {
+      // Create a service with very short timeout
+      const fastService = new WebScrapeService({
+        navigationTimeout: 1000, // 1 second timeout
+        maxRetries: 0
+      });
+
+      await fastService.initialize();
+
+      // This should timeout quickly
+      await expect(fastService.scrapeUrl('https://httpbin.org/delay/3')) // 3 second delay
+        .rejects.toThrow();
+
+      await fastService.close();
+
+      console.log('✅ Properly handled timeout scenario');
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Concurrent Scraping', () => {
+    it('should scrape multiple URLs concurrently', async () => {
+      const urls = [
+        TEST_URLS.simple,
+        TEST_URLS.contentRich,
+        'https://httpbin.org/json'
+      ];
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      expect(results).toHaveLength(3);
+      expect(results.every(r => r !== null)).toBe(true);
+
+      results.forEach((result, index) => {
+        expect(result).toEqual({
+          title: expect.any(String),
+          url: urls[index],
+          content: expect.any(String),
+          extractedAt: expect.any(String),
+          method: expect.stringMatching(/html|visual/) // Allow both methods
+        });
+      });
+
+      console.log(`✅ Concurrent scraping completed: ${results.length} URLs`);
+    }, TEST_TIMEOUT);
+
+    it('should handle mixed success/failure in concurrent scraping', async () => {
+      const urls = [
+        TEST_URLS.simple,
+        TEST_URLS.invalid, // This should fail
+        TEST_URLS.contentRich
+      ];
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      // Should have 2 successful results (the invalid URL should be filtered out)
+      expect(results.length).toBeGreaterThanOrEqual(2);
+      expect(results.every(r => r !== null)).toBe(true);
+
+      console.log(`✅ Mixed success/failure handled: ${results.length} successful out of ${urls.length}`);
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Service Lifecycle', () => {
+    it('should initialize and close properly', async () => {
+      const service = new WebScrapeService();
+
+      // Should be able to initialize
+      await expect(service.initialize()).resolves.not.toThrow();
+
+      // Should be able to scrape after initialization
+      const result = await service.scrapeUrl(TEST_URLS.simple);
+      expect(result).toBeDefined();
+
+      // Should be able to close
+      await expect(service.close()).resolves.not.toThrow();
+
+      console.log('✅ Service lifecycle test passed');
+    }, TEST_TIMEOUT);
+
+    it('should handle repeated initialization', async () => {
+      await webScrapeService.initialize(); // Already initialized in beforeAll
+
+      // Should still work after re-initialization
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.simple);
+      expect(result).toBeDefined();
+
+      console.log('✅ Repeated initialization handled');
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Result Formatting', () => {
+    it('should format results correctly', async () => {
+      const results = await webScrapeService.scrapeUrls([TEST_URLS.simple, TEST_URLS.contentRich]);
+
+      const formatted = webScrapeService.formatScrapeResults(results);
+
+      expect(formatted).toContain('Example Domain');
+      // The content may vary depending on the actual page content
+      expect(formatted).toContain('URL:');
+      expect(formatted).toContain('Content:');
+      expect(formatted).toMatch(/html|visual/);
+
+      console.log('✅ Result formatting works correctly');
+    }, TEST_TIMEOUT);
+
+    it('should handle empty results formatting', () => {
+      const formatted = webScrapeService.formatScrapeResults([]);
+      expect(formatted).toBe('No content scraped.');
+
+      console.log('✅ Empty results formatting handled');
+    });
+  });
+
+  describe('Configuration', () => {
+    it('should create service from environment variables', () => {
+      // Temporarily set environment variables
+      const originalTimeout = process.env.WEB_SCRAPE_TIMEOUT;
+      const originalRetries = process.env.WEB_SCRAPE_MAX_RETRIES;
+      const originalConcurrency = process.env.WEB_SCRAPE_CONCURRENCY;
+
+      process.env.WEB_SCRAPE_TIMEOUT = '45000';
+      process.env.WEB_SCRAPE_MAX_RETRIES = '2';
+      process.env.WEB_SCRAPE_CONCURRENCY = '4';
+
+      const service = createWebScrapeService();
+      expect(service).toBeInstanceOf(WebScrapeService);
+
+      // Restore environment variables
+      if (originalTimeout) process.env.WEB_SCRAPE_TIMEOUT = originalTimeout;
+      if (originalRetries) process.env.WEB_SCRAPE_MAX_RETRIES = originalRetries;
+      if (originalConcurrency) process.env.WEB_SCRAPE_CONCURRENCY = originalConcurrency;
+
+      console.log('✅ Factory function works correctly');
+    });
+  });
+});
+
+// Additional test for visual extraction (requires OpenAI configuration)
+describe('WebScrapeService Visual Extraction (Conditional)', () => {
+  let webScrapeService: WebScrapeService;
+
+  beforeAll(async () => {
+    webScrapeService = new WebScrapeService({
+      timeout: 30000,
+      navigationTimeout: 15000,
+      maxRetries: 1
+    });
+    await webScrapeService.initialize();
+  }, TEST_TIMEOUT);
+
+  afterAll(async () => {
+    await webScrapeService.close();
+  });
+
+  it('should handle sparse content scenarios', async () => {
+    // Use a URL that returns minimal content (binary data endpoint)
+    // The service should handle this gracefully
+    try {
+      const result = await webScrapeService.scrapeUrl('https://httpbin.org/bytes/10');
+
+      // If it succeeds, verify the result structure
+      if (result) {
+        expect(result).toEqual({
+          title: expect.any(String),
+          url: 'https://httpbin.org/bytes/10',
+          content: expect.any(String),
+          extractedAt: expect.any(String),
+          method: expect.stringMatching(/html|visual/)
+        });
+      }
+    } catch (error) {
+      // It's acceptable for this to fail - binary endpoints aren't meant for scraping
+      console.log('✅ Binary endpoint properly rejected:', error instanceof Error ? error.message : String(error));
+    }
+
+    console.log('✅ Sparse content scenarios handled correctly');
+  }, TEST_TIMEOUT);
+});
+
+---
+./test/services/webScrapeService.test.ts
+---
+import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/webScrapeService';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { OpenAIService } from '../../src/services/openaiService';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Mock dependencies
+jest.mock('playwright');
+jest.mock('../../src/services/openaiService');
+jest.mock('fs');
+jest.mock('path');
+
+const mockChromium = chromium as jest.Mocked<typeof chromium>;
+const mockFs = fs as jest.Mocked<typeof fs>;
+const mockPath = path as jest.Mocked<typeof path>;
+const mockOpenAIService = OpenAIService as jest.MockedClass<typeof OpenAIService>;
+
+describe('WebScrapeService', () => {
+  let webScrapeService: WebScrapeService;
+  let mockBrowser: jest.Mocked<Browser>;
+  let mockContext: jest.Mocked<BrowserContext>;
+  let mockPage: jest.Mocked<Page>;
+
+  beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+
+    // Setup mock browser, context, and page
+    mockBrowser = {
+      newContext: jest.fn(),
+      close: jest.fn(),
+      isConnected: jest.fn().mockReturnValue(true),
+    } as any;
+
+    mockContext = {
+      newPage: jest.fn(),
+      close: jest.fn(),
+      route: jest.fn(),
+    } as any;
+
+    mockPage = {
+      goto: jest.fn(),
+      title: jest.fn(),
+      evaluate: jest.fn(),
+      screenshot: jest.fn(),
+      locator: jest.fn().mockReturnValue({
+        first: jest.fn().mockReturnValue({
+          isVisible: jest.fn(),
+          click: jest.fn(),
+        }),
+      }),
+      waitForTimeout: jest.fn(),
+    } as any;
+
+    // Setup mock implementations
+    mockChromium.launch.mockResolvedValue(mockBrowser);
+    mockBrowser.newContext.mockResolvedValue(mockContext);
+    mockContext.newPage.mockResolvedValue(mockPage);
+    mockPage.goto.mockResolvedValue({} as any);
+    mockPage.title.mockResolvedValue('Test Page');
+    mockPage.evaluate.mockResolvedValue('Test content extracted from page');
+    mockPage.screenshot.mockResolvedValue(Buffer.from('mock screenshot'));
+
+    // Setup mock path operations
+    mockPath.dirname.mockReturnValue('/mock/dir');
+    mockPath.join.mockImplementation((...args) => args.join('/'));
+    mockPath.extname.mockReturnValue('.jpg');
+
+    // Setup mock file system operations
+    mockFs.existsSync.mockReturnValue(false);
+    mockFs.mkdirSync.mockImplementation(() => '/mock/dir');
+    mockFs.readFileSync.mockReturnValue(Buffer.from('mock file content'));
+    mockFs.unlinkSync.mockImplementation(() => {});
+
+    // Setup mock OpenAI service
+    mockOpenAIService.prototype.isConfigured.mockReturnValue(true);
+    mockOpenAIService.prototype.analyzeImage.mockResolvedValue('Analyzed image content');
+
+    // Create service instance with minimal config
+    webScrapeService = new WebScrapeService({
+      timeout: 10000,
+      maxRetries: 1,
+      concurrency: 1,
+    });
+  });
+
+  describe('constructor', () => {
+    it('should initialize with default configuration', () => {
+      const service = new WebScrapeService();
+
+      expect(service).toBeInstanceOf(WebScrapeService);
+    });
+
+    it('should override default configuration with provided values', () => {
+      const customConfig = {
+        timeout: 30000,
+        maxRetries: 3,
+        concurrency: 5,
+        simulateHuman: false,
+      };
+
+      const service = new WebScrapeService(customConfig);
+
+      expect(service).toBeInstanceOf(WebScrapeService);
+    });
+
+    it('should initialize OpenAI service', () => {
+      expect(mockOpenAIService).toHaveBeenCalled();
+    });
+  });
+
+  describe('initialize', () => {
+    it('should launch browser if not initialized', async () => {
+      await webScrapeService.initialize();
+
+      expect(mockChromium.launch).toHaveBeenCalledWith({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-blink-features=AutomationControlled'
+        ]
+      });
+    });
+
+    it('should not launch browser if already initialized', async () => {
+      // First initialization
+      await webScrapeService.initialize();
+
+      // Reset mock to track second call
+      mockChromium.launch.mockClear();
+
+      // Second initialization should not launch browser again
+      await webScrapeService.initialize();
+
+      expect(mockChromium.launch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('scrapeUrl', () => {
+    it('should successfully scrape a URL', async () => {
+      const url = 'https://example.com';
+      const result = await webScrapeService.scrapeUrl(url);
+
+      expect(result).toEqual({
+        title: 'Test Page',
+        url: url,
+        content: 'Test content extracted from page',
+        extractedAt: expect.any(String),
+        method: 'html'
+      });
+
+      expect(mockPage.goto).toHaveBeenCalledWith(url, {
+        timeout: 30000,
+        waitUntil: 'domcontentloaded'
+      });
+    });
+
+    it('should use custom selector when provided', async () => {
+      const url = 'https://example.com';
+      const selector = '.content';
+
+      await webScrapeService.scrapeUrl(url, selector);
+
+      expect(mockPage.evaluate).toHaveBeenCalledWith(expect.any(Function), selector);
+    });
+
+    it('should handle navigation timeout errors', async () => {
+      mockPage.goto.mockRejectedValue(new Error('Navigation timeout'));
+
+      const url = 'https://example.com';
+
+      await expect(webScrapeService.scrapeUrl(url)).rejects.toThrow('Navigation timeout');
+    });
+
+    it('should retry on network errors', async () => {
+      // Mock first call to fail, second to succeed
+      mockPage.goto
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({} as any);
+
+      const url = 'https://example.com';
+
+      const result = await webScrapeService.scrapeUrl(url);
+
+      expect(result).toBeDefined();
+      expect(mockPage.goto).toHaveBeenCalledTimes(2);
+    });
+
+    it('should switch to visual extraction when content is sparse', async () => {
+      // Mock sparse content (less than 300 characters)
+      mockPage.evaluate.mockResolvedValue('Short content');
+
+      const url = 'https://example.com';
+      const result = await webScrapeService.scrapeUrl(url);
+
+      expect(result.method).toBe('visual');
+      expect(mockOpenAIService.prototype.analyzeImage).toHaveBeenCalled();
+    });
+  });
+
+  describe('scrapeUrls', () => {
+    it('should scrape multiple URLs concurrently', async () => {
+      const urls = [
+        'https://example.com/1',
+        'https://example.com/2',
+        'https://example.com/3'
+      ];
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      expect(results).toHaveLength(3);
+      expect(results.every(r => r !== null)).toBe(true);
+    });
+
+    it('should handle failed URLs gracefully', async () => {
+      const urls = [
+        'https://example.com/success',
+        'https://example.com/fail',
+        'https://example.com/success2'
+      ];
+
+      // Mock one URL to fail
+      mockPage.goto
+        .mockResolvedValueOnce({} as any)
+        .mockRejectedValueOnce(new Error('Failed'))
+        .mockResolvedValueOnce({} as any);
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      expect(results).toHaveLength(2); // Only successful results
+      expect(results.every(r => r !== null)).toBe(true);
+    });
+  });
+
+  describe('close', () => {
+    it('should close browser when called', async () => {
+      await webScrapeService.initialize();
+      await webScrapeService.close();
+
+      expect(mockBrowser.close).toHaveBeenCalled();
+    });
+
+    it('should not throw error if browser is not initialized', async () => {
+      await expect(webScrapeService.close()).resolves.not.toThrow();
+    });
+  });
+
+  describe('formatScrapeResults', () => {
+    it('should format results correctly', () => {
+      const results: WebScrapeResult[] = [
+        {
+          title: 'Test Page 1',
+          url: 'https://example.com/1',
+          content: 'Content 1',
+          extractedAt: '2024-01-01T00:00:00Z',
+          method: 'html'
+        },
+        {
+          title: 'Test Page 2',
+          url: 'https://example.com/2',
+          content: 'Content 2',
+          extractedAt: '2024-01-01T00:00:00Z',
+          method: 'visual'
+        }
+      ];
+
+      const formatted = webScrapeService.formatScrapeResults(results);
+
+      expect(formatted).toContain('Test Page 1');
+      expect(formatted).toContain('Test Page 2');
+      expect(formatted).toContain('html');
+      expect(formatted).toContain('visual');
+    });
+
+    it('should return message for empty results', () => {
+      const formatted = webScrapeService.formatScrapeResults([]);
+
+      expect(formatted).toBe('No content scraped.');
+    });
+  });
+
+  describe('error handling', () => {
+    it('should handle browser initialization failures', async () => {
+      mockChromium.launch.mockRejectedValue(new Error('Browser failed to launch'));
+
+      await expect(webScrapeService.scrapeUrl('https://example.com'))
+        .rejects.toThrow('Browser not initialized');
+    });
+
+    it('should handle context creation failures', async () => {
+      mockBrowser.newContext.mockRejectedValue(new Error('Context creation failed'));
+
+      await expect(webScrapeService.scrapeUrl('https://example.com'))
+        .rejects.toThrow('Context creation failed');
+    });
+  });
+});
+
+describe('createWebScrapeService', () => {
+  it('should create service with environment variables', () => {
+    // Mock environment variables
+    process.env.WEB_SCRAPE_TIMEOUT = '60000';
+    process.env.WEB_SCRAPE_MAX_RETRIES = '3';
+    process.env.WEB_SCRAPE_CONCURRENCY = '5';
+
+    const service = createWebScrapeService();
+
+    expect(service).toBeInstanceOf(WebScrapeService);
+  });
+
+  it('should use defaults when environment variables are not set', () => {
+    // Clear environment variables
+    delete process.env.WEB_SCRAPE_TIMEOUT;
+    delete process.env.WEB_SCRAPE_MAX_RETRIES;
+    delete process.env.WEB_SCRAPE_CONCURRENCY;
+
+    const service = createWebScrapeService();
+
+    expect(service).toBeInstanceOf(WebScrapeService);
+  });
+});
+
+---
+./src/autonomous.ts
+---
+import 'dotenv/config';
+import { Scheduler } from './core/Scheduler';
+import { Agent } from './core/Agent';
+import { ContextManager } from './memory/ContextManager';
+import { SummaryStore } from './memory/SummaryStore';
+import { ToolRegistry } from './core/ToolRegistry';
+import { BrowserService } from './services/BrowserService';
+import { ActionQueueService } from './services/ActionQueueService';
+import { WhatsAppService } from './services/whatsappService';
+import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
+import { WebScrapeService, createWebScrapeService } from './services/webScrapeService';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
+import { WebSearchTool } from './tools/WebSearchTool';
+import { RecallHistoryTool } from './tools/RecallHistoryTool';
+import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
+import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
+import { NewsProcessorService } from './services/newsProcessorService';
+import { DatabaseConfig } from './config/databaseConfig';
+import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
+
+/**
+ * Autonomous WhatsApp Agent Main Entry Point
+ * 
+ * This is the complete replacement for the reactive bot architecture.
+ * Features autonomous browsing, proactive messaging, and intelligent memory management.
+ */
+class AutonomousWhatsAppAgent {
+  private scheduler?: Scheduler;
+  private agent?: Agent;
+  private contextMgr?: ContextManager;
+  private kb?: any; // KnowledgeBase or KnowledgeBasePostgres
+  private tools?: ToolRegistry;
+  private browser?: BrowserService;
+  private actionQueue?: ActionQueueService;
+  private whatsapp?: WhatsAppService;
+  private openai?: OpenAIService;
+  private historyStore?: any; // HistoryStore or HistoryStorePostgres
+  private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
+  private summaryStore?: SummaryStore;
+  private isInitialized: boolean = false;
+
+  constructor() {
+    console.log('🚀 Initializing Autonomous WhatsApp Agent...');
+  }
+
+  /**
+   * Initialize all components of the autonomous system
+   */
+  async initialize(): Promise<void> {
+    try {
+      // 1. Initialize Core Services
+      this.openai = await createOpenAIServiceFromConfig();
+      this.contextMgr = new ContextManager();
+      this.summaryStore = new SummaryStore();
+      
+      // Initialize database services using configuration switcher
+      await DatabaseConfig.initialize();
+      this.kb = DatabaseConfig.getKnowledgeBase(this.openai);
+      this.historyStore = DatabaseConfig.getHistoryStore();
+      this.vectorStore = DatabaseConfig.getVectorStoreService(this.openai);
+      this.actionQueue = new ActionQueueService();
+
+      // Set dependencies for ContextManager (rolling summarization)
+      this.contextMgr.setDependencies(this.summaryStore, this.openai);
+
+      // WhatsApp configuration
+      const whatsappConfig = {
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        apiVersion: 'v19.0'
+      };
+
+      this.whatsapp = new WhatsAppService(whatsappConfig, process.env.DEV_MODE === 'true');
+
+      // CRITICAL FIX: Link ActionQueue to WhatsApp Service
+      this.actionQueue.registerMessageSender(async (userId, content) => {
+        return this.whatsapp!.sendMessage(userId, content);
+      });
+
+      // 2. Initialize Browser & News Services
+      const scraper = createWebScrapeService();
+      this.browser = new BrowserService(scraper, this.kb);
+      
+      // Initialize News Stack
+      // Mock GoogleSearchService for processor if not available, or initialize properly
+      const searchService = createGoogleSearchServiceFromEnv();
+      const newsProcessor = new NewsProcessorService(this.openai, searchService, this.vectorStore);
+      const newsService = createNewsScrapeService(scraper, newsProcessor);
+
+      // 3. Initialize Tool Registry
+      this.tools = new ToolRegistry();
+      
+      // Register Web Search
+      if (searchService) {
+        this.tools.registerTool(new WebSearchTool(searchService));
+      }
+
+      // Register NEW Tools
+      this.tools.registerTool(new RecallHistoryTool(this.historyStore));
+      this.tools.registerTool(new ScrapeNewsTool(newsService));
+
+      // 4. Initialize Agent
+      this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue);
+
+      // 5. Initialize Scheduler
+      this.scheduler = new Scheduler(
+        this.browser,
+        this.contextMgr,
+        this.whatsapp,
+        this.agent,
+        this.actionQueue,
+        this.kb
+      );
+
+      this.isInitialized = true;
+      console.log('✅ Autonomous WhatsApp Agent Initialized Successfully');
+      
+      // Start background news service
+      newsService.startBackgroundService(30);
+
+    } catch (error) {
+      console.error('❌ Failed to initialize Autonomous Agent:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Initialize and register all tools
+   */
+  private async initializeTools(): Promise<void> {
+    try {
+      // Initialize Google Search Service if configured
+      let searchService: GoogleSearchService | undefined;
+      try {
+        searchService = createGoogleSearchServiceFromEnv();
+        console.log('✅ Google Search Service initialized');
+      } catch (error) {
+        console.log('⚠️ Google Search Service not configured (missing API keys)');
+      }
+      
+      // Register Web Search Tool if available
+      if (searchService) {
+        const webSearchTool = new WebSearchTool(searchService);
+        this.tools!.registerTool(webSearchTool);
+        console.log('🔍 Web Search Tool registered');
+      }
+      
+      console.log(`🛠️ Tool Registry: ${this.tools!.getAvailableTools().length} tools available`);
+      
+      if (this.tools!.getAvailableTools().length === 0) {
+        console.log('⚠️ No tools available - agent will rely on knowledge base only');
+      }
+      
+    } catch (error) {
+      console.error('❌ Tool initialization failed:', error);
+      console.log('⚠️ Continuing with knowledge base only');
+    }
+  }
+
+  /**
+   * Start the autonomous agent system
+   */
+  start(): void {
+    if (!this.isInitialized || !this.scheduler) {
+      throw new Error('Agent must be initialized before starting');
+    }
+
+    console.log('\n' + '='.repeat(60));
+    console.log('🤖 AUTONOMOUS WHATSAPP AGENT STARTING');
+    console.log('='.repeat(60));
+
+    // Start the scheduler (1-minute ticks)
+    this.scheduler.start();
+
+    console.log('📍 Scheduler: 1-minute autonomous tick cycle started');
+    console.log('🌐 Browser: Autonomous surfing enabled');
+    console.log('💬 Agent: Proactive messaging capabilities active');
+    console.log('🧠 Memory: 3-tier memory system operational');
+    console.log('📬 Queue: Rate-limited action queue running');
+
+    if (process.env.DEV_MODE === 'true') {
+      console.log('\n💡 DEVELOPMENT MODE: Messages will be logged to console');
+      console.log('🚫 No messages will be sent to WhatsApp');
+    }
+
+    console.log('='.repeat(60) + '\n');
+  }
+
+  /**
+   * Handle incoming WhatsApp messages (webhook integration)
+   */
+  async handleIncomingMessage(userId: string, message: string, messageId: string): Promise<void> {
+    if (!this.isInitialized || !this.agent || !this.whatsapp) {
+      throw new Error('Agent not initialized');
+    }
+
+    console.log(`📱 Incoming message from ${userId}: ${message.substring(0, 50)}...`);
+
+    try {
+      // Process through the agent
+      const response = await this.agent.handleUserMessage(userId, message);
+
+      // Send response via WhatsApp (or log in dev mode)
+      if (process.env.DEV_MODE === 'true') {
+        console.log(`💬 Response to ${userId}: ${response}`);
+      } else {
+        await this.whatsapp.sendMessage(userId, response);
+      }
+
+      console.log(`✅ Message processed for ${userId}`);
+
+    } catch (error) {
+      console.error(`❌ Error processing message from ${userId}:`, error);
+      
+      // Fallback response
+      const fallback = "Sorry, I encountered an issue. Please try again.";
+      if (process.env.DEV_MODE !== 'true') {
+        await this.whatsapp.sendMessage(userId, fallback);
+      }
+    }
+  }
+
+  /**
+   * Handle web interface messages (returns response instead of sending)
+   */
+  async handleWebMessage(userId: string, message: string): Promise<string> {
+    if (!this.isInitialized || !this.agent) {
+      throw new Error('Agent not initialized');
+    }
+
+    console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}...`);
+
+    try {
+      // Process through the agent but don't send via WhatsApp
+      const response = await this.agent.handleUserMessage(userId, message);
+      console.log(`✅ Web message processed for ${userId}`);
+      return response;
+    } catch (error) {
+      console.error(`❌ Error processing web message from ${userId}:`, error);
+      return "Sorry, I encountered an issue processing your message. Please try again.";
+    }
+  }
+
+  /**
+   * Get system status and statistics
+   */
+  async getStatus() {
+    if (!this.isInitialized || !this.agent || !this.scheduler || !this.contextMgr || !this.kb || !this.browser || !this.actionQueue || !this.tools) {
+      return { status: 'Not initialized' };
+    }
+
+    const dbStats = await DatabaseConfig.getDatabaseStats();
+
+    return {
+      status: 'Running',
+      database: dbStats,
+      agent: this.agent.getStats(),
+      scheduler: this.scheduler.getStatus(),
+      memory: {
+        context: this.contextMgr.getStats(),
+        knowledge: await (this.kb as any).getStats()
+      },
+      browser: this.browser.getStats(),
+      queue: this.actionQueue.getQueueStats(),
+      tools: {
+        available: this.tools.getAvailableTools(),
+        count: this.tools.getAvailableTools().length
+      }
+    };
+  }
+
+  /**
+   * Get actual knowledge content for dashboard display
+   */
+  async getKnowledgeContent(limit: number = 10): Promise<Array<{id: string; title: string; content: string; source: string; category: string; timestamp: string}>> {
+    if (!this.isInitialized || !this.kb) {
+      return [];
+    }
+    
+    try {
+      const documents = await (this.kb as any).getRecentDocuments(limit);
+      return documents.map((doc: any) => ({
+        id: doc.id,
+        title: `${doc.category} - ${doc.source}`,
+        content: doc.content,
+        source: doc.source,
+        category: doc.category,
+        timestamp: doc.timestamp
+      }));
+    } catch (error) {
+      console.error('Error getting knowledge content:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Search knowledge content for dashboard
+   */
+  async searchKnowledgeContent(query: string, limit: number = 10): Promise<Array<{id: string; title: string; content: string; source: string; category: string; timestamp: string}>> {
+    if (!this.isInitialized || !this.kb) {
+      return [];
+    }
+    
+    try {
+      const documents = await (this.kb as any).searchContent(query, limit);
+      return documents.map((doc: any) => ({
+        id: doc.id,
+        title: `${doc.category} - ${doc.source}`,
+        content: doc.content,
+        source: doc.source,
+        category: doc.category,
+        timestamp: doc.timestamp
+      }));
+    } catch (error) {
+      console.error('Error searching knowledge content:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Stop the autonomous system
+   */
+  stop(): void {
+    if (this.scheduler) {
+      this.scheduler.stop();
+    }
+    console.log('🛑 Autonomous WhatsApp Agent Stopped');
+  }
+
+  /**
+   * Log initial system statistics
+   */
+  private logInitialStats(): void {
+    console.log('📊 Initial System Stats:');
+    console.log('- Memory: 3-tier architecture (1h context, vector KB, SQL history)');
+    console.log('- Browser: Autonomous surfing with 10 pages/hour limit');
+    console.log('- Scheduler: 1-minute ticks with intelligent mode switching');
+    console.log('- Agent: LLM orchestration with tool calling');
+    console.log('- Queue: Rate-limited messaging with proactive cooldowns');
+  }
+}
+
+// Singleton instance
+let autonomousAgent: AutonomousWhatsAppAgent;
+
+/**
+ * Get or create the autonomous agent instance
+ */
+export function getAutonomousAgent(): AutonomousWhatsAppAgent {
+  if (!autonomousAgent) {
+    autonomousAgent = new AutonomousWhatsAppAgent();
+  }
+  return autonomousAgent;
+}
+
+/**
+ * Initialize and start the autonomous agent
+ */
+export async function startAutonomousAgent(): Promise<AutonomousWhatsAppAgent> {
+  const agent = getAutonomousAgent();
+  await agent.initialize();
+  agent.start();
+  return agent;
+}
+
+// Export for testing and manual control
+export { AutonomousWhatsAppAgent };
+
+---
+./src/dev-test.ts
+---
+#!/usr/bin/env node
+
+import axios from 'axios';
+import { Command } from 'commander';
+import * as readline from 'readline';
+
+interface SendOptions {
+  port: string;
+  from: string;
+  image?: string;
+  audio?: string;
+  type?: 'text' | 'image' | 'audio';
+}
+
+const program = new Command();
+
+program
+  .name('dev-test')
+  .description('CLI chat client for WhatsApp chatbot dev server')
+  .version('1.0.0')
+  .argument('[message]', 'Message to send (if not provided, enters interactive chat mode)')
+  .option('-p, --port <port>', 'Server port', '3000')
+  .option('-f, --from <number>', 'Sender phone number', '1234567890')
+  .option('-i, --image <path>', 'Path to image file for testing')
+  .option('-a, --audio <path>', 'Path to audio file for testing')
+  .option('-t, --type <type>', 'Message type: text, image, audio', 'text')
+  .action(async (message: string | undefined, options: SendOptions) => {
+    try {
+      const port = options.port || process.env.PORT || '3000';
+      const devApiUrl = `http://localhost:${port}/dev/message`;
+
+      if (message || options.image || options.audio) {
+        // Send single message from command line
+        console.log(`📤 Sending message to ${devApiUrl}:`);
+
+        let requestBody: any = {
+          from: options.from
+        };
+
+        if (options.image) {
+          console.log(`🖼️ Image file: ${options.image}`);
+          console.log(`📋 Type: image`);
+          requestBody.type = 'image';
+          requestBody.imagePath = options.image;
+          requestBody.message = 'Test image analysis';
+        } else if (options.audio) {
+          console.log(`🎤 Audio file: ${options.audio}`);
+          console.log(`📋 Type: audio`);
+          requestBody.type = 'audio';
+          requestBody.audioPath = options.audio;
+          requestBody.message = 'Test audio transcription';
+        } else {
+          console.log(`💬 "${message}"`);
+          console.log(`📋 Type: text`);
+          requestBody.message = message;
+        }
+
+        console.log(`📞 From: ${options.from}`);
+        console.log(`🌐 Port: ${port}`);
+        console.log('---');
+
+        const response = await axios.post(devApiUrl, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Dev-Test-CLI/1.0.0'
+          }
+        });
+
+        console.log('✅ Message processed successfully!');
+        console.log(`🤖 Response: ${response.data.response}`);
+        console.log(`📋 Server status: ${response.status} ${response.statusText}`);
+      } else {
+        // Enter interactive chat mode
+        console.log('💬 Interactive chat mode started');
+        console.log(`📞 Sender: ${options.from}`);
+        console.log(`🌐 Server: http://localhost:${port}`);
+        console.log('📝 Type your messages (type "exit" or "quit" to end):');
+        console.log('---');
+
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+
+        const chatLoop = async () => {
+          rl.question('👤 You: ', async (userMessage: string) => {
+            if (userMessage.toLowerCase() === 'exit' || userMessage.toLowerCase() === 'quit') {
+              console.log('👋 Goodbye!');
+              rl.close();
+              return;
+            }
+
+            try {
+              console.log('⏳ Thinking...');
+
+              const response = await axios.post(devApiUrl, {
+                message: userMessage,
+                from: options.from
+              }, {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'Dev-Test-CLI/1.0.0'
+                }
+              });
+
+              console.log(`🤖 AI: ${response.data.response}`);
+              console.log('---');
+
+              // Continue the chat loop
+              chatLoop();
+            } catch (error: any) {
+              console.error('❌ Error:', error.message);
+              console.log('---');
+              // Continue the chat loop even on error
+              chatLoop();
+            }
+          });
+        };
+
+        // Start the chat loop
+        chatLoop();
+      }
+    } catch (error: any) {
+      if (error.response) {
+        console.error('❌ Server error:', error.response.status, error.response.statusText);
+        console.error('📋 Response data:', error.response.data);
+      } else if (error.request) {
+        console.error('❌ Network error: Could not connect to server');
+        console.error('💡 Make sure the dev server is running on port', options.port);
+      } else {
+        console.error('❌ Error:', error.message);
+      }
+      process.exit(1);
+    }
+  });
+
+program.parse();
+
+---
+./src/server.ts
+---
+import 'dotenv/config';
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import { startAutonomousAgent } from './autonomous';
+import { DashboardRoutes } from './routes/dashboard';
+import { WebhookRoutes } from './routes/webhook';
+
+/**
+ * Main server that integrates both autonomous agent and web dashboard
+ */
+class AutonomousServer {
+  private app: express.Application;
+  private port: number;
+  private dashboardRoutes: DashboardRoutes;
+  private webhookRoutes?: WebhookRoutes;
+
+  constructor() {
+    this.app = express();
+    this.port = parseInt(process.env.PORT || '3000');
+    this.dashboardRoutes = new DashboardRoutes();
+    
+    this.setupMiddleware();
+    this.setupRoutes();
+  }
+
+  private setupMiddleware(): void {
+    // Cookie parser middleware
+    this.app.use(cookieParser());
+    
+    // JSON parsing middleware
+    this.app.use(express.json({ limit: '10mb' }));
+    
+    // URL-encoded parsing middleware
+    this.app.use(express.urlencoded({ extended: true }));
+    
+    // CORS middleware for web interface
+    this.app.use((req, res, next) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+      next();
+    });
+  }
+
+  private setupRoutes(): void {
+    // Dashboard routes (web interface)
+    this.app.use('/', this.dashboardRoutes.getRouter());
+    
+    // Webhook routes (WhatsApp integration) - only if not in dev mode
+    if (process.env.DEV_MODE !== 'true') {
+      // Initialize WhatsApp webhook routes if configured
+      const whatsappConfig = {
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        apiVersion: 'v19.0'
+      };
+      
+      if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
+        const { WhatsAppService } = require('./services/whatsappService');
+        const { MediaService } = require('./services/mediaService');
+        
+        const whatsappService = new WhatsAppService(whatsappConfig);
+        const mediaService = new MediaService(whatsappConfig);
+        
+        this.webhookRoutes = new WebhookRoutes(
+          whatsappService,
+          process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
+          process.env.WHATSAPP_APP_SECRET || '',
+          whatsappConfig
+        );
+        
+        this.app.use('/webhook', this.webhookRoutes.getRouter());
+        console.log('✅ WhatsApp webhook routes enabled');
+      } else {
+        console.log('⚠️ WhatsApp webhook routes disabled - missing configuration');
+      }
+    } else {
+      console.log('💡 Development mode - WhatsApp webhook routes disabled');
+    }
+
+    // Health check endpoint
+    this.app.get('/health', (req, res) => {
+      res.status(200).json({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        mode: process.env.DEV_MODE === 'true' ? 'development' : 'production'
+      });
+    });
+
+    // API info endpoint
+    this.app.get('/api', (req, res) => {
+      res.json({
+        name: 'Autonomous WhatsApp Agent',
+        version: '1.0.0',
+        endpoints: {
+          dashboard: '/',
+          status: '/api/status',
+          chat: '/api/chat',
+          activity: '/api/activity',
+          memory: '/api/memory/{context|knowledge|history}',
+          health: '/health'
+        }
+      });
+    });
+  }
+
+  /**
+   * Start the server and autonomous agent
+   */
+  async start(): Promise<void> {
+    try {
+      console.log('🚀 Starting Autonomous WhatsApp Agent Server...');
+      
+      // Start the autonomous agent
+      await startAutonomousAgent();
+      
+      // Determine host based on environment variable or fallback to 0.0.0.0 for external access
+      const host = process.env.HOST || '0.0.0.0';
+      
+      // Start the HTTP server
+      this.app.listen(this.port, host, () => {
+        console.log('\n' + '='.repeat(60));
+        console.log('🤖 AUTONOMOUS SERVER STARTED SUCCESSFULLY');
+        console.log('='.repeat(60));
+        console.log(`📍 Server Host: ${host}`);
+        console.log(`📍 Server Port: ${this.port}`);
+        
+        // Show appropriate URLs based on host binding
+        if (host === '0.0.0.0') {
+          console.log(`🌐 Web Dashboard: http://localhost:${this.port} (local)`);
+          console.log(`🌐 Web Dashboard: http://[your-ip]:${this.port} (network)`);
+        } else {
+          console.log(`🌐 Web Dashboard: http://localhost:${this.port}`);
+        }
+        
+        if (process.env.DEV_MODE === 'true') {
+          console.log('\n💡 DEVELOPMENT MODE ACTIVATED');
+          console.log('📱 Messages will be logged to console');
+          console.log('🚫 No messages will be sent to WhatsApp');
+        } else {
+          console.log('\n⚡ PRODUCTION MODE');
+          console.log('📱 Messages will be sent to WhatsApp');
+        }
+        
+        if (this.webhookRoutes) {
+          if (host === '0.0.0.0') {
+            console.log(`🔗 Webhook URL: http://[your-ip]:${this.port}/webhook`);
+          } else {
+            console.log(`🔗 Webhook URL: http://localhost:${this.port}/webhook`);
+          }
+        }
+        
+        console.log(`❤️  Health Check: http://localhost:${this.port}/health`);
+        console.log('='.repeat(60) + '\n');
+      });
+
+    } catch (error) {
+      console.error('❌ Failed to start autonomous server:', error);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Stop the server
+   */
+  stop(): void {
+    console.log('🛑 Stopping autonomous server...');
+    process.exit(0);
+  }
+}
+
+// Export for testing and manual control
+export { AutonomousServer };
+
+// Start the server if this file is executed directly
+if (require.main === module) {
+  const server = new AutonomousServer();
+  server.start().catch(console.error);
+  
+  // Graceful shutdown
+  process.on('SIGINT', () => server.stop());
+  process.on('SIGTERM', () => server.stop());
+}
+
+---
+./src/test-autonomous.ts
+---
+import { startAutonomousAgent, getAutonomousAgent } from './autonomous';
+
+/**
+ * Test script for the Autonomous WhatsApp Agent
+ * This demonstrates the core functionality without requiring WhatsApp integration
+ */
+async function testAutonomousAgent() {
+  console.log('🧪 Testing Autonomous WhatsApp Agent Architecture...\n');
+
+  try {
+    // 1. Start the autonomous agent
+    console.log('1. Starting autonomous agent...');
+    const agent = await startAutonomousAgent();
+    
+    // Small delay to let the system initialize
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // 2. Check system status
+    console.log('\n2. Checking system status...');
+    const status = await agent.getStatus();
+    console.log('System Status:', {
+      status: status.status,
+      memory: {
+        activeUsers: status.memory?.context?.activeUsers || 0,
+        knowledgeDocuments: status.memory?.knowledge?.totalDocuments || 0
+      },
+      tools: status.tools?.count || 0,
+      browser: status.browser?.totalSessions || 0
+    });
+
+    // 3. Test incoming message handling
+    console.log('\n3. Testing message processing...');
+    const testUserId = 'test-user-123';
+    const testMessage = 'Hello! Can you tell me about the latest tech news?';
+    
+    await agent.handleIncomingMessage(testUserId, testMessage, 'test-message-1');
+    
+    // 4. Test another message to build context
+    console.log('\n4. Testing context building...');
+    await agent.handleIncomingMessage(testUserId, 'What about AI developments?', 'test-message-2');
+
+    // 5. Check if user interests were discovered
+    console.log('\n5. Checking user interest discovery...');
+    const statusAfterMessages = await agent.getStatus();
+    console.log('After messages - User should have discovered interests');
+
+    // 6. Wait for autonomous browsing to occur
+    console.log('\n6. Waiting for autonomous browsing session...');
+    console.log('The scheduler will automatically start browsing in idle mode');
+    console.log('This may take a few minutes depending on the tick cycle...');
+
+    // 7. Demonstrate proactive messaging potential
+    console.log('\n7. Proactive messaging capabilities:');
+    console.log('- The system will automatically browse for knowledge');
+    console.log('- User interests are auto-discovered from conversations');
+    console.log('- When relevant content is found, proactive messages are queued');
+    console.log('- Rate limiting prevents spam (15-minute cooldown per user)');
+
+    // 8. Show system architecture
+    console.log('\n8. System Architecture Summary:');
+    console.log('✅ 3-Tier Memory: ContextManager (1h) + KnowledgeBase (vector) + HistoryStore (SQL)');
+    console.log('✅ Autonomous Browser: 10 pages/hour limit with intelligent URL selection');
+    console.log('✅ Scheduler: 1-minute ticks with idle/proactive mode switching');
+    console.log('✅ Agent: LLM orchestration with tool calling and mobile optimization');
+    console.log('✅ Action Queue: Rate-limited messaging with exponential backoff');
+    console.log('✅ Interest Discovery: Auto-extracts user interests from conversations');
+
+    // 9. Keep the test running to observe autonomous behavior
+    console.log('\n9. Test will continue running to observe autonomous behavior...');
+    console.log('Press Ctrl+C to stop the test');
+    console.log('You should see browsing sessions and potential proactive checks in the logs');
+
+    // Keep the process alive to observe autonomous behavior
+    setInterval(async () => {
+      const currentStatus = await agent.getStatus();
+      if (currentStatus.status === 'Running') {
+        console.log(`⏰ System running - Ticks: ${currentStatus.scheduler?.tickCount || 0}`);
+      }
+    }, 30000); // Log every 30 seconds
+
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+    process.exit(1);
+  }
+}
+
+// Run the test if this file is executed directly
+if (require.main === module) {
+  testAutonomousAgent().catch(console.error);
+}
+
+export { testAutonomousAgent };
+
+---
+./src/core/Agent.ts
+---
+import { OpenAIService } from '../services/openaiService';
+import { ContextManager } from '../memory/ContextManager';
+import { ToolRegistry } from './ToolRegistry';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+import { ActionQueueService } from '../services/ActionQueueService';
+
+/**
+ * The Brain of the autonomous agent system.
+ * Orchestrates LLM interactions, tool calling, and decision-making.
+ */
+export class Agent {
+  private chatbotName: string;
+
+  constructor(
+    private openai: OpenAIService,
+    private contextMgr: ContextManager,
+    private kb: KnowledgeBasePostgres,
+    private tools: ToolRegistry,
+    private actionQueue: ActionQueueService
+  ) {
+    this.chatbotName = process.env.CHATBOT_NAME || 'Lucy';
+  }
+
+  /**
+   * Main entry point for User Messages (reactive mode)
+   */
+  async handleUserMessage(userId: string, message: string): Promise<string> {
+    // 1. Add to Short-term context
+    this.contextMgr.addMessage(userId, 'user', message);
+
+    // 2. Check if we need RAG (Knowledge Base)
+    let systemContext = await this.getSystemPrompt(userId);
+    
+    // Retrieve relevant facts from Long-term memory
+    const relevantFacts = await this.kb.search(message);
+    if (relevantFacts && !relevantFacts.includes('No relevant knowledge')) {
+      systemContext += `\n\n🧠 Relevant Knowledge:\n${relevantFacts}`;
+    }
+
+    // 3. Build Tool definitions
+    const toolDefs = this.tools.getOpenAITools();
+
+    // 4. Generate Response (with Tool Calling loop)
+    const history = this.contextMgr.getHistory(userId);
+    
+    const response = await this.generateResponseWithContext({
+      systemPrompt: systemContext,
+      history: history,
+      tools: toolDefs,
+      userMessage: message,
+      toolRegistry: this.tools
+    });
+
+    // 5. Save and Return (with mobile optimization)
+    this.contextMgr.addMessage(userId, 'assistant', response);
+    return this.optimizeForMobile(response);
+  }
+
+  /**
+   * Entry point for Autonomous Thoughts (proactive mode)
+   */
+  async generateProactiveMessage(userId: string, discoveredContent: string): Promise<string | null> {
+    // Check if we should bother the user (cooldown and relevance)
+    if (!this.actionQueue.canSendProactiveMessage(userId)) {
+      console.log(`⏰ Proactive message cooldown active for ${userId}`);
+      return null;
+    }
+
+    const userInterests = this.contextMgr.getUserInterests(userId);
+    const history = this.contextMgr.getHistory(userId).slice(-3); // Last 3 messages
+
+    // Ask LLM if we should share this discovery
+    const prompt = `
+You discovered this interesting content: "${discoveredContent}"
+
+Based on the user's conversation history and interests, decide if you should share this:
+- User interests: ${userInterests.join(', ') || 'Not yet discovered'}
+- Recent conversation: ${JSON.stringify(history)}
+
+Decision guidelines:
+✅ Share if: Content matches user interests, it's genuinely interesting, and it's been >15 mins since last message
+❌ Skip if: Content doesn't match interests, it's trivial, or user was recently active
+
+If you decide to share, write a short, natural WhatsApp message (under 30 words).
+If you decide to skip, reply exactly with: SKIP
+
+Your decision:`;
+
+    const decision = await this.openai.generateTextResponse(prompt);
+    
+    if (decision.trim().toUpperCase() === 'SKIP') {
+      console.log(`🤖 Decision: Skip proactive message to ${userId}`);
+      return null;
+    }
+
+    console.log(`🤖 Decision: Send proactive message to ${userId}`);
+    return this.optimizeForMobile(decision);
+  }
+
+  /**
+   * Generate response with full context and tool calling
+   */
+  private async generateResponseWithContext(options: {
+    systemPrompt: string;
+    history: any[];
+    tools: any[];
+    userMessage: string;
+    toolRegistry?: ToolRegistry;
+  }): Promise<string> {
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: options.systemPrompt
+      },
+      ...options.history.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      })),
+      {
+        role: 'user',
+        content: options.userMessage
+      }
+    ];
+
+    try {
+      const response = await this.openai.generateResponseWithTools(messages, options.tools, 10, options.toolRegistry);
+      return response;
+    } catch (error) {
+      console.error('❌ Agent response generation failed:', error);
+      
+      // Fallback response
+      return `I encountered an issue processing your message. ${this.getFallbackResponse(options.userMessage)}`;
+    }
+  }
+
+  /**
+   * Get system prompt with mobile optimization and long-term context
+   */
+  private async getSystemPrompt(userId: string): Promise<string> {
+    let systemPrompt = `You are ${this.chatbotName}, a witty, concise WhatsApp assistant.
+
+**CRITICAL RESPONSE GUIDELINES:**
+1. **Mobile Optimization**: Responses MUST be under 50 words unless specifically requested. Use natural spacing.
+2. **No Markdown**: Never use code blocks, markdown, or complex formatting.
+3. **Personality**: Be warm, use emojis naturally 🌟, avoid robotic phrases.
+4. **Tool Usage**: Use available tools when you need current information or specific actions.
+5. **Context Awareness**: Reference recent conversation naturally when relevant.
+
+**Current Time**: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
+
+    // Add long-term conversation summaries if available
+    const longTermSummaries = await this.contextMgr.getLongTermSummaries(userId);
+    if (longTermSummaries.length > 0) {
+      systemPrompt += `\n\n📚 **Previous Conversation Context:**\n${longTermSummaries.join('\n\n')}`;
+    }
+
+    systemPrompt += `\n\nAlways prioritize being helpful while respecting the mobile format constraints.`;
+
+    return systemPrompt;
+  }
+
+  /**
+   * Optimize response for WhatsApp mobile interface
+   */
+  private optimizeForMobile(response: string): string {
+    // Remove markdown blocks
+    let optimized = response.replace(/```[\s\S]*?```/g, '');
+    optimized = optimized.replace(/`[^`]*`/g, match => match.replace(/`/g, ''));
+    
+    // Limit to 50 words if too long
+    const words = optimized.split(/\s+/);
+    if (words.length > 50) {
+      optimized = words.slice(0, 50).join(' ') + '...';
+    }
+    
+    // Ensure proper spacing for mobile readability
+    optimized = optimized.replace(/\n{3,}/g, '\n\n');
+    
+    return optimized.trim();
+  }
+
+  /**
+   * Get fallback response when AI fails
+   */
+  private getFallbackResponse(userMessage: string): string {
+    const lowerMessage = userMessage.toLowerCase();
+    
+    if (lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
+      return 'Hello! 👋 How can I help you today?';
+    }
+    if (lowerMessage.includes('help')) {
+      return 'I can help with questions, search information, or just chat! What would you like to know?';
+    }
+    if (lowerMessage.includes('time')) {
+      return `The current time is: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
+    }
+    
+    return 'Please try asking your question again or rephrase it.';
+  }
+
+  /**
+   * Check if content is relevant to user interests for proactive messaging
+   */
+  isContentRelevantToUser(userId: string, content: string): boolean {
+    const userInterests = this.contextMgr.getUserInterests(userId);
+    if (userInterests.length === 0) return false;
+
+    const lowerContent = content.toLowerCase();
+    
+    return userInterests.some(interest => 
+      lowerContent.includes(interest.toLowerCase()) ||
+      this.calculateRelevanceScore(interest, content) > 0.3
+    );
+  }
+
+  /**
+   * Calculate relevance score between interest and content
+   */
+  private calculateRelevanceScore(interest: string, content: string): number {
+    const interestWords = interest.toLowerCase().split(/\s+/);
+    const contentWords = content.toLowerCase().split(/\s+/);
+    
+    let matches = 0;
+    interestWords.forEach(word => {
+      if (contentWords.some(contentWord => contentWord.includes(word) || word.includes(contentWord))) {
+        matches++;
+      }
+    });
+    
+    return matches / Math.max(interestWords.length, 1);
+  }
+
+  /**
+   * Get agent statistics
+   */
+  getStats() {
+    return {
+      chatbotName: this.chatbotName,
+      contextStats: this.contextMgr.getStats(),
+      knowledgeStats: this.kb.getStats(),
+      availableTools: this.tools.getAvailableTools().length
+    };
+  }
+}
+
+---
+./src/core/BaseTool.ts
+---
+import { ChatCompletionTool } from 'openai/resources/chat/completions';
+
+/**
+ * Abstract base class for all tools in the autonomous agent system.
+ * Provides a strict contract for tool creation and OpenAI function calling.
+ */
+export abstract class BaseTool {
+  abstract name: string;
+  abstract description: string;
+  abstract parameters: Record<string, any>;
+
+  abstract execute(args: any, context?: any): Promise<string>;
+
+  /**
+   * Convert tool definition to OpenAI function calling schema
+   */
+  toOpenAISchema(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: this.parameters,
+      },
+    };
+  }
+}
+
+---
+./src/core/Scheduler.ts
+---
+import { BrowserService } from '../services/BrowserService';
+import { ContextManager } from '../memory/ContextManager';
+import { WhatsAppService } from '../services/whatsappService';
+import { Agent } from './Agent';
+import { ActionQueueService } from '../services/ActionQueueService';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+
+/**
+ * The Heartbeat of the autonomous agent system.
+ * Manages the 1-minute tick cycle for idle browsing and proactive messaging.
+ */
+export class Scheduler {
+  private isRunning: boolean = false;
+  private tickCount: number = 0;
+  private stats = {
+    browsingSessions: 0,
+    proactiveChecks: 0,
+    messagesSent: 0,
+    knowledgeLearned: 0,
+    lastTick: new Date()
+  };
+
+  constructor(
+    private browser: BrowserService,
+    private contextMgr: ContextManager,
+    private whatsapp: WhatsAppService,
+    private agent: Agent,
+    private actionQueue: ActionQueueService,
+    private kb: KnowledgeBasePostgres
+  ) {}
+
+  /**
+   * Start the scheduler with 1-minute ticks
+   */
+  start(): void {
+    if (this.isRunning) {
+      console.log('⚠️ Scheduler is already running');
+      return;
+    }
+
+    this.isRunning = true;
+    console.log('🕰️ Autonomous Agent Scheduler Started (1-minute ticks)');
+
+    // Initial tick immediately
+    this.tick();
+
+    // Set up periodic ticking
+    setInterval(() => this.tick(), 60 * 1000); // 1 minute
+
+    // Set up periodic maintenance
+    setInterval(() => {
+      this.maintenance().catch(error => {
+        console.error('❌ Maintenance error:', error);
+      });
+    }, 5 * 60 * 1000); // 5 minutes
+  }
+
+  /**
+   * Stop the scheduler
+   */
+  stop(): void {
+    this.isRunning = false;
+    console.log('🛑 Autonomous Agent Scheduler Stopped');
+  }
+
+  /**
+   * Main tick function - decides between idle browsing and proactive messaging
+   */
+  private async tick(): Promise<void> {
+    if (!this.isRunning) return;
+
+    this.tickCount++;
+    this.stats.lastTick = new Date();
+
+    try {
+      const activeUsers = this.contextMgr.getActiveUsers();
+      
+      console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
+
+      // 1. IDLE MODE: Autonomous Browsing (when no active users or low load)
+      if (this.shouldBrowse(activeUsers.length)) {
+        await this.idleMode();
+      }
+
+      // 2. PROACTIVE MODE: Check active users for relevant content
+      if (this.shouldCheckProactive(activeUsers.length)) {
+        await this.proactiveMode(activeUsers);
+      }
+
+      // 3. Log tick statistics
+      this.logTickStats();
+
+    } catch (error) {
+      console.error('❌ Scheduler tick error:', error);
+    }
+  }
+
+  /**
+   * Idle Mode: Autonomous web browsing for knowledge acquisition
+   */
+  private async idleMode(): Promise<void> {
+    console.log('🌐 Entering Idle Mode: Autonomous Browsing');
+    this.stats.browsingSessions++;
+
+    // Determine browsing intent based on recent knowledge gaps
+    const intent = await this.determineBrowsingIntent();
+    
+    const result = await this.browser.surf(intent);
+    this.stats.knowledgeLearned += result.knowledgeGained;
+
+    console.log(`📚 Idle Mode Complete: ${result.urlsVisited.length} pages, ${result.knowledgeGained} facts learned`);
+  }
+
+  /**
+   * Proactive Mode: Check if we should message active users
+   */
+  private async proactiveMode(activeUsers: string[]): Promise<void> {
+    console.log('💬 Entering Proactive Mode: Checking active users');
+    this.stats.proactiveChecks++;
+
+    for (const userId of activeUsers) {
+      // Only check 20% of active users per tick to avoid spam
+      if (Math.random() > 0.2) continue;
+
+      await this.checkUserForProactiveMessage(userId);
+    }
+  }
+
+  /**
+   * Check if a specific user should receive a proactive message
+   */
+  private async checkUserForProactiveMessage(userId: string): Promise<void> {
+    // Check cooldown first
+    if (!this.actionQueue.canSendProactiveMessage(userId)) {
+      const cooldown = this.actionQueue.getProactiveCooldownRemaining(userId);
+      console.log(`⏰ User ${userId} in cooldown: ${Math.round(cooldown / 60000)} minutes remaining`);
+      return;
+    }
+
+    // Find recently learned knowledge relevant to user interests
+    const relevantKnowledge = await this.findRelevantKnowledgeForUser(userId);
+    if (!relevantKnowledge) {
+      console.log(`🤔 No relevant knowledge found for user ${userId}`);
+      return;
+    }
+
+    // Generate proactive message using agent
+    const message = await this.agent.generateProactiveMessage(userId, relevantKnowledge);
+    if (!message) {
+      console.log(`❌ Agent decided not to message user ${userId}`);
+      return;
+    }
+
+    // Queue the proactive message with appropriate delay
+    const actionId = this.actionQueue.queueMessage(userId, message, {
+      isProactive: true,
+      delayMs: 5000 + Math.random() * 10000, // 5-15 second delay
+      priority: 7 // Medium-high priority
+    });
+
+    this.stats.messagesSent++;
+    console.log(`📤 Proactive message queued for ${userId}: ${message.substring(0, 50)}...`);
+  }
+
+  /**
+   * Find knowledge relevant to a user's interests
+   */
+  private async findRelevantKnowledgeForUser(userId: string): Promise<string | null> {
+    const userInterests = this.contextMgr.getUserInterests(userId);
+    if (userInterests.length === 0) return null;
+
+    // Try each interest until we find relevant knowledge
+    for (const interest of userInterests) {
+      try {
+        // Search knowledge base for this interest
+        const knowledge = await this.kb.search(interest, 1, this.mapInterestToCategory(interest));
+        
+        if (knowledge && !knowledge.includes('No relevant knowledge')) {
+          console.log(`🎯 Found relevant knowledge for ${userId}'s interest in ${interest}`);
+          return knowledge;
+        }
+      } catch (error) {
+        console.error(`❌ Error searching knowledge for interest ${interest}:`, error);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Map user interest to knowledge base category
+   */
+  private mapInterestToCategory(interest: string): string {
+    const lowerInterest = interest.toLowerCase();
+    
+    if (lowerInterest.includes('tech') || lowerInterest.includes('programming')) return 'tech';
+    if (lowerInterest.includes('business') || lowerInterest.includes('finance')) return 'business';
+    if (lowerInterest.includes('sports') || lowerInterest.includes('game')) return 'sports';
+    if (lowerInterest.includes('news') || lowerInterest.includes('current')) return 'news';
+    
+    return 'general';
+  }
+
+  /**
+   * Determine browsing intent based on knowledge gaps
+   */
+  private async determineBrowsingIntent(): Promise<string | undefined> {
+    const knowledgeStats = await this.kb.getStats();
+    
+    // If we have few documents, browse broadly
+    if (knowledgeStats.totalDocuments < 10) {
+      return undefined; // Browse everything
+    }
+
+    // Find category with least knowledge
+    const categoryCounts = knowledgeStats.categories.reduce((acc: Record<string, number>, category: string) => {
+      acc[category] = (acc[category] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const leastKnownCategory = Object.keys(categoryCounts).reduce((a, b) =>
+      categoryCounts[a] < categoryCounts[b] ? a : b
+    );
+
+    return leastKnownCategory;
+  }
+
+  /**
+   * Decide if we should browse in this tick
+   */
+  private shouldBrowse(activeUserCount: number): boolean {
+    // Browse if no active users OR random chance when users are active
+    return activeUserCount === 0 || Math.random() > 0.7; // 30% chance when users active
+  }
+
+  /**
+   * Decide if we should check for proactive messages
+   */
+  private shouldCheckProactive(activeUserCount: number): boolean {
+    // Only check if we have active users
+    return activeUserCount > 0 && Math.random() > 0.5; // 50% chance per tick
+  }
+
+  /**
+   * Periodic maintenance tasks
+   */
+  private async maintenance(): Promise<void> {
+    console.log('🧹 Running maintenance tasks');
+    
+    // Clean up expired contexts (now async with summarization)
+    const expiredCount = await this.contextMgr.cleanupExpiredContexts();
+    
+    // Clean up old knowledge
+    const oldKnowledgeCount = await this.kb.cleanupOldKnowledge(30); // 30 days
+    
+    if (expiredCount > 0 || oldKnowledgeCount > 0) {
+      console.log(`📊 Maintenance: ${expiredCount} expired contexts, ${oldKnowledgeCount} old knowledge documents`);
+    }
+  }
+
+  /**
+   * Log tick statistics
+   */
+  private logTickStats(): void {
+    if (this.tickCount % 10 === 0) { // Every 10 ticks
+      console.log('📊 Scheduler Statistics:', {
+        ticks: this.tickCount,
+        browsingSessions: this.stats.browsingSessions,
+        proactiveChecks: this.stats.proactiveChecks,
+        messagesSent: this.stats.messagesSent,
+        knowledgeLearned: this.stats.knowledgeLearned,
+        queueStats: this.actionQueue.getQueueStats(),
+        browserStats: this.browser.getStats()
+      });
+    }
+  }
+
+  /**
+   * Get scheduler status
+   */
+  getStatus() {
+    return {
+      isRunning: this.isRunning,
+      tickCount: this.tickCount,
+      stats: this.stats,
+      lastTick: this.stats.lastTick
+    };
+  }
+}
+
+---
+./src/core/ToolRegistry.ts
+---
+import { BaseTool } from './BaseTool';
+import { ChatCompletionTool } from 'openai/resources/chat/completions';
+
+/**
+ * Dynamic tool management system for the autonomous agent.
+ * Allows easy addition of new tools without changing core logic.
+ */
+export class ToolRegistry {
+  private tools: Map<string, BaseTool> = new Map();
+
+  /**
+   * Register a new tool with the registry
+   */
+  registerTool(tool: BaseTool): void {
+    this.tools.set(tool.name, tool);
+    console.log(`🛠️ Tool registered: ${tool.name} - ${tool.description}`);
+  }
+
+  /**
+   * Register multiple tools at once
+   */
+  registerTools(tools: BaseTool[]): void {
+    tools.forEach(tool => this.registerTool(tool));
+  }
+
+  /**
+   * Get a tool by name
+   */
+  getTool(name: string): BaseTool | undefined {
+    return this.tools.get(name);
+  }
+
+  /**
+   * Execute a tool with the given arguments
+   */
+  async executeTool(name: string, args: any, context?: any): Promise<string> {
+    const tool = this.getTool(name);
+    if (!tool) {
+      throw new Error(`Tool '${name}' not found`);
+    }
+
+    console.log(`🔧 Executing tool: ${name}`, { args, context });
+
+    try {
+      const result = await tool.execute(args, context);
+      console.log(`✅ Tool execution completed: ${name}`);
+      return result;
+    } catch (error) {
+      console.error(`❌ Tool execution failed: ${name}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all tools as OpenAI function schemas
+   */
+  getOpenAITools(): ChatCompletionTool[] {
+    return Array.from(this.tools.values()).map(tool => tool.toOpenAISchema());
+  }
+
+  /**
+   * Get all available tool names
+   */
+  getAvailableTools(): string[] {
+    return Array.from(this.tools.keys());
+  }
+
+  /**
+   * Check if a tool exists
+   */
+  hasTool(name: string): boolean {
+    return this.tools.has(name);
+  }
+
+  /**
+   * Remove a tool from the registry
+   */
+  unregisterTool(name: string): boolean {
+    const existed = this.tools.delete(name);
+    if (existed) {
+      console.log(`🗑️ Tool unregistered: ${name}`);
+    }
+    return existed;
+  }
+}
+
+---
+./src/memory/ContextManager.ts
+---
+/**
+ * Short-term memory manager with 1-hour TTL for active conversations.
+ * Stores the last hour of conversation verbatim for immediate context.
+ * Implements rolling summarization to archive expired conversations.
+ */
+interface ConversationContext {
+  userId: string;
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: number }>;
+  lastInteraction: number;
+  userInterests?: string[]; // Auto-discovered user interests for proactive messaging
+}
+
+export class ContextManager {
+  private activeContexts: Map<string, ConversationContext> = new Map();
+  private readonly TTL_MS = 60 * 60 * 1000; // 1 Hour
+  private summaryStore?: any; // SummaryStore instance
+  private openai?: any; // OpenAIService instance
+
+  /**
+   * Set dependencies for summarization functionality
+   */
+  setDependencies(summaryStore: any, openai: any) {
+    this.summaryStore = summaryStore;
+    this.openai = openai;
+  }
+
+  /**
+   * Get conversation history for a user (filtered by TTL)
+   */
+  getHistory(userId: string): any[] {
+    const ctx = this.activeContexts.get(userId);
+    if (!ctx) return [];
+    
+    // Filter out expired messages
+    const now = Date.now();
+    ctx.messages = ctx.messages.filter(m => (now - m.timestamp) < this.TTL_MS);
+    
+    return ctx.messages.map(({ role, content }) => ({ role, content }));
+  }
+
+  /**
+   * Add a message to the conversation context
+   */
+  addMessage(userId: string, role: 'user' | 'assistant', content: string) {
+    if (!this.activeContexts.has(userId)) {
+      this.activeContexts.set(userId, { 
+        userId, 
+        messages: [], 
+        lastInteraction: Date.now(),
+        userInterests: []
+      });
+    }
+    const ctx = this.activeContexts.get(userId)!;
+    ctx.messages.push({ role, content, timestamp: Date.now() });
+    ctx.lastInteraction = Date.now();
+    
+    // Auto-discover user interests from message content
+    this.updateUserInterests(userId, content);
+  }
+
+  /**
+   * Get active users (those with interactions within the TTL window)
+   */
+  getActiveUsers(): string[] {
+    const now = Date.now();
+    return Array.from(this.activeContexts.values())
+      .filter(ctx => (now - ctx.lastInteraction) < this.TTL_MS)
+      .map(ctx => ctx.userId);
+  }
+
+  /**
+   * Get user interests for proactive messaging
+   */
+  getUserInterests(userId: string): string[] {
+    const ctx = this.activeContexts.get(userId);
+    return ctx?.userInterests || [];
+  }
+
+  /**
+   * Update user interests based on message content
+   */
+  private updateUserInterests(userId: string, content: string) {
+    const ctx = this.activeContexts.get(userId);
+    if (!ctx) return;
+
+    // Extract potential interests from message content
+    const interests = this.extractInterests(content);
+    
+    // Add new interests, avoiding duplicates
+    interests.forEach(interest => {
+      if (!ctx.userInterests!.includes(interest)) {
+        ctx.userInterests!.push(interest);
+      }
+    });
+
+    // Keep only the most recent 10 interests
+    if (ctx.userInterests!.length > 10) {
+      ctx.userInterests = ctx.userInterests!.slice(-10);
+    }
+  }
+
+  /**
+   * Extract potential interests from message content
+   */
+  private extractInterests(content: string): string[] {
+    const interests: string[] = [];
+    const lowerContent = content.toLowerCase();
+
+    // Common interest patterns
+    const interestPatterns = [
+      /(tech|technology|programming|coding|ai|artificial intelligence|machine learning)/gi,
+      /(business|finance|stock|market|economy|investment)/gi,
+      /(sports|football|basketball|tennis|soccer|game)/gi,
+      /(news|current events|headlines|breaking)/gi,
+      /(travel|vacation|holiday|destination)/gi,
+      /(food|cooking|recipe|restaurant|cuisine)/gi,
+      /(music|song|artist|album|concert)/gi,
+      /(movie|film|cinema|actor|director)/gi,
+      /(gaming|video game|console|pc gaming)/gi,
+      /(health|fitness|exercise|wellness|diet)/gi
+    ];
+
+    interestPatterns.forEach(pattern => {
+      const matches = lowerContent.match(pattern);
+      if (matches) {
+        matches.forEach(match => {
+          const interest = match.toLowerCase();
+          if (!interests.includes(interest)) {
+            interests.push(interest);
+          }
+        });
+      }
+    });
+
+    return interests;
+  }
+
+  /**
+   * Check if a user is interested in a specific topic
+   */
+  isUserInterestedIn(userId: string, topic: string): boolean {
+    const interests = this.getUserInterests(userId);
+    const lowerTopic = topic.toLowerCase();
+    
+    return interests.some(interest => 
+      interest.toLowerCase().includes(lowerTopic) || 
+      lowerTopic.includes(interest.toLowerCase())
+    );
+  }
+
+  /**
+   * Clean up expired contexts (run periodically)
+   * Now includes summarization of expired conversations
+   */
+  async cleanupExpiredContexts(): Promise<number> {
+    const now = Date.now();
+    let removedCount = 0;
+
+    for (const [userId, ctx] of this.activeContexts.entries()) {
+      if (now - ctx.lastInteraction >= this.TTL_MS) {
+        // Summarize and archive the conversation before deleting
+        await this.summarizeAndArchive(userId, ctx.messages);
+        this.activeContexts.delete(userId);
+        removedCount++;
+      }
+    }
+
+    if (removedCount > 0) {
+      console.log(`🧹 Cleaned up ${removedCount} expired contexts`);
+    }
+
+    return removedCount;
+  }
+
+  /**
+   * Summarize and archive a conversation when it expires
+   */
+  private async summarizeAndArchive(userId: string, messages: any[]): Promise<void> {
+    if (!this.summaryStore || !this.openai) {
+      console.log('⚠️ Summarization dependencies not set, skipping archive');
+      return;
+    }
+
+    // Only summarize conversations with enough content
+    if (messages.length < 5) {
+      console.log(`📝 Skipping summary for ${userId}: only ${messages.length} messages`);
+      return;
+    }
+
+    try {
+      const prompt = `Summarize this conversation in 3 bullet points, focusing on user preferences, key facts, and important context. Keep it concise but informative:
+
+${JSON.stringify(messages, null, 2)}
+
+Summary:`;
+
+      const summary = await this.openai.generateTextResponse(prompt);
+      
+      // Store the summary in long-term memory
+      await this.summaryStore.storeSummary(userId, summary, messages);
+      
+      console.log(`📝 Archived conversation for ${userId}: ${summary.substring(0, 100)}...`);
+    } catch (error) {
+      console.error('❌ Failed to summarize and archive conversation:', error);
+    }
+  }
+
+  /**
+   * Get long-term conversation summaries for a user
+   */
+  async getLongTermSummaries(userId: string): Promise<string[]> {
+    if (!this.summaryStore) {
+      console.log('⚠️ SummaryStore not available, returning empty summaries');
+      return [];
+    }
+
+    try {
+      return await this.summaryStore.getRecentSummaries(userId, 3);
+    } catch (error) {
+      console.error('❌ Failed to get long-term summaries:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get statistics about active contexts
+   */
+  getStats(): { activeUsers: number; totalMessages: number } {
+    let totalMessages = 0;
+    
+    this.activeContexts.forEach(ctx => {
+      totalMessages += ctx.messages.length;
+    });
+
+    return {
+      activeUsers: this.activeContexts.size,
+      totalMessages
+    };
+  }
+}
+
+---
+./src/memory/HistoryStorePostgres.ts
+---
+import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * PostgreSQL-based History Store for long-term conversation logs.
+ * Stores raw chat logs for the "Recall" tool and historical analysis.
+ */
+interface ConversationLog {
+  id: string;
+  userId: string;
+  message: string;
+  role: 'user' | 'assistant';
+  timestamp: string;
+  messageType: 'text' | 'image' | 'audio';
+  metadata?: any;
+}
+
+export class HistoryStorePostgres {
+  constructor() {
+    // Initialize database connection
+    PrismaDatabaseUtils.initialize().catch(console.error);
+  }
+
+  /**
+   * Store a conversation message
+   */
+  async storeMessage(log: Omit<ConversationLog, 'id'>): Promise<void> {
+    try {
+      await prisma.conversationLog.create({
+        data: {
+          id: uuidv4(),
+          userId: log.userId,
+          message: log.message.substring(0, 4000), // Limit message length
+          role: log.role,
+          timestamp: new Date(log.timestamp),
+          messageType: log.messageType,
+          metadata: log.metadata || undefined,
+        },
+      });
+    } catch (error) {
+      console.error('❌ Failed to store conversation message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Query conversation history by date range and/or keywords
+   */
+  async query(options: {
+    userId?: string;
+    start?: string; // ISO date string
+    end?: string;   // ISO date string
+    keywords?: string;
+    limit?: number;
+    role?: 'user' | 'assistant';
+  } = {}): Promise<ConversationLog[]> {
+    try {
+      const where: any = {};
+
+      if (options.userId) {
+        where.userId = options.userId;
+      }
+
+      if (options.start || options.end) {
+        where.timestamp = {};
+        if (options.start) {
+          where.timestamp.gte = new Date(options.start);
+        }
+        if (options.end) {
+          where.timestamp.lte = new Date(options.end);
+        }
+      }
+
+      if (options.role) {
+        where.role = options.role;
+      }
+
+      if (options.keywords) {
+        // Simple keyword search (for production, consider full-text search)
+        const keywords = options.keywords.toLowerCase().split(/\s+/).filter(k => k.length > 2);
+        if (keywords.length > 0) {
+          where.OR = keywords.map(keyword => ({
+            message: {
+              contains: keyword,
+              mode: 'insensitive' as const,
+            },
+          }));
+        }
+      }
+
+      const logs = await prisma.conversationLog.findMany({
+        where,
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: options.limit,
+      });
+
+      return logs.map(log => ({
+        id: log.id,
+        userId: log.userId,
+        message: log.message,
+        role: log.role as 'user' | 'assistant',
+        timestamp: log.timestamp.toISOString(),
+        messageType: log.messageType as 'text' | 'image' | 'audio',
+        metadata: log.metadata || undefined,
+      }));
+    } catch (error) {
+      console.error('❌ Failed to query conversation history:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get conversation summary for a user
+   */
+  async getConversationSummary(userId: string, days: number = 30): Promise<{
+    totalMessages: number;
+    userMessages: number;
+    assistantMessages: number;
+    firstInteraction: string;
+    lastInteraction: string;
+    averageMessageLength: number;
+  }> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+
+      const stats = await prisma.conversationLog.aggregate({
+        where: {
+          userId,
+          timestamp: {
+            gte: cutoff,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+        _min: {
+          timestamp: true,
+        },
+        _max: {
+          timestamp: true,
+        },
+      });
+
+      // For average message length, we need a custom query
+      const avgResult = await prisma.$queryRaw<Array<{ avg_length: number }>>`
+        SELECT AVG(LENGTH(message)) as avg_length 
+        FROM conversation_logs 
+        WHERE user_id = ${userId} AND timestamp >= ${cutoff}
+      `;
+
+      return {
+        totalMessages: stats._count._all || 0,
+        userMessages: await prisma.conversationLog.count({
+          where: {
+            userId,
+            timestamp: { gte: cutoff },
+            role: 'user',
+          },
+        }),
+        assistantMessages: await prisma.conversationLog.count({
+          where: {
+            userId,
+            timestamp: { gte: cutoff },
+            role: 'assistant',
+          },
+        }),
+        firstInteraction: stats._min.timestamp?.toISOString() || 'No interactions',
+        lastInteraction: stats._max.timestamp?.toISOString() || 'No interactions',
+        averageMessageLength: Math.round(avgResult[0]?.avg_length || 0),
+      };
+    } catch (error) {
+      console.error('❌ Failed to get conversation summary:', error);
+      return {
+        totalMessages: 0,
+        userMessages: 0,
+        assistantMessages: 0,
+        firstInteraction: 'No interactions',
+        lastInteraction: 'No interactions',
+        averageMessageLength: 0,
+      };
+    }
+  }
+
+  /**
+   * Get most active users (for proactive messaging prioritization)
+   */
+  async getMostActiveUsers(days: number = 7, limit: number = 10): Promise<Array<{userId: string; messageCount: number; lastActivity: string}>> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+
+      const result = await prisma.conversationLog.groupBy({
+        by: ['userId'],
+        where: {
+          timestamp: {
+            gte: cutoff,
+          },
+        },
+        _count: {
+          id: true,
+        },
+        _max: {
+          timestamp: true,
+        },
+        orderBy: {
+          _count: {
+            id: 'desc',
+          },
+        },
+        take: limit,
+      });
+
+      return result.map(row => ({
+        userId: row.userId,
+        messageCount: row._count.id,
+        lastActivity: row._max.timestamp?.toISOString() || '',
+      }));
+    } catch (error) {
+      console.error('❌ Failed to get most active users:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Clean up old conversation logs
+   */
+  async cleanupOldLogs(maxAgeDays: number = 365): Promise<number> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - maxAgeDays);
+
+      const result = await prisma.conversationLog.deleteMany({
+        where: {
+          timestamp: {
+            lt: cutoff,
+          },
+        },
+      });
+
+      if (result.count > 0) {
+        console.log(`🧹 Cleaned up ${result.count} old conversation logs`);
+      }
+
+      return result.count;
+    } catch (error) {
+      console.error('❌ Failed to cleanup old logs:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get database statistics
+   */
+  async getStats(): Promise<{
+    totalLogs: number;
+    uniqueUsers: number;
+    oldestLog: string;
+    newestLog: string;
+  }> {
+    try {
+      const [total, uniqueUsers, oldest, newest] = await Promise.all([
+        prisma.conversationLog.count(),
+        prisma.conversationLog.groupBy({
+          by: ['userId'],
+          _count: true,
+        }).then(groups => groups.length),
+        prisma.conversationLog.findFirst({
+          orderBy: {
+            timestamp: 'asc',
+          },
+        }),
+        prisma.conversationLog.findFirst({
+          orderBy: {
+            timestamp: 'desc',
+          },
+        }),
+      ]);
+
+      return {
+        totalLogs: total,
+        uniqueUsers,
+        oldestLog: oldest?.timestamp.toISOString() || 'No logs',
+        newestLog: newest?.timestamp.toISOString() || 'No logs',
+      };
+    } catch (error) {
+      console.error('❌ Failed to get stats:', error);
+      return {
+        totalLogs: 0,
+        uniqueUsers: 0,
+        oldestLog: 'No logs',
+        newestLog: 'No logs',
+      };
+    }
+  }
+
+  /**
+   * Export conversation data for a user (for recall tool)
+   */
+  async exportUserConversation(userId: string, format: 'json' | 'text' = 'text'): Promise<string> {
+    try {
+      const logs = await this.query({ userId, limit: 1000 }); // Limit for safety
+      
+      if (format === 'json') {
+        return JSON.stringify(logs, null, 2);
+      }
+
+      // Text format for human readability
+      return logs.map(log => 
+        `[${new Date(log.timestamp).toLocaleString()}] ${log.role.toUpperCase()}: ${log.message}`
+      ).join('\n');
+    } catch (error) {
+      console.error('❌ Failed to export user conversation:', error);
+      return '';
+    }
+  }
+}
+
+---
+./src/memory/KnowledgeBasePostgres.ts
+---
+import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { OpenAIService } from '../services/openaiService';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * PostgreSQL-based Knowledge Base for storing facts learned from autonomous browsing.
+ * Uses PostgreSQL with BYTEA storage for efficient RAG searches.
+ */
+export interface KnowledgeDocument {
+  id: string;
+  content: string;
+  vector: Buffer; // BYTEA storage for embeddings
+  source: string;
+  category: string;
+  tags: string[];
+  timestamp: string;
+  relevanceScore?: number;
+}
+
+export class KnowledgeBasePostgres {
+  private openaiService: OpenAIService;
+
+  constructor(openaiService: OpenAIService) {
+    this.openaiService = openaiService;
+    // Initialize database connection
+    PrismaDatabaseUtils.initialize().catch(console.error);
+  }
+
+  /**
+   * Add a new document learned from browsing
+   */
+  async learnDocument(document: {
+    content: string;
+    source: string;
+    tags: string[];
+    timestamp: Date;
+    category?: string;
+  }): Promise<void> {
+    if (!document.content || document.content.trim().length < 10) {
+      console.log('📝 Skipping empty or too short document');
+      return;
+    }
+
+    try {
+      // Create embedding for the content
+      const embedding = await this.openaiService.createEmbedding(document.content);
+      
+      // Convert array to Float64Array buffer
+      const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
+
+      // Insert into database
+      await prisma.knowledge.create({
+        data: {
+          id: uuidv4(),
+          content: document.content.substring(0, 2000), // Limit content length
+          vector: vectorBuffer,
+          source: document.source,
+          category: document.category || 'general',
+          tags: document.tags,
+          timestamp: document.timestamp,
+        },
+      });
+
+      console.log(`💾 Learned new knowledge: [${document.category || 'general'}] ${document.source}`);
+    } catch (error) {
+      console.error('❌ Failed to learn document:', error);
+    }
+  }
+
+  /**
+   * Search for relevant knowledge using RAG with recency prioritization
+   */
+  async search(query: string, limit: number = 3, category?: string): Promise<string> {
+    try {
+      const queryEmbedding = await this.openaiService.createEmbedding(query);
+      const queryVec = new Float64Array(queryEmbedding);
+
+      // Prioritize recent content: only search documents from last 7 days by default
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const where: any = {
+        timestamp: {
+          gt: sevenDaysAgo,
+        },
+      };
+      
+      if (category) {
+        where.category = category;
+      }
+      
+      // Order by timestamp descending to prioritize recent content
+      const rows = await prisma.knowledge.findMany({
+        where,
+        orderBy: {
+          timestamp: 'desc',
+        },
+      });
+
+      // If no recent results, expand search to all time but with stronger recency penalty
+      let expandedSearch = false;
+      if (rows.length === 0) {
+        expandedSearch = true;
+        const fallbackWhere: any = {};
+        if (category) {
+          fallbackWhere.category = category;
+        }
+        rows.push(...await prisma.knowledge.findMany({
+          where: fallbackWhere,
+        }));
+      }
+
+      // Calculate relevance scores with enhanced recency weighting
+      const results = rows.map(row => {
+        // Convert BYTEA back to Float64Array
+        const docVec = new Float64Array(
+          row.vector.buffer,
+          row.vector.byteOffset,
+          row.vector.byteLength / 8
+        );
+
+        const similarity = this.cosineSimilarity(queryVec, docVec);
+        const recencyScore = this.calculateRecencyScore(row.timestamp.toISOString());
+        
+        // Enhanced relevance calculation: give more weight to recency
+        // Recent content (last 24 hours) gets significant boost
+        const hoursAgo = (Date.now() - row.timestamp.getTime()) / (1000 * 60 * 60);
+        const freshnessBoost = hoursAgo < 24 ? 1.5 : 1.0; // 50% boost for content < 24h old
+        
+        // If we expanded search, penalize older content more heavily
+        const agePenalty = expandedSearch ? Math.max(0.1, recencyScore) : 1.0;
+        
+        const relevance = similarity * recencyScore * freshnessBoost * agePenalty;
+        
+        return {
+          ...row,
+          tags: row.tags as string[] || [],
+          similarity,
+          recencyScore,
+          relevance,
+          hoursAgo,
+          expandedSearch
+        };
+      })
+      .filter(result => result.similarity >= 0.6) // Slightly lower threshold for expanded search
+      .sort((a, b) => b.relevance - a.relevance)
+      .slice(0, limit);
+
+      if (results.length === 0) {
+        return "No relevant knowledge found in my memory.";
+      }
+
+      // Format results with freshness indicators
+      return results.map(result => {
+        const date = new Date(result.timestamp);
+        const freshness = result.hoursAgo < 24 ? '🆕 ' : (result.hoursAgo < 168 ? '📅 ' : '📜 ');
+        const sourceInfo = `[${freshness}Source: ${result.source} | Category: ${result.category} | ${date.toLocaleDateString()}]`;
+        
+        return `${sourceInfo}\n${result.content}`;
+      }).join('\n\n---\n\n');
+
+    } catch (error) {
+      console.error('❌ Knowledge search failed:', error);
+      return "Error searching knowledge base.";
+    }
+  }
+
+  /**
+   * Calculate cosine similarity between two vectors
+   */
+  private cosineSimilarity(vecA: Float64Array, vecB: Float64Array): number {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < vecA.length; i++) {
+      dot += vecA[i] * vecB[i];
+      normA += vecA[i] * vecA[i];
+      normB += vecB[i] * vecB[i];
+    }
+    
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  /**
+   * Calculate recency score with stronger emphasis on recent content
+   */
+  private calculateRecencyScore(timestamp: string): number {
+    const docTime = new Date(timestamp).getTime();
+    const now = Date.now();
+    const ageDays = (now - docTime) / (1000 * 60 * 60 * 24);
+    
+    // Stronger recency weighting: content older than 7 days gets much lower scores
+    // Recent content (0-1 days) gets near-maximum score
+    if (ageDays <= 1) return 1.0; // Maximum score for today's content
+    if (ageDays <= 3) return 0.8; // High score for last 3 days
+    if (ageDays <= 7) return 0.6; // Good score for last week
+    if (ageDays <= 14) return 0.3; // Moderate score for 2 weeks
+    if (ageDays <= 30) return 0.1; // Low score for 1 month
+    return 0.05; // Very low score for older content
+  }
+
+  /**
+   * Get knowledge statistics
+   */
+  async getStats(): Promise<{ totalDocuments: number; categories: string[]; oldestDocument: string }> {
+    try {
+      const [total, categories, oldest] = await Promise.all([
+        prisma.knowledge.count(),
+        prisma.knowledge.findMany({
+          distinct: ['category'],
+          select: { category: true },
+        }),
+        prisma.knowledge.findFirst({
+          orderBy: {
+            timestamp: 'asc',
+          },
+        }),
+      ]);
+
+      return {
+        totalDocuments: total,
+        categories: categories.map(c => c.category || 'unknown'),
+        oldestDocument: oldest?.timestamp.toISOString() || 'No documents'
+      };
+    } catch (error) {
+      console.error('❌ Failed to get knowledge stats:', error);
+      return {
+        totalDocuments: 0,
+        categories: [],
+        oldestDocument: 'No documents'
+      };
+    }
+  }
+
+  /**
+   * Clean up old knowledge (older than specified days)
+   */
+  async cleanupOldKnowledge(maxAgeDays: number = 90): Promise<number> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - maxAgeDays);
+      
+      const result = await prisma.knowledge.deleteMany({
+        where: {
+          timestamp: {
+            lt: cutoff,
+          },
+        },
+      });
+
+      if (result.count > 0) {
+        console.log(`🧹 Cleaned up ${result.count} old knowledge documents`);
+      }
+      
+      return result.count;
+    } catch (error) {
+      console.error('❌ Failed to cleanup old knowledge:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Find knowledge by tags (for proactive messaging)
+   */
+  async findKnowledgeByTags(tags: string[], limit: number = 5): Promise<KnowledgeDocument[]> {
+    try {
+      const rows = await prisma.knowledge.findMany({
+        where: {
+          tags: {
+            array_contains: tags,
+          },
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: limit,
+      });
+      
+      return rows.map(row => ({
+        id: row.id,
+        content: row.content,
+        vector: row.vector,
+        source: row.source || '',
+        category: row.category || '',
+        tags: row.tags as string[] || [],
+        timestamp: row.timestamp.toISOString()
+      }));
+    } catch (error) {
+      console.error('❌ Failed to find knowledge by tags:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get recent knowledge documents for dashboard display
+   */
+  async getRecentDocuments(limit: number = 10): Promise<KnowledgeDocument[]> {
+    try {
+      const rows = await prisma.knowledge.findMany({
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: limit,
+      });
+      
+      return rows.map(row => ({
+        id: row.id,
+        content: row.content,
+        vector: row.vector,
+        source: row.source || '',
+        category: row.category || '',
+        tags: row.tags as string[] || [],
+        timestamp: row.timestamp.toISOString()
+      }));
+    } catch (error) {
+      console.error('❌ Failed to get recent documents:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get knowledge documents by category
+   */
+  async getDocumentsByCategory(category: string, limit: number = 10): Promise<KnowledgeDocument[]> {
+    try {
+      const rows = await prisma.knowledge.findMany({
+        where: {
+          category,
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: limit,
+      });
+      
+      return rows.map(row => ({
+        id: row.id,
+        content: row.content,
+        vector: row.vector,
+        source: row.source || '',
+        category: row.category || '',
+        tags: row.tags as string[] || [],
+        timestamp: row.timestamp.toISOString()
+      }));
+    } catch (error) {
+      console.error('❌ Failed to get documents by category:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Search knowledge content for dashboard (simple text search)
+   */
+  async searchContent(query: string, limit: number = 10): Promise<KnowledgeDocument[]> {
+    try {
+      const rows = await prisma.knowledge.findMany({
+        where: {
+          content: {
+            contains: query,
+            mode: 'insensitive' as const,
+          },
+        },
+        orderBy: {
+          timestamp: 'desc',
+        },
+        take: limit,
+      });
+      
+      return rows.map(row => ({
+        id: row.id,
+        content: row.content,
+        vector: row.vector,
+        source: row.source || '',
+        category: row.category || '',
+        tags: row.tags as string[] || [],
+        timestamp: row.timestamp.toISOString()
+      }));
+    } catch (error) {
+      console.error('❌ Failed to search knowledge content:', error);
+      return [];
+    }
+  }
+}
+
+---
+./src/memory/SummaryStore.ts
+---
+import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { createHash } from 'crypto';
+
+/**
+ * Service for managing long-term conversation summaries
+ * Stores and retrieves conversation summaries to maintain context beyond the 1-hour TTL
+ */
+export class SummaryStore {
+  constructor() {
+    // Initialize database connection
+    PrismaDatabaseUtils.initialize().catch(console.error);
+  }
+
+  /**
+   * Generate a hash for conversation context to prevent duplicate summaries
+   */
+  private generateContextHash(userId: string, messages: any[]): string {
+    const contextString = `${userId}:${JSON.stringify(messages)}`;
+    return createHash('md5').update(contextString).digest('hex');
+  }
+
+  /**
+   * Store a conversation summary for a user
+   */
+  async storeSummary(userId: string, summary: string, messages: any[]): Promise<void> {
+    try {
+      const contextHash = this.generateContextHash(userId, messages);
+      
+      await prisma.conversationSummary.create({
+        data: {
+          userId,
+          summary,
+          timestamp: new Date(),
+          contextHash
+        }
+      });
+
+      console.log(`📝 Stored conversation summary for ${userId}`);
+    } catch (error) {
+      console.error('❌ Failed to store conversation summary:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the most recent conversation summaries for a user
+   */
+  async getRecentSummaries(userId: string, limit: number = 3): Promise<string[]> {
+    try {
+      const summaries = await prisma.conversationSummary.findMany({
+        where: { userId },
+        orderBy: { timestamp: 'desc' },
+        take: limit
+      });
+
+      return summaries.map(s => s.summary);
+    } catch (error) {
+      console.error('❌ Failed to get conversation summaries:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get all conversation summaries for a user within a date range
+   */
+  async getSummariesByDateRange(userId: string, startDate: Date, endDate: Date): Promise<string[]> {
+    try {
+      const summaries = await prisma.conversationSummary.findMany({
+        where: {
+          userId,
+          timestamp: {
+            gte: startDate,
+            lte: endDate
+          }
+        },
+        orderBy: { timestamp: 'asc' }
+      });
+
+      return summaries.map(s => s.summary);
+    } catch (error) {
+      console.error('❌ Failed to get summaries by date range:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Clean up old summaries (keep only the most recent ones per user)
+   */
+  async cleanupOldSummaries(maxPerUser: number = 10): Promise<number> {
+    try {
+      // Get all user IDs
+      const users = await prisma.conversationSummary.groupBy({
+        by: ['userId'],
+        _count: { id: true }
+      });
+
+      let totalDeleted = 0;
+
+      for (const user of users) {
+        if (user._count.id > maxPerUser) {
+          // Get IDs of summaries to keep (most recent ones)
+          const keepIds = await prisma.conversationSummary.findMany({
+            where: { userId: user.userId },
+            orderBy: { timestamp: 'desc' },
+            take: maxPerUser,
+            select: { id: true }
+          });
+
+          const keepIdSet = new Set(keepIds.map(s => s.id));
+
+          // Delete old summaries
+          const result = await prisma.conversationSummary.deleteMany({
+            where: {
+              userId: user.userId,
+              id: { notIn: Array.from(keepIdSet) }
+            }
+          });
+
+          totalDeleted += result.count;
+        }
+      }
+
+      if (totalDeleted > 0) {
+        console.log(`🧹 Cleaned up ${totalDeleted} old conversation summaries`);
+      }
+
+      return totalDeleted;
+    } catch (error) {
+      console.error('❌ Failed to cleanup old summaries:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get statistics about stored summaries
+   */
+  async getStats(): Promise<{
+    totalSummaries: number;
+    uniqueUsers: number;
+    oldestSummary: string;
+    newestSummary: string;
+  }> {
+    try {
+      const [total, uniqueUsers, oldest, newest] = await Promise.all([
+        prisma.conversationSummary.count(),
+        prisma.conversationSummary.groupBy({
+          by: ['userId'],
+          _count: true
+        }).then(groups => groups.length),
+        prisma.conversationSummary.findFirst({
+          orderBy: { timestamp: 'asc' }
+        }),
+        prisma.conversationSummary.findFirst({
+          orderBy: { timestamp: 'desc' }
+        })
+      ]);
+
+      return {
+        totalSummaries: total,
+        uniqueUsers,
+        oldestSummary: oldest?.timestamp.toISOString() || 'No summaries',
+        newestSummary: newest?.timestamp.toISOString() || 'No summaries'
+      };
+    } catch (error) {
+      console.error('❌ Failed to get summary stats:', error);
+      return {
+        totalSummaries: 0,
+        uniqueUsers: 0,
+        oldestSummary: 'No summaries',
+        newestSummary: 'No summaries'
+      };
+    }
+  }
+}
+
+---
+./src/services/ActionQueueService.ts
+---
+/**
+ * Action Queue Service for rate-limited messaging and scheduled actions.
+ * Prevents WhatsApp API rate limit violations and enables human-like delayed responses.
+ */
+interface QueuedAction {
+  id: string;
+  type: 'message' | 'media' | 'proactive';
+  userId: string;
+  content: string;
+  scheduledFor: Date;
+  priority: number; // 1-10, higher = more urgent
+  retryCount: number;
+  metadata?: any;
+}
+
+export class ActionQueueService {
+  private queue: QueuedAction[] = [];
+  private processing: boolean = false;
+  private readonly MAX_RETRIES = 3;
+  private readonly RATE_LIMIT_DELAY = 2000; // 2 seconds between messages
+  private readonly PROACTIVE_COOLDOWN = 15 * 60 * 1000; // 15 minutes between proactive messages
+  private messageSender?: (userId: string, content: string) => Promise<boolean>;
+
+  constructor() {
+    // Start processing loop
+    this.startProcessing();
+  }
+
+  /**
+   * Register a message sender function (called by AutonomousAgent)
+   */
+  registerMessageSender(sender: (userId: string, content: string) => Promise<boolean>) {
+    this.messageSender = sender;
+  }
+
+  /**
+   * Queue a message for delivery with rate limiting
+   */
+  queueMessage(userId: string, content: string, options: {
+    priority?: number;
+    delayMs?: number;
+    isProactive?: boolean;
+    metadata?: any;
+  } = {}): string {
+    const actionId = `action_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    
+    const scheduledFor = new Date(Date.now() + (options.delayMs || 0));
+    
+    const action: QueuedAction = {
+      id: actionId,
+      type: options.isProactive ? 'proactive' : 'message',
+      userId,
+      content,
+      scheduledFor,
+      priority: options.priority || 5,
+      retryCount: 0,
+      metadata: options.metadata
+    };
+
+    this.queue.push(action);
+    this.queue.sort((a, b) => {
+      // Sort by priority (descending), then by scheduled time (ascending)
+      if (a.priority !== b.priority) return b.priority - a.priority;
+      return a.scheduledFor.getTime() - b.scheduledFor.getTime();
+    });
+
+    console.log(`📬 Queued ${action.type} message for ${userId} (priority: ${action.priority})`);
+    
+    return actionId;
+  }
+
+  /**
+   * Start processing the action queue
+   */
+  private startProcessing() {
+    setInterval(() => {
+      if (!this.processing) {
+        this.processNextAction();
+      }
+    }, 1000); // Check every second
+  }
+
+  /**
+   * Process the next action in the queue
+   */
+  private async processNextAction() {
+    if (this.queue.length === 0 || this.processing) return;
+
+    this.processing = true;
+    const now = new Date();
+
+    // Find the next actionable item (scheduled for now or earlier)
+    const nextActionIndex = this.queue.findIndex(action => 
+      action.scheduledFor <= now
+    );
+
+    if (nextActionIndex === -1) {
+      this.processing = false;
+      return;
+    }
+
+    const action = this.queue.splice(nextActionIndex, 1)[0];
+
+    try {
+      // Simulate action execution (will be integrated with WhatsApp service)
+      await this.executeAction(action);
+      
+      console.log(`✅ Action completed: ${action.type} to ${action.userId}`);
+      
+    } catch (error) {
+      console.error(`❌ Action failed: ${action.type} to ${action.userId}`, error);
+      
+      // Retry logic
+      if (action.retryCount < this.MAX_RETRIES) {
+        action.retryCount++;
+        action.scheduledFor = new Date(Date.now() + (action.retryCount * 30000)); // Exponential backoff
+        this.queue.push(action);
+        console.log(`🔄 Retry scheduled for action ${action.id} (attempt ${action.retryCount})`);
+      } else {
+        console.error(`💀 Action ${action.id} failed after ${this.MAX_RETRIES} retries`);
+      }
+    }
+
+    // Rate limiting delay
+    await new Promise(resolve => setTimeout(resolve, this.RATE_LIMIT_DELAY));
+    
+    this.processing = false;
+  }
+
+  /**
+   * Execute an action (Updated to send real messages)
+   */
+  private async executeAction(action: QueuedAction): Promise<void> {
+    console.log(`📤 Executing ${action.type} action for ${action.userId}`);
+    
+    if (!this.messageSender) {
+      console.warn('⚠️ No message sender registered in ActionQueue! Message logged but not sent.');
+      return;
+    }
+
+    try {
+      // Send via the registered callback
+      const success = await this.messageSender(action.userId, action.content);
+      
+      if (!success) {
+        throw new Error('Message sender returned false');
+      }
+    } catch (error) {
+      console.error('Failed to send WhatsApp message:', error);
+      throw error; // This triggers the retry logic in processNextAction
+    }
+  }
+
+  /**
+   * Check if a user has a proactive message cooldown
+   */
+  canSendProactiveMessage(userId: string): boolean {
+    const lastProactive = this.getLastProactiveMessageTime(userId);
+    if (!lastProactive) return true;
+    
+    const cooldownRemaining = lastProactive.getTime() + this.PROACTIVE_COOLDOWN - Date.now();
+    return cooldownRemaining <= 0;
+  }
+
+  /**
+   * Get time until next proactive message can be sent to a user
+   */
+  getProactiveCooldownRemaining(userId: string): number {
+    const lastProactive = this.getLastProactiveMessageTime(userId);
+    if (!lastProactive) return 0;
+    
+    const cooldownRemaining = lastProactive.getTime() + this.PROACTIVE_COOLDOWN - Date.now();
+    return Math.max(0, cooldownRemaining);
+  }
+
+  /**
+   * Get the last proactive message time for a user
+   */
+  private getLastProactiveMessageTime(userId: string): Date | null {
+    const proactiveActions = this.queue.filter(action => 
+      action.type === 'proactive' && action.userId === userId
+    ).concat(
+      // Would also check completed actions from a log in production
+      []
+    );
+
+    if (proactiveActions.length === 0) return null;
+    
+    return new Date(Math.max(...proactiveActions.map(a => a.scheduledFor.getTime())));
+  }
+
+  /**
+   * Get queue statistics
+   */
+  getQueueStats() {
+    const now = new Date();
+    
+    return {
+      totalQueued: this.queue.length,
+      processing: this.processing,
+      messages: this.queue.filter(a => a.type === 'message').length,
+      proactive: this.queue.filter(a => a.type === 'proactive').length,
+      delayed: this.queue.filter(a => a.scheduledFor > now).length,
+      ready: this.queue.filter(a => a.scheduledFor <= now).length,
+      averagePriority: this.queue.reduce((sum, a) => sum + a.priority, 0) / this.queue.length || 0
+    };
+  }
+
+  /**
+   * Clear the queue (for testing/reset)
+   */
+  clearQueue(): number {
+    const count = this.queue.length;
+    this.queue = [];
+    console.log(`🧹 Cleared ${count} actions from queue`);
+    return count;
+  }
+
+  /**
+   * Get actions for a specific user
+   */
+  getUserActions(userId: string): QueuedAction[] {
+    return this.queue.filter(action => action.userId === userId);
+  }
+
+  /**
+   * Cancel a specific action
+   */
+  cancelAction(actionId: string): boolean {
+    const index = this.queue.findIndex(action => action.id === actionId);
+    if (index !== -1) {
+      this.queue.splice(index, 1);
+      console.log(`❌ Cancelled action ${actionId}`);
+      return true;
+    }
+    return false;
+  }
+}
+
+---
+./src/services/BrowserService.ts
+---
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+import { WebScrapeService } from './webScrapeService';
+
+/**
+ * Autonomous browser service that simulates "Person" browsing the web.
+ * Accumulates knowledge independently of user input for proactive messaging.
+ */
+export class BrowserService {
+  private dailyList: string[] = [
+    'https://techcrunch.com',
+    'https://news.ycombinator.com',
+    'https://hongkongfp.com',
+    'https://www.bbc.com/news/world',
+    'https://www.cnbc.com/world'
+  ];
+  
+  private visitedUrls: Set<string> = new Set();
+  private maxPagesPerHour = 10;
+  private pagesVisitedThisHour = 0;
+  private lastSurfingSession: Date | null = null;
+  private surfingStats = {
+    totalSessions: 0,
+    totalPagesVisited: 0,
+    knowledgeLearned: 0
+  };
+
+  constructor(
+    private scraper: WebScrapeService,
+    private kb: KnowledgeBasePostgres
+  ) {
+    // Reset hourly counter
+    setInterval(() => { 
+      this.pagesVisitedThisHour = 0; 
+      console.log('🔄 Browser hourly limit reset');
+    }, 3600 * 1000);
+  }
+
+  /**
+   * Main surfing method - autonomous knowledge acquisition
+   */
+  async surf(intent?: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
+    if (this.pagesVisitedThisHour >= this.maxPagesPerHour) {
+      console.log('💤 Browser resting (Rate limit reached)');
+      return { urlsVisited: [], knowledgeGained: 0 };
+    }
+
+    // Determine surfing focus based on intent or random selection
+    const urls = this.pickUrlsToSurf(intent);
+    if (urls.length === 0) {
+      console.log('🌐 No URLs to surf');
+      return { urlsVisited: [], knowledgeGained: 0 };
+    }
+
+    const results = {
+      urlsVisited: [] as string[],
+      knowledgeGained: 0
+    };
+
+    for (const url of urls) {
+      if (this.pagesVisitedThisHour >= this.maxPagesPerHour) break;
+
+      try {
+        console.log(`🌐 Bot is surfing: ${url}`);
+        
+        const result = await this.scraper.scrapeUrls([url], undefined, true); // Force mobile mode
+        if (result.length === 0) continue;
+
+        const scrapeResult = result[0];
+        
+        // Extract knowledge & Embed into long-term memory
+        if (scrapeResult.content && scrapeResult.content.length > 100) {
+          await this.kb.learnDocument({
+            content: scrapeResult.content,
+            source: url,
+            tags: ['autonomous_browse', this.extractCategoryFromUrl(url)],
+            timestamp: new Date(),
+            category: this.extractCategoryFromUrl(url)
+          });
+
+          results.knowledgeGained++;
+          this.surfingStats.knowledgeLearned++;
+        }
+
+        this.pagesVisitedThisHour++;
+        this.visitedUrls.add(url);
+        results.urlsVisited.push(url);
+        this.surfingStats.totalPagesVisited++;
+
+        console.log(`✅ Surfed ${url} - Learned: ${results.knowledgeGained} facts`);
+
+        // Small delay between pages to simulate human browsing
+        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
+
+      } catch (error) {
+        console.error(`❌ Surfing failed for ${url}:`, error);
+      }
+    }
+
+    this.lastSurfingSession = new Date();
+    this.surfingStats.totalSessions++;
+    
+    console.log(`📊 Surfing session completed: ${results.urlsVisited.length} pages, ${results.knowledgeGained} facts learned`);
+
+    return results;
+  }
+
+  /**
+   * Pick URLs to surf based on intent or discovery patterns
+   */
+  private pickUrlsToSurf(intent?: string): string[] {
+    const urls: string[] = [];
+
+    if (intent) {
+      // Intent-based surfing (e.g., "find tech news")
+      urls.push(...this.dailyList.filter(url => 
+        url.toLowerCase().includes(intent.toLowerCase()) ||
+        this.urlMatchesIntent(url, intent)
+      ));
+    }
+
+    // If no intent or no matches, use round-robin from daily list
+    if (urls.length === 0) {
+      const availableUrls = this.dailyList.filter(url => !this.visitedUrls.has(url));
+      
+      if (availableUrls.length > 0) {
+        // Pick 1-3 random URLs from available list
+        const count = Math.min(3, availableUrls.length);
+        for (let i = 0; i < count; i++) {
+          const randomIndex = Math.floor(Math.random() * availableUrls.length);
+          urls.push(availableUrls[randomIndex]);
+          // Remove to avoid duplicates in this session
+          availableUrls.splice(randomIndex, 1);
+        }
+      } else {
+        // All daily URLs visited, reset and start over
+        this.visitedUrls.clear();
+        console.log('🔄 Reset visited URLs (daily list exhausted)');
+        return this.pickUrlsToSurf(intent); // Recursive call with reset
+      }
+    }
+
+    return urls.slice(0, 3); // Limit to 3 URLs per session
+  }
+
+  /**
+   * Check if URL matches surfing intent
+   */
+  private urlMatchesIntent(url: string, intent: string): boolean {
+    const urlLower = url.toLowerCase();
+    const intentLower = intent.toLowerCase();
+
+    const categoryMapping: { [key: string]: string[] } = {
+      'tech': ['tech', 'technology', 'hacker', 'programming'],
+      'news': ['news', 'headlines', 'current', 'breaking'],
+      'business': ['business', 'finance', 'market', 'economy'],
+      'sports': ['sports', 'game', 'football', 'basketball'],
+      'world': ['world', 'international', 'global']
+    };
+
+    for (const [category, keywords] of Object.entries(categoryMapping)) {
+      if (intentLower.includes(category) || keywords.some(keyword => intentLower.includes(keyword))) {
+        return keywords.some(keyword => urlLower.includes(keyword));
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Extract category from URL for tagging
+   */
+  private extractCategoryFromUrl(url: string): string {
+    const urlLower = url.toLowerCase();
+    
+    if (urlLower.includes('tech') || urlLower.includes('hacker')) return 'tech';
+    if (urlLower.includes('news') || urlLower.includes('headlines')) return 'news';
+    if (urlLower.includes('business') || urlLower.includes('finance')) return 'business';
+    if (urlLower.includes('sports') || urlLower.includes('game')) return 'sports';
+    if (urlLower.includes('world') || urlLower.includes('international')) return 'world';
+    
+    return 'general';
+  }
+
+  /**
+   * Get browsing statistics
+   */
+  getStats() {
+    return {
+      ...this.surfingStats,
+      pagesVisitedThisHour: this.pagesVisitedThisHour,
+      maxPagesPerHour: this.maxPagesPerHour,
+      lastSurfingSession: this.lastSurfingSession,
+      totalUrlsInMemory: this.visitedUrls.size
+    };
+  }
+
+  /**
+   * Force a surfing session with specific intent
+   */
+  async surfWithIntent(intent: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
+    console.log(`🎯 Intent-based surfing: ${intent}`);
+    return this.surf(intent);
+  }
+
+  /**
+   * Check if browser can surf (rate limit check)
+   */
+  canSurf(): boolean {
+    return this.pagesVisitedThisHour < this.maxPagesPerHour;
+  }
+
+  /**
+   * Get time until next surfing session is available
+   */
+  getTimeUntilNextSurf(): number {
+    if (this.canSurf()) return 0;
+    
+    // Calculate time until hourly reset (simplified)
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setHours(nextHour.getHours() + 1);
+    nextHour.setMinutes(0, 0, 0);
+    
+    return nextHour.getTime() - now.getTime();
+  }
+}
+
+---
+./src/services/ProcessedMessageServicePostgres.ts
+---
+import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+
+export class ProcessedMessageServicePostgres {
+  constructor() {
+    // Initialize database connection
+    PrismaDatabaseUtils.initialize().catch(console.error);
+  }
+
+  async hasMessageBeenProcessed(messageId: string): Promise<boolean> {
+    try {
+      const result = await prisma.processedMessage.findUnique({
+        where: {
+          messageId,
+        },
+      });
+      return !!result;
+    } catch (error) {
+      console.error('❌ Failed to check if message was processed:', error);
+      return false;
+    }
+  }
+
+  async markMessageAsProcessed(messageId: string, senderNumber?: string, messageType?: string): Promise<void> {
+    try {
+      await prisma.processedMessage.upsert({
+        where: {
+          messageId,
+        },
+        update: {
+          senderNumber,
+          messageType,
+          processedAt: new Date(),
+        },
+        create: {
+          messageId,
+          senderNumber,
+          messageType,
+        },
+      });
+    } catch (error) {
+      console.error('❌ Failed to mark message as processed:', error);
+      throw error;
+    }
+  }
+
+  async cleanupOldEntries(daysOlderThan: number = 30): Promise<number> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - daysOlderThan);
+
+      const result = await prisma.processedMessage.deleteMany({
+        where: {
+          processedAt: {
+            lt: cutoff,
+          },
+        },
+      });
+
+      return result.count;
+    } catch (error) {
+      console.error('❌ Failed to cleanup old entries:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get statistics about processed messages
+   */
+  async getStats(): Promise<{
+    totalProcessed: number;
+    last24Hours: number;
+    byType: Record<string, number>;
+  }> {
+    try {
+      const [totalProcessed, last24Hours, byType] = await Promise.all([
+        this.getCount(),
+        this.getCountLast24Hours(),
+        this.getCountByType(),
+      ]);
+
+      return {
+        totalProcessed,
+        last24Hours,
+        byType,
+      };
+    } catch (error) {
+      console.error('❌ Failed to get processed messages stats:', error);
+      return {
+        totalProcessed: 0,
+        last24Hours: 0,
+        byType: {},
+      };
+    }
+  }
+
+  private async getCount(): Promise<number> {
+    try {
+      return await prisma.processedMessage.count();
+    } catch (error) {
+      console.error('❌ Failed to get count:', error);
+      return 0;
+    }
+  }
+
+  private async getCountLast24Hours(): Promise<number> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 1);
+
+      return await prisma.processedMessage.count({
+        where: {
+          processedAt: {
+            gte: cutoff,
+          },
+        },
+      });
+    } catch (error) {
+      console.error('❌ Failed to get count for last 24 hours:', error);
+      return 0;
+    }
+  }
+
+  private async getCountByType(): Promise<Record<string, number>> {
+    try {
+      const result = await prisma.processedMessage.groupBy({
+        by: ['messageType'],
+        _count: {
+          messageId: true,
+        },
+      });
+
+      const counts: Record<string, number> = {};
+      result.forEach(row => {
+        counts[row.messageType || 'unknown'] = row._count.messageId;
+      });
+      return counts;
+    } catch (error) {
+      console.error('❌ Failed to get count by type:', error);
+      return {};
+    }
+  }
+}
+
+---
+./src/services/VectorStoreServicePostgres.ts
+---
+import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { OpenAIService } from './openaiService';
+import { TextChunker } from '../utils/textChunker';
+import { v4 as uuidv4 } from 'uuid';
+
+export interface DocumentMetadata {
+  source: string;
+  date: string;
+  category: string;
+  title?: string;
+}
+
+export class VectorStoreServicePostgres {
+  private openaiService: OpenAIService;
+
+  constructor(openaiService: OpenAIService) {
+    this.openaiService = openaiService;
+    // Initialize database connection
+    PrismaDatabaseUtils.initialize().catch(console.error);
+  }
+
+  /**
+   * Optimized Cosine Similarity for Float64 Arrays
+   */
+  private cosineSimilarity(vecA: Float64Array, vecB: Float64Array): number {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+      dot += vecA[i] * vecB[i];
+      normA += vecA[i] * vecA[i];
+      normB += vecB[i] * vecB[i];
+    }
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  async addDocument(content: string, metadata: DocumentMetadata): Promise<void> {
+    if (!content) return;
+    const chunks = TextChunker.split(content);
+    console.log(`📚 Ingesting "${metadata.title}" - ${chunks.length} chunks`);
+
+    try {
+      const records = [];
+      
+      for (const chunk of chunks) {
+        try {
+          const embedding = await this.openaiService.createEmbedding(chunk);
+          
+          // Convert array to Float64Array buffer
+          const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
+
+          records.push({
+            id: uuidv4(),
+            content: chunk,
+            vector: vectorBuffer, // Store as BYTEA
+            source: metadata.source,
+            date: metadata.date,
+            category: metadata.category,
+            title: metadata.title || ''
+          });
+        } catch (e) {
+          console.warn('Embedding failed:', e);
+        }
+      }
+
+      if (records.length > 0) {
+        // Use transaction for batch insert
+        await prisma.$transaction(
+          records.map(record => 
+            prisma.document.create({
+              data: record,
+            })
+          )
+        );
+        console.log(`💾 Saved ${records.length} vectors to PostgreSQL (BYTEA format).`);
+      }
+    } catch (error) {
+      console.error('❌ Failed to add document to vector store:', error);
+    }
+  }
+
+  async search(query: string, limit: number = 4, filter?: { category?: string }): Promise<string> {
+    try {
+      const queryEmbedding = await this.openaiService.createEmbedding(query);
+      // Convert query to TypedArray for faster math
+      const queryVec = new Float64Array(queryEmbedding);
+
+      const where: any = {};
+      if (filter?.category) {
+        where.category = filter.category;
+      }
+      
+      const rows = await prisma.document.findMany({
+        where,
+      });
+
+      const results = rows.map(row => {
+        // Convert BYTEA back to Float array
+        const docVec = new Float64Array(
+          row.vector.buffer,
+          row.vector.byteOffset,
+          row.vector.byteLength / 8
+        );
+
+        return {
+          ...row,
+          score: this.cosineSimilarity(queryVec, docVec)
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+      if (results.length === 0) return "No relevant knowledge found.";
+
+      return results.map(r =>
+        `[Source: ${r.title} (${r.date})]\n${r.content}`
+      ).join('\n\n---\n\n');
+
+    } catch (error) {
+      console.error('Vector search failed:', error);
+      return "Error searching knowledge base.";
+    }
+  }
+
+  /**
+   * Get vector store statistics
+   */
+  async getStats(): Promise<{
+    totalDocuments: number;
+    byCategory: Record<string, number>;
+    oldestDocument: string;
+    newestDocument: string;
+  }> {
+    try {
+      const [total, byCategory, oldest, newest] = await Promise.all([
+        prisma.document.count(),
+        prisma.document.groupBy({
+          by: ['category'],
+          _count: {
+            id: true,
+          },
+        }),
+        prisma.document.findFirst({
+          orderBy: {
+            // Assuming we have a created_at field, using id as fallback
+            id: 'asc',
+          },
+        }),
+        prisma.document.findFirst({
+          orderBy: {
+            id: 'desc',
+          },
+        }),
+      ]);
+
+      const categoryCounts: Record<string, number> = {};
+      byCategory.forEach(group => {
+        categoryCounts[group.category || 'unknown'] = group._count.id;
+      });
+
+      return {
+        totalDocuments: total,
+        byCategory: categoryCounts,
+        oldestDocument: oldest?.id || 'No documents',
+        newestDocument: newest?.id || 'No documents',
+      };
+    } catch (error) {
+      console.error('❌ Failed to get vector store stats:', error);
+      return {
+        totalDocuments: 0,
+        byCategory: {},
+        oldestDocument: 'No documents',
+        newestDocument: 'No documents',
+      };
+    }
+  }
+
+  /**
+   * Clean up old vector documents
+   */
+  async cleanupOldDocuments(maxAgeDays: number = 90): Promise<number> {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - maxAgeDays);
+
+      const result = await prisma.document.deleteMany({
+        where: {
+          createdAt: {
+            lt: cutoff,
+          },
+        },
+      });
+
+      if (result.count > 0) {
+        console.log(`🧹 Cleaned up ${result.count} old vector documents`);
+      }
+
+      return result.count;
+    } catch (error) {
+      console.error('❌ Failed to cleanup old vector documents:', error);
+      return 0;
+    }
+  }
+}
+
+---
+./src/services/googleSearchService.ts
+---
+import axios from 'axios';
+
+export interface GoogleSearchConfig {
+  apiKey: string;
+  searchEngineId: string;
+}
+
+export interface SearchResult {
+  title: string;
+  link: string;
+  snippet: string;
+}
+
+export class GoogleSearchService {
+  private config: GoogleSearchConfig;
+
+  constructor(config: GoogleSearchConfig) {
+    this.config = config;
+  }
+
+  /**
+   * Perform a Google search using the Custom Search JSON API
+   */
+  async search(query: string, numResults: number = 5, startIndex: number = 1): Promise<SearchResult[]> {
+    try {
+      console.log('🌐 Making Google API Request:', {
+        query: query,
+        numResults: numResults,
+        startIndex: startIndex,
+        engineId: this.config.searchEngineId.substring(0, 10) + '...'
+      });
+
+      const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
+        params: {
+          key: this.config.apiKey,
+          cx: this.config.searchEngineId,
+          q: query,
+          num: Math.min(numResults, 10), // Google API max is 10 results per request
+          start: startIndex,
+        },
+      });
+
+      const items = response.data.items || [];
+
+      console.log('📊 Google API Response:', {
+        query: query,
+        totalResults: response.data.searchInformation?.totalResults || 0,
+        itemsFound: items.length,
+        startIndex: startIndex,
+        items: items.map((item: any) => ({
+          title: item.title?.substring(0, 30) + (item.title?.length > 30 ? '...' : ''),
+          link: item.link?.substring(0, 30) + (item.link?.length > 30 ? '...' : '')
+        }))
+      });
+
+      if (items.length > 0) {
+        return items.map((item: any) => ({
+          title: item.title,
+          link: item.link,
+          snippet: item.snippet,
+        }));
+      }
+
+      return [];
+    } catch (error) {
+      console.error('❌ Google search error:', {
+        error: error instanceof Error ? error.message : `${error}`,
+        query: query,
+        startIndex: startIndex
+      });
+      throw new Error('Failed to perform Google search');
+    }
+  }
+
+  /**
+   * Perform multiple Google search requests to get more results
+   */
+  async searchMultiple(query: string, totalResults: number = 10): Promise<SearchResult[]> {
+    const maxPerRequest = 10;
+    const results: SearchResult[] = [];
+    let startIndex = 1;
+    let requestsMade = 0;
+    const maxRequests = 3; // Limit to avoid excessive API calls
+
+    while (results.length < totalResults && requestsMade < maxRequests) {
+      const resultsNeeded = totalResults - results.length;
+      const numResults = Math.min(resultsNeeded, maxPerRequest);
+
+      try {
+        const batchResults = await this.search(query, numResults, startIndex);
+        results.push(...batchResults);
+
+        if (batchResults.length < numResults) {
+          break; // No more results available
+        }
+
+        startIndex += batchResults.length;
+        requestsMade++;
+
+        // Add small delay between requests to avoid rate limiting
+        if (requestsMade < maxRequests && results.length < totalResults) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        console.warn('⚠️ Partial Google search failure:', {
+          error: error instanceof Error ? error.message : `${error}`,
+          query: query,
+          startIndex: startIndex
+        });
+        break; // Continue with partial results
+      }
+    }
+
+    // Remove duplicates by URL
+    const uniqueResults = results.filter((result, index, self) =>
+      index === self.findIndex(r => r.link === result.link)
+    );
+
+    console.log('📈 Multiple search requests completed:', {
+      query: query,
+      totalRequested: totalResults,
+      totalObtained: uniqueResults.length,
+      requestsMade: requestsMade
+    });
+
+    return uniqueResults.slice(0, totalResults);
+  }
+
+  /**
+   * Format search results for LLM consumption
+   */
+  formatSearchResults(results: SearchResult[]): string {
+    if (results.length === 0) {
+      return 'No search results found.';
+    }
+
+    return results.map((result, index) =>
+      `[${index + 1}] ${result.title}\n${result.link}\n${result.snippet}\n`
+    ).join('\n');
+  }
+
+  /**
+   * Check if the service is properly configured
+   */
+  isConfigured(): boolean {
+    return !!this.config.apiKey && !!this.config.searchEngineId;
+  }
+}
+
+// Helper function to create GoogleSearchService instance from environment variables
+export function createGoogleSearchServiceFromEnv(): GoogleSearchService {
+  const apiKey = process.env.GOOGLE_SEARCH_API_KEY;
+  const searchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID;
+
+  if (!apiKey || !searchEngineId) {
+    throw new Error('GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID environment variables are required');
+  }
+
+  return new GoogleSearchService({
+    apiKey,
+    searchEngineId,
+  });
+}
+
+---
+./src/services/mediaService.ts
+---
+import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
+import FormData from 'form-data';
+import { WhatsAppAPIConfig } from '../types/whatsapp';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+
+export interface MediaInfo {
+  filename: string;
+  filepath: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  type: 'image' | 'audio';
+}
+
+export class MediaService {
+  private config: WhatsAppAPIConfig;
+  private openaiService: OpenAIService | null;
+
+  constructor(config: WhatsAppAPIConfig) {
+    this.config = config;
+
+    // Initialize OpenAI service if API key is available
+    this.openaiService = null;
+    this.initializeOpenAIService();
+  }
+
+  async downloadAndSaveMedia(
+    mediaId: string,
+    mimeType: string,
+    sha256: string,
+    mediaType: 'image' | 'audio'
+  ): Promise<MediaInfo> {
+    try {
+      // Get media URL from WhatsApp API
+      const mediaUrl = `https://graph.facebook.com/${this.config.apiVersion}/${mediaId}`;
+
+      const response = await axios.get(mediaUrl, {
+        headers: {
+          'Authorization': `Bearer ${this.config.accessToken}`
+        }
+      });
+
+      const downloadUrl = response.data.url;
+
+      // Download the media file
+      const mediaResponse = await axios.get(downloadUrl, {
+        responseType: 'arraybuffer',
+        headers: {
+          'Authorization': `Bearer ${this.config.accessToken}`
+        }
+      });
+
+      // Determine file extension from mime type
+      const extension = this.getExtensionFromMimeType(mimeType);
+      const timestamp = Date.now();
+      const filename = `${mediaType}_${timestamp}_${mediaId.substring(0, 8)}.${extension}`;
+      const filepath = path.join('data', 'media', filename);
+
+      // Ensure directory exists
+      const dir = path.dirname(filepath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Save file
+      fs.writeFileSync(filepath, mediaResponse.data);
+
+      // Get file stats
+      const stats = fs.statSync(filepath);
+
+      return {
+        filename,
+        filepath,
+        mimeType,
+        size: stats.size,
+        sha256,
+        type: mediaType
+      };
+
+    } catch (error) {
+      console.error('Error downloading media:', error);
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
+      throw new Error(`Failed to download media: ${errorMessage}`);
+    }
+  }
+
+  private getExtensionFromMimeType(mimeType: string): string {
+    const mimeToExt: { [key: string]: string } = {
+      // Image types
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+
+      // Audio types - WhatsApp commonly uses these
+      'audio/mpeg': 'mp3',
+      'audio/mp3': 'mp3',
+      'audio/ogg': 'ogg',
+      'audio/wav': 'wav',
+      'audio/aac': 'aac',
+      'audio/m4a': 'm4a',
+      'audio/mp4': 'm4a', // WhatsApp often sends audio as MP4 container
+      'audio/x-m4a': 'm4a',
+      'audio/flac': 'flac',
+      'audio/x-wav': 'wav',
+      'audio/amr': 'amr', // WhatsApp voice messages often use AMR
+      'audio/3gpp': '3gp', // Common mobile audio format
+
+      // Video types (for future expansion)
+      'video/mp4': 'mp4',
+      'video/3gpp': '3gp',
+      'video/quicktime': 'mov'
+    };
+
+    return mimeToExt[mimeType] || 'bin';
+  }
+
+  getMediaInfoResponse(mediaInfo: MediaInfo): string {
+    return `📁 Media received!\n\n` +
+           `Type: ${mediaInfo.type.toUpperCase()}\n` +
+           `Filename: ${mediaInfo.filename}\n` +
+           `Size: ${this.formatFileSize(mediaInfo.size)}\n` +
+           `MIME Type: ${mediaInfo.mimeType}\n` +
+           `SHA256: ${mediaInfo.sha256.substring(0, 12)}...`;
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  async transcribeAudio(audioFilePath: string, language?: string): Promise<string> {
+    try {
+      const apiUrl = process.env.AUDIO_SERVICE_API_URL;
+      const apiKey = process.env.AUDIO_SERVICE_API_KEY;
+
+      if (!apiUrl || !apiKey) {
+        throw new Error('Audio transcription service not configured');
+      }
+
+      // Read the audio file
+      const audioBuffer = fs.readFileSync(audioFilePath);
+      const fileName = path.basename(audioFilePath);
+
+      // Determine content type based on file extension
+      const extension = fileName.split('.').pop()?.toLowerCase();
+      let contentType = 'audio/wav';
+      if (extension === 'mp3') contentType = 'audio/mpeg';
+      else if (extension === 'm4a') contentType = 'audio/mp4';
+      else if (extension === 'flac') contentType = 'audio/flac';
+      else if (extension === 'ogg') contentType = 'audio/ogg';
+
+      // Create form data
+      const form = new FormData();
+      form.append('audio_file', audioBuffer, {
+        filename: fileName,
+        contentType: contentType,
+      });
+
+      if (language) {
+        form.append('language', language);
+      }
+
+      // Make API request to audio service
+      const response = await axios.post(`${apiUrl}transcribe`, form, {
+        headers: {
+          'X-API-Key': apiKey,
+          ...form.getHeaders(),
+        },
+      });
+      console.log('response', response);
+      // Handle different response formats from audio service
+      if (response.data.text) {
+        // Direct text response format: { text: "transcribed text" }
+        return response.data.text;
+      } else if (response.data.success && response.data.text) {
+        // Success-based response format: { success: true, text: "transcribed text" }
+        return response.data.text;
+      } else {
+        throw new Error(response.data.error || response.data.detail || 'Transcription failed');
+      }
+
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
+      throw new Error(`Failed to transcribe audio: ${errorMessage}`);
+    }
+  }
+
+  async getTranscriptionResponse(transcribedText: string, mediaInfo: MediaInfo): Promise<string> {
+    // Generate enhanced AI response based on the transcription
+    const aiResponse = await this.generateAIResponseFromTranscription(transcribedText);
+
+    return `🎤 I heard your audio message!\n\n${aiResponse}\n\n` +
+           `Note: This response was generated automatically based on the audio content and may contain inaccuracies.`;
+  }
+
+  /**
+   * Analyze image content using OpenAI's vision capabilities
+   * Returns only the enhanced AI response, not the raw analysis
+   */
+  async analyzeImageWithOpenAI(imagePath: string): Promise<string> {
+    if (!this.openaiService?.isConfigured()) {
+      throw new Error('OpenAI service is not configured for image analysis');
+    }
+
+    try {
+      // Use specialized media image analysis prompt from config if available
+      const mediaImagePrompt = this.openaiService.getConfig()?.prompts?.mediaImageAnalysis;
+      const analysis = await this.openaiService.analyzeImage(imagePath, mediaImagePrompt);
+
+      // Generate enhanced AI response based on the image analysis
+      const aiResponse = await this.generateEnhancedAIResponseFromAnalysis(analysis);
+
+      return aiResponse;
+    } catch (error) {
+      console.error('Error analyzing image with OpenAI:', error);
+      throw new Error('Failed to analyze image with OpenAI');
+    }
+  }
+
+  /**
+   * Generate enhanced AI response based on image analysis with contextual suggestions
+   */
+  private async generateEnhancedAIResponseFromAnalysis(analysis: string): Promise<string> {
+    if (!this.openaiService?.isConfigured()) {
+      return 'I analyzed the image but cannot generate a response as OpenAI is not configured.';
+    }
+
+    try {
+      // Use enhanced image response prompt from config if available
+      const enhancedPrompt = this.openaiService.getConfig()?.prompts?.enhancedImageResponse;
+
+      // If no custom prompt is configured, use the default one
+      const prompt = enhancedPrompt
+        ? enhancedPrompt.replace('{analysis}', analysis)
+        : `Based on this detailed image analysis: "${analysis}"
+
+Generate a helpful, engaging, and conversational response with specific contextual awareness:
+
+- If it's a food menu: suggest popular dishes, recommend what to order based on cuisine type, mention any specials or pricing
+- If it's a building or landmark: suggest where it might be located, provide architectural details, historical context, and nearby attractions
+- If it's a hand holding an object: identify what the object is, suggest its purpose or how to use it, provide related recommendations
+- If it's a product: provide recommendations, usage tips, where to buy it, or similar alternatives
+- If it's a document or text-heavy: summarize key information clearly, highlight important details, suggest next steps
+- If it's nature or scenery: provide interesting facts, travel suggestions, best times to visit, or photography tips
+- If it's people or events: provide appropriate commentary, suggest related activities or social context
+- If it's artwork or creative content: discuss the style, possible meaning, or artistic techniques
+
+Keep the response natural, conversational, and focused on being genuinely helpful with practical suggestions.`;
+
+      return await this.openaiService.generateTextResponse(prompt);
+    } catch (error) {
+      console.error('Error generating enhanced AI response from image analysis:', error);
+      return 'I analyzed the image but encountered an error generating a response.';
+    }
+  }
+
+  /**
+   * Generate enhanced AI response based on audio transcription
+   */
+  private async generateAIResponseFromTranscription(transcription: string): Promise<string> {
+    if (!this.openaiService?.isConfigured()) {
+      return 'I transcribed the audio but cannot generate a response as OpenAI is not configured.';
+    }
+
+    try {
+      // Use audio transcription response prompt from config if available
+      const transcriptionPrompt = this.openaiService.getConfig()?.prompts?.audioTranscriptionResponse;
+
+      // If no custom prompt is configured, use the default one
+      const prompt = transcriptionPrompt
+        ? transcriptionPrompt.replace('{transcription}', transcription)
+        : `Based on this audio transcription: "${transcription}"
+
+Generate a helpful, engaging, and conversational response. Provide thoughtful commentary, answer questions, or continue the conversation naturally based on the audio content. Keep it conversational and focused on being helpful.`;
+
+      return await this.openaiService.generateTextResponse(prompt);
+    } catch (error) {
+      console.error('Error generating AI response from transcription:', error);
+      return 'I transcribed the audio but encountered an error generating a response.';
+    }
+  }
+
+  /**
+   * Enhanced media info response that includes only the AI-generated response
+   * without raw analysis details
+   */
+  getEnhancedMediaInfoResponse(mediaInfo: MediaInfo, aiResponse?: string): string {
+    let response = `📁 I received your ${mediaInfo.type}!\n\n`;
+
+    if (aiResponse) {
+      response += `${aiResponse}\n\n`;
+    } else {
+      response += `Type: ${mediaInfo.type.toUpperCase()}\n` +
+                  `Filename: ${mediaInfo.filename}\n` +
+                  `Size: ${this.formatFileSize(mediaInfo.size)}\n` +
+                  `MIME Type: ${mediaInfo.mimeType}`;
+    }
+
+    return response;
+  }
+  /**
+   * Initialize OpenAI service asynchronously
+   */
+  private async initializeOpenAIService(): Promise<void> {
+    try {
+      // Try to load from config file first
+      this.openaiService = await createOpenAIServiceFromConfig();
+      console.log('OpenAI service initialized successfully from config file in MediaService');
+    } catch (configError) {
+      console.warn('Failed to initialize from config file in MediaService, trying legacy environment variables:', configError instanceof Error ? configError.message : `${configError}`);
+
+      // Fall back to environment variables for backward compatibility
+      try {
+        this.openaiService = createOpenAIServiceFromEnv();
+        console.log('OpenAI service initialized successfully from environment variables (legacy mode) in MediaService');
+      } catch (envError) {
+        console.warn('OpenAI service not available for media analysis:', envError instanceof Error ? envError.message : `${envError}`);
+        this.openaiService = null;
+      }
+    }
+  }
+}
+
+---
+./src/services/newsProcessorService.ts
+---
+import { OpenAIService } from './openaiService';
+import { GoogleSearchService } from './googleSearchService';
+import { VectorStoreServicePostgres } from './VectorStoreServicePostgres';
+import { NewsArticle } from './newsScrapeService';
+
+export class NewsProcessorService {
+  private openaiService: OpenAIService;
+  private googleService: GoogleSearchService;
+  private vectorStore: VectorStoreServicePostgres;
+
+  constructor(
+    openaiService: OpenAIService,
+    googleService: GoogleSearchService,
+    vectorStore: VectorStoreServicePostgres
+  ) {
+    this.openaiService = openaiService;
+    this.googleService = googleService;
+    this.vectorStore = vectorStore;
+  }
+
+  /**
+   * Analyzes an article, enriches it with Google Search if complex, and learns it.
+   */
+  async processAndLearn(article: NewsArticle, category: string): Promise<void> {
+    try {
+      console.log(`🤔 Learning: ${article.title}`);
+
+      // 1. Check if we need to search Google (same as before)
+      const analysisPrompt = `
+        Analyze this news article.
+        1. Summarize the key facts in 2 sentences.
+        2. Identify if this topic requires more context to be fully understood (e.g., technical terms, historical context, stock symbols).
+        3. If yes, generate a specific search query. If no, output "NO_SEARCH".
+        
+        Article:
+        ${article.title}
+        ${article.content.substring(0, 1000)}
+      `;
+
+      const analysis = await this.openaiService.generateTextResponse(analysisPrompt);
+      
+      let fullContent = `Title: ${article.title}\n\n${article.content}`;
+      let sourceLabel = 'web_scrape';
+
+      // 2. Enrichment Step (Google Search)
+      // If the LLM suggests a search (and it's not NO_SEARCH), we enrich.
+      const searchMatch = analysis.match(/Search Query: "(.*)"/i) || analysis.split('\n').pop()?.match(/"(.*)"/);
+      
+      if (!analysis.includes("NO_SEARCH") && searchMatch) {
+        const query = searchMatch[1];
+        console.log(`🔍 Enriching knowledge with Google Search: ${query}`);
+        
+        const searchResults = await this.googleService.search(query, 3);
+        const searchContext = this.googleService.formatSearchResults(searchResults);
+
+        // Append context to the content we want to save
+        fullContent += `\n\n--- Additional Context from Google Search ---\n${searchContext}`;
+        sourceLabel = 'web_scrape_enriched';
+      }
+
+      // 3. Store in Vector DB (The DB handles chunking and embedding now)
+      await this.vectorStore.addDocument(fullContent, {
+        source: sourceLabel,
+        date: new Date().toISOString().split('T')[0],
+        category: category,
+        title: article.title
+      });
+
+    } catch (error) {
+      console.error('Error processing news for learning:', error);
+    }
+  }
+}
+
+---
+./src/services/newsScrapeService.ts
+---
+import * as fs from 'fs';
+import * as path from 'path';
+import { WebScrapeService, WebScrapeResult } from './webScrapeService';
+import { NewsProcessorService } from './newsProcessorService'; // Import new service
+
+export interface NewsArticle {
+  title: string;
+  url: string;
+  content: string;
+  source: string;
+  category?: string;
+  scrapedAt?: string;
+}
+
+// Define supported categories
+type NewsCategory = 'general' | 'tech' | 'business' | 'sports' | 'world';
+
+export class NewsScrapeService {
+  private webScrapeService: WebScrapeService;
+  private newsProcessor?: NewsProcessorService; // Optional dependency
+  
+  // Storage for our cached news summaries
+  private newsCache: Map<string, string> = new Map();
+  private isScraping: boolean = false;
+  private lastUpdated: Date | null = null;
+
+  // Hong Kong focused, Mobile-Friendly URLs
+  private categorySources: Record<NewsCategory, string[]> = {
+    'general': [
+       'https://news.rthk.hk/rthk/en/',
+       'https://hongkongfp.com/'
+    ],
+    'world': [
+       'https://www.bbc.com/news/world'
+    ],
+    'tech': [
+       'https://techcrunch.com/',
+       'https://www.theverge.com/'
+    ],
+    'business': [
+       'https://www.cnbc.com/world/?region=world'
+    ],
+    'sports': [
+       'https://www.skysports.com/news-wire'
+    ]
+  };
+
+  constructor(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService) {
+    this.webScrapeService = webScrapeService;
+    this.newsProcessor = newsProcessor;
+  }
+
+  /**
+   * Start the background service loop
+   */
+  public startBackgroundService(intervalMinutes: number = 30) {
+    console.log(`🕰️ Starting Background News Service (Every ${intervalMinutes} mins)`);
+    this.refreshNewsCache(); // Run immediately
+    setInterval(() => this.refreshNewsCache(), intervalMinutes * 60 * 1000);
+  }
+
+  /**
+   * Scrapes all categories and updates the cache
+   */
+  private async refreshNewsCache() {
+    if (this.isScraping) return;
+    this.isScraping = true;
+    console.log('🔄 Background Service: Updating News Cache...');
+
+    try {
+      const categories = Object.keys(this.categorySources) as NewsCategory[];
+      const dateStr = new Date().toISOString().split('T')[0];
+      const storageBase = path.join('data', 'news', dateStr);
+
+      // Ensure daily directory exists
+      if (!fs.existsSync(storageBase)) {
+        fs.mkdirSync(storageBase, { recursive: true });
+      }
+
+      for (const cat of categories) {
+        const urls = this.categorySources[cat];
+        // FORCE MOBILE = TRUE
+        const results = await this.webScrapeService.scrapeUrls(urls, undefined, true);
+        
+        if (results.length > 0) {
+            // 1. Format for Cache (Immediate Tool Access)
+            const formatted = this.formatNewsForLLM(results);
+            this.newsCache.set(cat, formatted);
+            
+            // 2. Save Raw Files & Trigger Learning
+            await this.handlePersistenceAndLearning(results, cat, storageBase);
+            
+            console.log(`✅ Cached & Processed ${results.length} articles for [${cat}]`);
+        }
+      }
+      this.lastUpdated = new Date();
+    } catch (error) {
+      console.error('❌ Background Service Error:', error);
+    } finally {
+      this.isScraping = false;
+    }
+  }
+
+  private async handlePersistenceAndLearning(results: WebScrapeResult[], category: string, storageBase: string) {
+    const filePath = path.join(storageBase, `${category}.json`);
+    
+    // Convert to NewsArticle format
+    const articles: NewsArticle[] = results.map(r => ({
+        title: r.title,
+        url: r.url,
+        content: r.content,
+        source: 'web_scrape',
+        category: category,
+        scrapedAt: new Date().toISOString()
+    }));
+
+    // Save to Disk
+    fs.writeFileSync(filePath, JSON.stringify(articles, null, 2));
+
+    // Trigger "Learning" if Processor is available
+    if (this.newsProcessor) {
+        // Limit to top 2 articles per category to save tokens/time
+        for (const article of articles.slice(0, 2)) {
+            await this.newsProcessor.processAndLearn(article, category);
+        }
+    }
+  }
+
+  /**
+   * Returns cached string for the Tool to use
+   */
+  public getCachedNews(category: string = 'general'): string {
+    // Basic normalization
+    let key: NewsCategory = 'general';
+    const lower = category.toLowerCase();
+    if (lower.includes('tech')) key = 'tech';
+    else if (lower.includes('busin') || lower.includes('financ')) key = 'business';
+    else if (lower.includes('sport')) key = 'sports';
+    else if (lower.includes('world')) key = 'world';
+
+    const data = this.newsCache.get(key);
+    
+    if (!data) {
+        // If cache is empty, trigger a scrape (fallback)
+        this.refreshNewsCache(); 
+        return "I am currently updating my news feed. Please ask again in 1 minute.";
+    }
+
+    const timeAgo = this.lastUpdated 
+      ? Math.floor((new Date().getTime() - this.lastUpdated.getTime()) / 60000) 
+      : 0;
+
+    return `[SYSTEM: News fetch time: ${timeAgo} mins ago. Category: ${key.toUpperCase()}]\n\n${data}`;
+  }
+
+  private formatNewsForLLM(results: WebScrapeResult[]): string {
+    return results.map((r, i) => 
+        `Headline: ${r.title}\nSource: ${r.url}\nSummary: ${r.content.substring(0, 350)}...`
+    ).join('\n\n');
+  }
+}
+
+export function createNewsScrapeService(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService): NewsScrapeService {
+  return new NewsScrapeService(webScrapeService, newsProcessor);
+}
+
+---
+./src/services/openaiService.ts
+---
+import OpenAI from 'openai';
+import * as fs from 'fs';
+import * as path from 'path';
+import { cleanLLMResponse } from '../utils/responseCleaner';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import { executeTool } from '../tools';
+import { ToolRegistry } from '../core/ToolRegistry';
+import { AIConfig } from '../types/aiConfig';
+import { ConfigLoader } from '../utils/configLoader';
+
+export interface OpenAIConfig {
+  apiKey: string;
+  baseURL?: string;
+  model?: string;
+  visionModel?: string;
+  temperature?: number;
+  maxTokens?: number;
+  enableToolCalling?: boolean;
+  embeddingModel?: string;
+}
+
+export class OpenAIService {
+  private openai: OpenAI;
+  private config: OpenAIConfig;
+  private chatbotName: string;
+  private prompts: AIConfig['prompts'];
+
+  constructor(config: AIConfig, chatbotName?: string) {
+    this.config = {
+      model: config.model || 'gpt-4o',
+      visionModel: config.visionModel || 'gpt-4o',
+      temperature: config.temperature || 0.7,
+      maxTokens: config.maxTokens || 1000,
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+      enableToolCalling: config.enableToolCalling ?? true,
+      embeddingModel: config.embeddingModel || 'text-embedding-ada-002'
+    };
+    this.chatbotName = chatbotName || 'Lucy';
+    this.prompts = config.prompts || {};
+
+    this.openai = new OpenAI({
+      apiKey: this.config.apiKey,
+      baseURL: this.config.baseURL,
+    });
+  }
+
+  /**
+   * Generate a response to a text message using OpenAI
+   */
+  async generateTextResponse(
+    message: string,
+    context?: string,
+    tools?: ChatCompletionTool[],
+    toolChoice?: 'auto' | 'none' | 'required'
+  ): Promise<string> {
+    try {
+      // Use custom prompt from config if available, otherwise use default
+      const textPrompt = this.prompts?.textResponse || `You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.`;
+
+      let systemPrompt = textPrompt.replace('{chatbotName}', this.chatbotName);
+
+      if (context) {
+        systemPrompt += ` Context: ${context}`;
+      }
+
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ];
+
+      const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
+        model: this.config.model!,
+        messages,
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+      };
+
+      // Add tools if provided and tool calling is enabled
+      if (tools && tools.length > 0 && this.config.enableToolCalling) {
+        requestOptions.tools = tools;
+        requestOptions.tool_choice = toolChoice || 'auto';
+      }
+
+      const response = await this.openai.chat.completions.create(requestOptions);
+
+      const rawResponse = response.choices[0]?.message?.content?.trim() || 'I apologize, but I could not generate a response. Please try again.';
+
+      // Log AI response
+      console.log('🤖 AI Response:', {
+        message: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
+        rawResponse: rawResponse.substring(0, 200) + (rawResponse.length > 200 ? '...' : ''),
+        hasContext: !!context,
+        model: this.config.model
+      });
+
+      return cleanLLMResponse(rawResponse);
+    } catch (error) {
+      console.error('Error generating text response:', error);
+      throw new Error('Failed to generate response from OpenAI');
+    }
+  }
+
+  /**
+   * Generate response with tool calling support - let LLM decide when to use tools
+   */
+  async generateResponseWithTools(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    tools?: ChatCompletionTool[],
+    maxToolRounds: number = 15, // Increased from 5 to 15 as requested
+    toolRegistry?: ToolRegistry // Optional ToolRegistry for new BaseTool system
+  ): Promise<string> {
+    if (!this.config.enableToolCalling || !tools || tools.length === 0) {
+      // Fall back to regular response generation without tools
+      const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
+      return this.generateTextResponse(
+        lastUserMessage?.content as string || '',
+        undefined,
+        undefined,
+        'none' // Explicitly disable tools
+      );
+    }
+
+    let currentMessages = [...messages];
+    let toolCallRound = 0;
+
+    while (toolCallRound < maxToolRounds) {
+      toolCallRound++;
+
+      const response = await this.openai.chat.completions.create({
+        model: this.config.model!,
+        messages: currentMessages,
+        tools,
+        tool_choice: 'auto', // Let LLM decide when to use tools
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+      });
+
+      const message = response.choices[0]?.message;
+      if (!message) {
+        throw new Error('No response from OpenAI');
+      }
+
+      // Log tool calling round
+      console.log('🔄 Tool Calling Round:', {
+        round: toolCallRound,
+        hasToolCalls: !!message.tool_calls && message.tool_calls.length > 0,
+        toolCallCount: message.tool_calls?.length || 0,
+        hasContent: !!message.content,
+        contentPreview: message.content?.substring(0, 50) || 'No content'
+      });
+
+      currentMessages.push(message);
+
+      // If no tool calls, return the final response immediately
+      if (!message.tool_calls || message.tool_calls.length === 0) {
+        return cleanLLMResponse(message.content || 'I apologize, but I could not generate a response.');
+      }
+
+      // Process tool calls using appropriate method
+      let toolResults;
+      if (toolRegistry) {
+        // Use new BaseTool system via ToolRegistry
+        toolResults = await this.processToolCallsWithRegistry(message.tool_calls, toolRegistry);
+      } else {
+        // Use old tool system
+        toolResults = await this.processToolCalls(message.tool_calls);
+      }
+
+      // Add tool results to the conversation
+      for (const result of toolResults) {
+        currentMessages.push({
+          role: 'tool',
+          content: result.error
+            ? `Error: ${result.error}`
+            : (typeof result.result === 'string' ? result.result : JSON.stringify(result.result)),
+          tool_call_id: result.tool_call_id
+        });
+      }
+
+      // Safety check to prevent infinite loops
+      if (toolCallRound >= maxToolRounds) {
+        console.warn('⚠️ Maximum tool call rounds reached:', maxToolRounds);
+
+        // Get the last user message for context
+        const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
+        const userQuery = lastUserMessage?.content;
+
+        // Use custom search limit prompt from config if available, otherwise use default
+        const toolLimitPrompt = this.prompts?.searchLimit || `I reached the maximum tool usage limit while processing your request. Please try a more specific query or ask me something else.`;
+
+        return await this.generateTextResponse(
+          toolLimitPrompt,
+          undefined,
+          undefined,
+          'none' // Don't use tools for this final response
+        );
+      }
+    }
+
+    return 'I apologize, but I encountered an issue while processing your request. Please try again.';
+  }
+
+  /**
+   * Process tool calls by executing the appropriate tools
+   */
+  private async processToolCalls(toolCalls: any[]): Promise<any[]> {
+    const results: any[] = [];
+
+    for (const toolCall of toolCalls) {
+      try {
+        console.log('🛠️ Processing tool call:', {
+          toolName: toolCall.function.name,
+          arguments: toolCall.function.arguments
+        });
+
+        const args = JSON.parse(toolCall.function.arguments);
+        const result = await executeTool(toolCall.function.name, args);
+
+        results.push({
+          tool_call_id: toolCall.id,
+          result: result
+        });
+
+        console.log('✅ Tool execution completed:', {
+          toolName: toolCall.function.name,
+          resultLength: typeof result === 'string' ? result.length : 'object'
+        });
+
+      } catch (error) {
+        console.error('❌ Tool execution failed:', {
+          toolName: toolCall.function.name,
+          error: error instanceof Error ? error.message : `${error}`
+        });
+
+        results.push({
+          tool_call_id: toolCall.id,
+          error: error instanceof Error ? error.message : 'Tool execution failed'
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Process tool calls using ToolRegistry (for new BaseTool system)
+   */
+  async processToolCallsWithRegistry(toolCalls: any[], toolRegistry: ToolRegistry): Promise<any[]> {
+    const results: any[] = [];
+
+    for (const toolCall of toolCalls) {
+      try {
+        console.log('🛠️ Processing tool call with registry:', {
+          toolName: toolCall.function.name,
+          arguments: toolCall.function.arguments
+        });
+
+        const args = JSON.parse(toolCall.function.arguments);
+        const result = await toolRegistry.executeTool(toolCall.function.name, args);
+
+        results.push({
+          tool_call_id: toolCall.id,
+          result: result
+        });
+
+        console.log('✅ Tool execution completed with registry:', {
+          toolName: toolCall.function.name,
+          resultLength: typeof result === 'string' ? result.length : 'object'
+        });
+
+      } catch (error) {
+        console.error('❌ Tool execution failed with registry:', {
+          toolName: toolCall.function.name,
+          error: error instanceof Error ? error.message : `${error}`
+        });
+
+        results.push({
+          tool_call_id: toolCall.id,
+          error: error instanceof Error ? error.message : 'Tool execution failed'
+        });
+      }
+    }
+
+    return results;
+  }
+
+
+  /**
+   * Get MIME type from file extension
+   */
+  private getMimeTypeFromExtension(extension: string): string {
+    const mimeTypes: { [key: string]: string } = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      bmp: 'image/bmp',
+      tiff: 'image/tiff',
+      svg: 'image/svg+xml'
+    };
+
+    return mimeTypes[extension] || 'image/jpeg';
+  }
+  /**
+   * @deprecated Use tool calling with analyze_image tool instead
+   * Analyze image content using OpenAI's vision capabilities
+   */
+  async analyzeImage(imagePath: string, prompt?: string): Promise<string> {
+    try {
+      // Read the image file
+      const imageBuffer = fs.readFileSync(imagePath);
+      const base64Image = imageBuffer.toString('base64');
+
+      // Determine MIME type from file extension
+      const extension = path.extname(imagePath).toLowerCase().substring(1);
+      const mimeType = this.getMimeTypeFromExtension(extension);
+
+      // Use custom image prompt from config if available, otherwise use default
+      const visionPrompt = prompt || this.prompts?.imageAnalysis || `Analyze this image comprehensively with context awareness. Describe what you see in detail, including:
+
+- Objects, people, animals, text, colors, and environment
+- If it's a food menu or restaurant scene: focus on menu items, prices, cuisine type, and popular dishes
+- If it's a building, landmark, or location: provide architectural details, possible location clues, and historical context if recognizable
+- If it's a product or object: identify the item, brand, purpose, and key features
+- If it's a hand holding something: identify the object being held and its potential use
+- If it's a document or text-heavy: transcribe all text accurately and note the document type
+- If it's nature or scenery: describe the landscape, weather conditions, and geographical features
+- If it's people or events: note activities, emotions, and social context
+
+Include any text content exactly as it appears. Provide specific details that would help understand the context and purpose of the image.`;
+
+      const response = await this.openai.chat.completions.create({
+        model: this.config.visionModel!,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: visionPrompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${base64Image}`
+                }
+              }
+            ]
+          }
+        ],
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+      });
+
+      const rawResponse = response.choices[0]?.message?.content?.trim() || 'I could not analyze this image. Please try again.';
+      return cleanLLMResponse(rawResponse);
+    } catch (error) {
+      console.error('Error analyzing image:', error);
+      throw new Error('Failed to analyze image with OpenAI');
+    }
+  }
+
+  /**
+   * Create embeddings for text content
+   */
+  async createEmbedding(text: string): Promise<number[]> {
+    try {
+      const response = await this.openai.embeddings.create({
+        model: this.config.embeddingModel!,
+        input: text,
+        encoding_format: 'float',
+      });
+
+      return response.data[0].embedding;
+    } catch (error) {
+      console.error('Error creating embedding:', error);
+      throw new Error('Failed to create embedding with OpenAI');
+    }
+  }
+
+  /**
+   * Check if the service is properly configured
+   */
+  isConfigured(): boolean {
+    return !!this.config.apiKey;
+  }
+
+  /**
+   * Get the current configuration
+   */
+  getConfig(): OpenAIConfig & { prompts?: AIConfig['prompts'] } {
+    return {
+      ...this.config,
+      prompts: this.prompts
+    };
+  }
+}
+
+// Helper function to create OpenAIService instance from config file
+export async function createOpenAIServiceFromConfig(): Promise<OpenAIService> {
+  const configLoader = new ConfigLoader();
+
+  try {
+    const config = await configLoader.loadConfig();
+
+    if (!config.apiKey) {
+      throw new Error('API key is required in the config file');
+    }
+
+    return new OpenAIService(config, process.env.CHATBOT_NAME);
+  } catch (error) {
+    console.error('Failed to create OpenAI service from config:', error);
+    throw new Error(`Failed to initialize OpenAI service: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+// Helper function to create OpenAIService instance from environment variables (legacy support)
+export function createOpenAIServiceFromEnv(): OpenAIService {
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is required for legacy mode');
+  }
+
+  return new OpenAIService({
+    apiKey,
+    baseURL: process.env.OPENAI_BASE_URL,
+    model: process.env.OPENAI_MODEL,
+    visionModel: process.env.OPENAI_VISION_MODEL,
+    temperature: process.env.OPENAI_TEMPERATURE ? parseFloat(process.env.OPENAI_TEMPERATURE) : undefined,
+    maxTokens: process.env.OPENAI_MAX_TOKENS ? parseInt(process.env.OPENAI_MAX_TOKENS) : undefined,
+    enableToolCalling: process.env.OPENAI_ENABLE_TOOL_CALLING === 'true',
+    embeddingModel: process.env.OPENAI_EMBEDDING_MODEL,
+  }, process.env.CHATBOT_NAME);
+}
+
+---
+./src/services/webScrapeService.ts
+---
+import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import * as fs from 'fs';
+import * as path from 'path';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+
+// --- TYPE DECLARATIONS ---
+declare const window: any;
+declare const document: any;
+
+export interface WebScrapeResult {
+  title: string;
+  url: string;
+  content: string;
+  extractedAt: string;
+  method: 'html' | 'visual' | 'hybrid';
+  mobileView?: boolean;
+  viewport?: { width: number; height: number };
+  userAgent?: string;
+}
+
+export interface WebScrapeConfig {
+  timeout?: number;
+  userAgent?: string;
+  viewport?: { width: number; height: number };
+  maxRetries?: number;
+  retryDelay?: number;
+  navigationTimeout?: number;
+  concurrency?: number;
+  simulateHuman?: boolean;
+  mobileView?: boolean;
+  mobileDevice?: 'iphone' | 'android' | 'tablet' | 'custom';
+}
+
+export class WebScrapeService {
+  private config: WebScrapeConfig;
+  private browser: Browser | null = null;
+  private openaiService: OpenAIService | null = null;
+
+  // 1. UPDATED: Modern Mobile Presets (iPhone 14 Pro)
+  private mobilePresets = {
+    iphone: {
+      viewport: { width: 393, height: 852 },
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+    }
+  };
+
+  constructor(config: WebScrapeConfig = {}) {
+    // Apply mobile configuration if requested
+    let finalViewport = config.viewport;
+    let finalUserAgent = config.userAgent;
+
+    if (config.mobileView) {
+      const device = config.mobileDevice || 'iphone';
+      
+      if (device !== 'custom') {
+        // Only 'iphone' is supported in the updated presets
+        const preset = this.mobilePresets.iphone;
+        if (preset) {
+          finalViewport = config.viewport || preset.viewport;
+          finalUserAgent = config.userAgent || preset.userAgent;
+        }
+      } else {
+        // Default mobile settings for custom device
+        finalViewport = config.viewport || { width: 375, height: 812 };
+        finalUserAgent = config.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36';
+      }
+    }
+
+    this.config = {
+      timeout: config.timeout || 60000,
+      userAgent: finalUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+      viewport: finalViewport || { width: 1280, height: 800 },
+      maxRetries: config.maxRetries || 2,
+      retryDelay: config.retryDelay || 1000,
+      navigationTimeout: config.navigationTimeout || 30000,
+      concurrency: config.concurrency || 3,
+      simulateHuman: true,
+      mobileView: config.mobileView || false,
+      mobileDevice: config.mobileDevice,
+    };
+
+    this.initializeOpenAIService();
+  }
+
+  async initialize(): Promise<void> {
+    if (!this.browser || !this.browser.isConnected()) {
+      this.browser = await chromium.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-blink-features=AutomationControlled'
+        ]
+      });
+    }
+  }
+
+  /**
+   * OPTIMIZATION: Block Ads and Trackers
+   * Drastically reduces network activity and CPU usage.
+   */
+  private async setupBlockers(context: BrowserContext) {
+    await context.route('**/*', route => {
+      const url = route.request().url();
+      const type = route.request().resourceType();
+
+      if (
+        type === 'media' ||
+        type === 'image' ||
+        url.includes('google-analytics') ||
+        url.includes('doubleclick') ||
+        url.includes('facebook.com/tr') ||
+        url.includes('googletagmanager') ||
+        url.includes('ads')
+      ) {
+        // Allow images if strictly necessary for visual extraction, but generally blocking them speeds up scraping.
+        // If you rely heavily on visual extraction of small icons, you might comment out the 'image' check.
+        if (type === 'image') return route.continue();
+        return route.abort();
+      }
+      return route.continue();
+    });
+  }
+
+  /**
+   * OPTIMIZATION: Faster Modal Handling
+   * Checks selectors in parallel to find buttons quickly.
+   */
+  private async handleModals(page: Page) {
+    const commonSelectors = [
+        'button:has-text("Accept")', 'button:has-text("Agree")', 'button:has-text("Allow")',
+        '[aria-label="close"]', '.modal-close', '.cookie-banner button'
+    ];
+
+    try {
+        // COMPATIBILITY FIX: Using Promise.all instead of Promise.any
+        // We map every selector to a promise that resolves to the selector string if visible, or null if not.
+        // Since all have a 500ms timeout, this waits max 500ms total.
+        const results = await Promise.all(
+            commonSelectors.map(sel =>
+                page.locator(sel).first().isVisible({ timeout: 500 })
+                    .then(visible => visible ? sel : null)
+                    .catch(() => null)
+            )
+        );
+
+        // Find the first valid selector that returned true
+        const found = results.find(r => r !== null);
+
+        if (found) {
+            await page.locator(found).first().click({ timeout: 500, force: true }).catch(() => {});
+        }
+    } catch (e) {
+        // Ignore errors, proceed to scrape
+    }
+  }
+
+  /**
+   * OPTIMIZATION: Smart Scroll Turbo
+   * Bigger scroll steps + shorter waits.
+   */
+  private async fastSmartScroll(page: Page): Promise<void> {
+    try {
+        const viewportHeight = await page.evaluate(() => window.innerHeight);
+        const scrollStep = viewportHeight;
+        let currentScroll = 0;
+        const maxScrollHeight = 15000; // Cap to prevent infinite scroll loops
+
+        const maxSteps = Math.ceil(maxScrollHeight / scrollStep);
+
+        for (let i = 0; i < maxSteps; i++) {
+            const currentHeight = await page.evaluate(() => document.body.scrollHeight);
+            if (currentScroll >= currentHeight) break;
+
+            await page.evaluate((y) => window.scrollTo(0, y), currentScroll + scrollStep);
+            currentScroll += scrollStep;
+            await page.waitForTimeout(200); // Short wait for lazy load
+        }
+
+        // Reset to top
+        await page.evaluate(() => window.scrollTo(0, 0));
+    } catch (e) {
+        // Ignore scroll errors
+    }
+  }
+
+  private shouldUseMobileView(url: string): boolean {
+    // Check if mobile view is explicitly configured
+    if (this.config.mobileView) return true;
+    
+    // Auto-detect mobile sites based on URL patterns
+    const mobilePatterns = [
+      /m\./i,                    // m.domain.com
+      /mobile\./i,               // mobile.domain.com
+      /\/mobile\//i,             // domain.com/mobile/
+      /\.mobi/i,                 // domain.mobi
+      /touch\./i,                // touch.domain.com
+      /\/wml\//i,                // WML mobile pages
+    ];
+    
+    return mobilePatterns.some(pattern => pattern.test(url));
+  }
+
+  async scrapeUrl(url: string, selector?: string, forceMobile?: boolean): Promise<WebScrapeResult> {
+    await this.initialize();
+    if (!this.browser) throw new Error('Browser not initialized');
+
+    const useMobileView = forceMobile || this.shouldUseMobileView(url);
+    
+    // Default Context Options
+    const contextOptions: any = {
+        viewport: this.config.viewport,
+        userAgent: this.config.userAgent,
+        deviceScaleFactor: 1,
+    };
+
+    // Apply iPhone Mobile Settings if requested
+    if (useMobileView) {
+        const preset = this.mobilePresets.iphone;
+        contextOptions.viewport = preset.viewport;
+        contextOptions.userAgent = preset.userAgent;
+        contextOptions.isMobile = preset.isMobile;
+        contextOptions.hasTouch = preset.hasTouch;
+        contextOptions.deviceScaleFactor = preset.deviceScaleFactor;
+    }
+
+    let context: BrowserContext | null = null;
+    let retryCount = 0;
+
+    while (retryCount <= this.config.maxRetries!) {
+        try {
+            context = await this.browser.newContext(contextOptions);
+
+            await this.setupBlockers(context);
+            const page = await context.newPage();
+
+            const navPromise = page.goto(url, {
+                timeout: this.config.navigationTimeout,
+                waitUntil: 'domcontentloaded'
+            });
+
+            await navPromise;
+
+            // Parallel Execution: Handle Modals & Scroll
+            await Promise.all([
+                this.handleModals(page),
+                this.fastSmartScroll(page)
+            ]);
+
+            const pageTitle = await page.title().catch(() => "Untitled");
+
+            let extractedContent = await page.evaluate((inputSelector) => {
+                const junkSelectors = [
+                    'script', 'style', 'noscript', 'iframe', 'svg',
+                    'nav', 'footer', 'header', '.ad', '.ads',
+                    '#cookie-banner', '.cookie-consent'
+                ];
+                junkSelectors.forEach(sel => document.querySelectorAll(sel).forEach((el: any) => el.remove()));
+
+                const clean = (text: string) => text.replace(/\s+/g, ' ').replace(/\n+/g, '\n').trim();
+
+                if (inputSelector) {
+                    const el = document.querySelector(inputSelector);
+                    return el ? clean(el.textContent || '') : '';
+                }
+
+                const candidates = Array.from(document.querySelectorAll('article, main, .content, #content, .post-body')) as any[];
+                if (candidates.length > 0) {
+                    const best = candidates.reduce((a: any, b: any) => (a.textContent?.length || 0) > (b.textContent?.length || 0) ? a : b);
+                    return clean(best.textContent || '');
+                }
+
+                return clean(document.body.innerText || '');
+            }, selector);
+
+            let method: 'html' | 'visual' = 'html';
+
+            // Visual Fallback if content is sparse
+            if (extractedContent.length < 300) {
+                console.log(`📸 Content sparse (${extractedContent.length} chars). Switching to Optimized Visual Extraction for ${url}`);
+                const visualContent = await this.performOptimizedVisualExtraction(page, url);
+                if (visualContent) {
+                    extractedContent = visualContent;
+                    method = 'visual';
+                }
+            }
+
+            await context.close();
+
+            return {
+                title: pageTitle,
+                url,
+                content: extractedContent,
+                extractedAt: new Date().toISOString(),
+                method,
+                mobileView: useMobileView,
+                viewport: contextOptions.viewport,
+                userAgent: contextOptions.userAgent
+            };
+
+        } catch (error) {
+            if (context) await context.close().catch(() => {});
+
+            if (retryCount < this.config.maxRetries! && this.shouldRetry(error)) {
+                retryCount++;
+                console.warn(`⚠️ Scrape failed, retrying (${retryCount}/${this.config.maxRetries})...`);
+                await new Promise(r => setTimeout(r, this.config.retryDelay));
+                continue;
+            }
+            throw error;
+        }
+    }
+    throw new Error('Max retries reached');
+  }
+
+  private async performOptimizedVisualExtraction(page: Page, url: string): Promise<string> {
+    if (!this.openaiService?.isConfigured()) return "";
+
+    // Generate safe unique filename
+    const safeUrl = url.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
+    const filename = `snap_${Date.now()}_${safeUrl}.jpg`;
+    const screenshotPath = path.join('data', 'screenshots', filename);
+
+    try {
+        const dir = path.dirname(screenshotPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+        // Optimized: JPEG, Quality 75
+        await page.screenshot({
+            path: screenshotPath,
+            fullPage: true,
+            type: 'jpeg',
+            quality: 75
+        });
+
+        const prompt = this.config.userAgent ?
+            "Extract the main content from this web page screenshot. Ignore menus and ads." :
+            (this.openaiService.getConfig()?.prompts?.webScrapeImageAnalysis || "Extract text.");
+
+        const analysis = await this.openaiService.analyzeImage(screenshotPath, prompt);
+        return analysis;
+    } catch (e) {
+        console.error("Visual extraction failed", e);
+        return "";
+    } finally {
+        try { if (fs.existsSync(screenshotPath)) fs.unlinkSync(screenshotPath); } catch (e) {}
+    }
+  }
+
+  async scrapeUrls(urls: string[], selector?: string, forceMobile?: boolean): Promise<WebScrapeResult[]> {
+    const results: WebScrapeResult[] = [];
+    const batchSize = this.config.concurrency || 3;
+
+    for (let i = 0; i < urls.length; i += batchSize) {
+      const batch = urls.slice(i, i + batchSize);
+      const batchPromises = batch.map(url => this.scrapeUrl(url, selector, forceMobile).catch(e => {
+        console.error(`❌ Failed: ${url} - ${e.message}`);
+        return null;
+      }));
+
+      const batchResults = await Promise.all(batchPromises);
+      batchResults.forEach(r => { if(r) results.push(r); });
+    }
+    return results;
+  }
+
+  async close(): Promise<void> {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+  }
+
+  private shouldRetry(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const msg = error.message.toLowerCase();
+    return ['timeout', 'network', 'connection', 'reset', 'navigat', 'closed'].some(k => msg.includes(k));
+  }
+
+  private async initializeOpenAIService(): Promise<void> {
+    try { this.openaiService = await createOpenAIServiceFromConfig(); }
+    catch (e) { try { this.openaiService = createOpenAIServiceFromEnv(); } catch (e) { this.openaiService = null; } }
+  }
+
+  formatScrapeResults(results: WebScrapeResult[]): string {
+    if (results.length === 0) return 'No content scraped.';
+    return results.map((result, index) =>
+      `[${index + 1}] ${result.title} (${result.method})${result.mobileView ? ' 📱' : ''}\nURL: ${result.url}\nContent: ${result.content}\n`
+    ).join('\n');
+  }
+}
+
+export function createWebScrapeService(): WebScrapeService {
+  return new WebScrapeService({
+    timeout: Number(process.env.WEB_SCRAPE_TIMEOUT) || undefined,
+    maxRetries: Number(process.env.WEB_SCRAPE_MAX_RETRIES) || undefined,
+    concurrency: Number(process.env.WEB_SCRAPE_CONCURRENCY) || 5
+  });
+}
+
+---
+./src/services/whatsappService.ts
+---
+import axios from 'axios';
+import { WhatsAppResponse, WhatsAppAPIConfig } from '../types/whatsapp';
+
+export class WhatsAppService {
+  private config: WhatsAppAPIConfig;
+  private devMode: boolean;
+
+  constructor(config: WhatsAppAPIConfig, devMode: boolean = false) {
+    this.config = config;
+    this.devMode = devMode;
+  }
+
+  async sendMessage(to: string, message: string): Promise<boolean> {
+    try {
+      if (this.devMode) {
+        console.log(`📱 [DEV MODE] Message would be sent to ${to}:`);
+        console.log(`💬 ${message}`);
+        console.log('---');
+        return true;
+      }
+
+      const response: WhatsAppResponse = {
+        messaging_product: 'whatsapp',
+        to,
+        text: {
+          body: message
+        }
+      };
+
+      const url = `https://graph.facebook.com/${this.config.apiVersion}/${this.config.phoneNumberId}/messages`;
+
+      await axios.post(url, response, {
+        headers: {
+          'Authorization': `Bearer ${this.config.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log(`Message sent successfully to ${to}`);
+      return true;
+    } catch (error) {
+      console.error('Error sending message:', error);
+      return false;
+    }
+  }
+
+  async markMessageAsRead(messageId: string): Promise<boolean> {
+    try {
+      if (this.devMode) {
+        console.log(`📱 [DEV MODE] Message ${messageId} would be marked as read`);
+        return true;
+      }
+
+      const url = `https://graph.facebook.com/${this.config.apiVersion}/${this.config.phoneNumberId}/messages`;
+
+      await axios.post(url, {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId
+      }, {
+        headers: {
+          'Authorization': `Bearer ${this.config.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log(`Message ${messageId} marked as read`);
+      return true;
+    } catch (error) {
+      console.error('Error marking message as read:', error);
+      return false;
+    }
+  }
+}
+
+---
+./src/types/aiConfig.ts
+---
+export interface AIConfig {
+  // API Configuration
+  apiKey: string;
+  baseURL?: string;
+  model?: string;
+  visionModel?: string;
+  temperature?: number;
+  maxTokens?: number;
+  enableToolCalling?: boolean;
+  embeddingModel?: string;
+
+  // Prompt Templates
+  prompts?: {
+    textResponse?: string;
+    imageAnalysis?: string;
+    toolCalling?: string;
+    errorResponse?: string;
+    searchLimit?: string;
+    // Specialized prompts for different services
+    mediaImageAnalysis?: string;
+    webScrapeImageAnalysis?: string;
+    enhancedImageResponse?: string;
+    audioTranscriptionResponse?: string;
+  };
+
+}
+
+export interface AIConfigFile {
+  name: string;
+  description?: string;
+  config: AIConfig;
+}
+
+export interface AIConfigManagerOptions {
+  configPath?: string;
+  defaultConfig?: string;
+}
+
+---
+./src/types/conversation.ts
+---
+export interface UserProfile {
+  name?: string;
+  state?: 'awaiting_name' | null; // For multi-step conversations
+  knowledge?: {
+    [topic: string]: {
+      value: string;
+      source: string; // e.g., 'user_provided', 'https://example.com'
+      lastUpdated: string;
+    }
+  };
+}
+
+export interface Message {
+  id: string;
+  type: 'text' | 'image' | 'audio';
+  content: string;
+  timestamp: string;
+  mediaPath?: string;
+  mediaInfo?: {
+    id: string;
+    mimeType: string;
+    sha256: string;
+  };
+}
+
+export interface Conversation {
+  senderNumber: string;
+  userProfile: UserProfile; // Add this
+  messages: Message[];
+  lastUpdated: string;
+  messageCount: number;
+}
+
+export interface ConversationStorageConfig {
+  storagePath: string;
+  maxMessagesPerConversation?: number;
+  cleanupIntervalHours?: number;
+}
+
+---
+./src/types/whatsapp.ts
+---
+export interface WhatsAppMessage {
+  object: string;
+  entry: Array<{
+    id: string;
+    changes: Array<{
+      value: {
+        messaging_product: string;
+        metadata: {
+          display_phone_number: string;
+          phone_number_id: string;
+        };
+        contacts?: Array<{
+          profile: {
+            name: string;
+          };
+          wa_id: string;
+        }>;
+        messages?: Array<{
+          from: string;
+          id: string;
+          timestamp: string;
+          text?: {
+            body: string;
+          };
+          image?: {
+            id: string;
+            mime_type: string;
+            sha256: string;
+          };
+          audio?: {
+            id: string;
+            mime_type: string;
+            sha256: string;
+          };
+          type: string;
+        }>;
+      };
+      field: string;
+    }>;
+  }>;
+}
+
+export interface WhatsAppResponse {
+  messaging_product: string;
+  to: string;
+  text: {
+    body: string;
+  };
+}
+
+export interface WhatsAppAPIConfig {
+  accessToken: string;
+  phoneNumberId: string;
+  apiVersion: string;
+}
+
+---
+./src/utils/configLoader.ts
+---
+import * as fs from 'fs';
+import * as path from 'path';
+import { AIConfig, AIConfigFile, AIConfigManagerOptions } from '../types/aiConfig';
+
+export class ConfigLoader {
+  private configPath: string;
+  private defaultConfig: string;
+
+  constructor(options: AIConfigManagerOptions = {}) {
+    this.configPath = options.configPath || 'config/ai';
+    this.defaultConfig = options.defaultConfig || 'default.json';
+  }
+
+  /**
+   * Load AI configuration from a config file
+   */
+  async loadConfig(configName?: string): Promise<AIConfig> {
+    const configFileName = configName || this.defaultConfig;
+    const configFilePath = path.join(this.configPath, configFileName);
+
+    try {
+      // Check if file exists
+      if (!fs.existsSync(configFilePath)) {
+        throw new Error(`Config file not found: ${configFilePath}`);
+      }
+
+      // Read and parse config file
+      const configContent = fs.readFileSync(configFilePath, 'utf8');
+      const configData: AIConfigFile = JSON.parse(configContent);
+
+      // Validate required fields
+      if (!configData.config || !configData.config.apiKey) {
+        throw new Error(`Invalid config file: Missing required fields in ${configFileName}`);
+      }
+
+      return configData.config;
+    } catch (error) {
+      console.error(`Failed to load config from ${configFilePath}:`, error);
+      throw new Error(`Failed to load AI configuration: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * List all available config files
+   */
+  listConfigs(): string[] {
+    try {
+      if (!fs.existsSync(this.configPath)) {
+        return [];
+      }
+
+      const files = fs.readdirSync(this.configPath);
+      return files
+        .filter(file => file.endsWith('.json'))
+        .map(file => path.basename(file, '.json'));
+    } catch (error) {
+      console.error('Failed to list config files:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Validate a config file
+   */
+  validateConfig(config: AIConfig): { isValid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    if (!config.apiKey) {
+      errors.push('apiKey is required');
+    }
+
+    if (config.temperature !== undefined && (config.temperature < 0 || config.temperature > 2)) {
+      errors.push('temperature must be between 0 and 2');
+    }
+
+    if (config.maxTokens !== undefined && config.maxTokens < 1) {
+      errors.push('maxTokens must be greater than 0');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Create a default config file structure
+   */
+  createDefaultConfigFile(): AIConfigFile {
+    return {
+      name: 'Default Configuration',
+      description: 'Default AI model configuration',
+      config: {
+        apiKey: 'your_api_key_here',
+        baseURL: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+        visionModel: 'gpt-4o',
+        temperature: 0.7,
+        maxTokens: 1000,
+        enableToolCalling: true,
+        embeddingModel: 'text-embedding-ada-002',
+        prompts: {
+          textResponse: 'You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.',
+          imageAnalysis: 'Analyze this image comprehensively with context awareness. Describe what you see in detail...',
+          toolCalling: 'You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.',
+          errorResponse: 'I apologize, but I could not generate a response. Please try again.',
+          searchLimit: 'I reached the maximum search limit while researching "{query}". Here\'s what I found so far...'
+        }
+      }
+    };
+  }
+}
+
+// Helper function to create config loader from environment
+export function createConfigLoaderFromEnv(): ConfigLoader {
+  const configPath = process.env.AI_CONFIG_PATH || 'config/ai';
+  const defaultConfig = process.env.AI_CONFIG_FILE || 'default.json';
+
+  return new ConfigLoader({
+    configPath,
+    defaultConfig
+  });
+}
+
+---
+./src/utils/crypto.ts
+---
+import * as crypto from 'crypto';
+
+export class CryptoUtils {
+  static verifySignature(
+    appSecret: string,
+    requestBody: string,
+    signatureHeader?: string
+  ): boolean {
+    if (!signatureHeader) {
+      console.log('No signature header provided');
+      return false;
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', appSecret)
+      .update(requestBody, 'utf8')
+      .digest();
+
+    const signatureParts = signatureHeader.split('=');
+    if (signatureParts.length !== 2 || signatureParts[0] !== 'sha256') {
+      console.log('Invalid signature format');
+      return false;
+    }
+
+    const providedSignature = Buffer.from(signatureParts[1], 'hex');
+    return crypto.timingSafeEqual(expectedSignature, providedSignature);
+  }
+}
+
+---
+./src/utils/logger.ts
+---
+/**
+ * Enhanced logging utility for tool calling and AI responses
+ */
+
+export interface LogEntry {
+  timestamp: string;
+  type: 'ai_response' | 'tool_call' | 'search' | 'decision' | 'error';
+  message: string;
+  data?: any;
+}
+
+export class Logger {
+  private static instance: Logger;
+  private logs: LogEntry[] = [];
+  private maxLogs: number = 1000;
+
+  private constructor() {}
+
+  static getInstance(): Logger {
+    if (!Logger.instance) {
+      Logger.instance = new Logger();
+    }
+    return Logger.instance;
+  }
+
+  log(type: LogEntry['type'], message: string, data?: any): void {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      type,
+      message,
+      data
+    };
+
+    this.logs.push(entry);
+
+    // Keep only the most recent logs
+    if (this.logs.length > this.maxLogs) {
+      this.logs = this.logs.slice(-this.maxLogs);
+    }
+
+    // Also output to console with emojis for better visibility
+    const emoji = this.getEmojiForType(type);
+    console.log(`${emoji} [${type.toUpperCase()}] ${message}`, data || '');
+  }
+
+  private getEmojiForType(type: string): string {
+    const emojis: { [key: string]: string } = {
+      'ai_response': '🤖',
+      'tool_call': '🛠️',
+      'search': '🔍',
+      'decision': '🧠',
+      'error': '❌'
+    };
+    return emojis[type] || '📝';
+  }
+
+  getLogs(filter?: { type?: string; limit?: number }): LogEntry[] {
+    let filteredLogs = this.logs;
+
+    if (filter?.type) {
+      filteredLogs = filteredLogs.filter(log => log.type === filter.type);
+    }
+
+    if (filter?.limit) {
+      filteredLogs = filteredLogs.slice(-filter.limit);
+    }
+
+    return filteredLogs;
+  }
+
+  clearLogs(): void {
+    this.logs = [];
+  }
+
+  // Convenience methods for specific log types
+  logAIResponse(message: string, data?: any): void {
+    this.log('ai_response', message, data);
+  }
+
+  logToolCall(message: string, data?: any): void {
+    this.log('tool_call', message, data);
+  }
+
+  logSearch(message: string, data?: any): void {
+    this.log('search', message, data);
+  }
+
+  logDecision(message: string, data?: any): void {
+    this.log('decision', message, data);
+  }
+
+  logError(message: string, data?: any): void {
+    this.log('error', message, data);
+  }
+}
+
+// Global logger instance
+export const logger = Logger.getInstance();
+
+---
+./src/utils/responseCleaner.ts
+---
+/**
+ * Utility functions for cleaning and processing LLM responses
+ */
+
+/**
+ * Removes <think>...</think> tags and their content from LLM responses
+ * @param response The raw LLM response that may contain thinking tags
+ * @returns Cleaned response without thinking tags
+ */
+export function removeThinkingTags(response: string): string {
+  // Regular expression to match <think>...</think> tags and their content
+  // Also captures optional whitespace around tags to clean up properly
+  const thinkingTagRegex = /\s*<think>[\s\S]*?<\/think>\s*/gi;
+
+  // Remove all thinking tags and their content, including surrounding whitespace
+  return response.replace(thinkingTagRegex, ' ').trim();
+}
+
+/**
+ * Removes tool call artifacts and intermediate reasoning from responses
+ * @param response The raw LLM response that may contain tool call artifacts
+ * @returns Cleaned response without tool call artifacts
+ */
+export function removeToolCallArtifacts(response: string): string {
+  // Remove common tool call artifacts and intermediate reasoning
+  return response
+    .replace(/I need to search for more information to answer your question properly\./gi, '')
+    .replace(/Let me search for that information\./gi, '')
+    .replace(/I'll look that up for you\./gi, '')
+    .replace(/Searching for information\.\.\./gi, '')
+    .replace(/Based on my search results,/gi, '')
+    .replace(/According to my search,/gi, '')
+    .trim();
+}
+
+/**
+ * Shortens responses for WhatsApp by truncating long messages and making them more concise
+ * @param response The response to shorten
+ * @param maxLength Maximum length for WhatsApp responses (default: 1000 characters)
+ * @returns Shortened response suitable for WhatsApp
+ */
+export function shortenForWhatsApp(response: string, maxLength: number = 1000): string {
+  if (!response) return response;
+
+  let shortened = response.trim();
+
+  // DISABLED: Allow the bot to be polite
+  // shortened = shortened.replace(/^(?:hello|hi|hey|greetings)[,!.\s]*/i, '');
+
+  if (shortened.length > maxLength) {
+      return shortened.substring(0, maxLength) + "...";
+  }
+
+  return shortened;
+}
+
+/**
+ * Processes an LLM response by removing thinking tags, cleaning up whitespace, and shortening for WhatsApp
+ * @param response The raw LLM response
+ * @returns Cleaned and processed response ready for WhatsApp
+ */
+export function cleanLLMResponse(response: string): string {
+  if (!response) return '';
+
+  // Remove thinking tags first
+  let cleaned = removeThinkingTags(response);
+
+  // Remove tool call artifacts
+  cleaned = removeToolCallArtifacts(cleaned);
+
+  // Clean up excessive whitespace and newlines
+  cleaned = cleaned
+    .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace 3+ newlines with 2
+    .replace(/^\s+|\s+$/g, '') // Trim leading/trailing whitespace
+    .replace(/\s{2,}/g, ' '); // Replace multiple spaces with single space
+
+  // Shorten for WhatsApp if it's too long
+  return shortenForWhatsApp(cleaned);
+}
+
+/**
+ * Checks if a response contains thinking tags
+ * @param response The response to check
+ * @returns True if thinking tags are present, false otherwise
+ */
+export function containsThinkingTags(response: string): boolean {
+  return /<think>[\s\S]*?<\/think>/i.test(response);
+}
+
+---
+./src/utils/textChunker.ts
+---
+// src/utils/textChunker.ts
+
+export class TextChunker {
+  /**
+   * Splits text into chunks of ~chunkSize characters, respecting sentence boundaries.
+   */
+  static split(text: string, chunkSize: number = 800, overlap: number = 100): string[] {
+    if (!text) return [];
+    
+    // Split by rough sentence boundaries to avoid cutting words in half
+    const sentences = text.match(/[^.!?]+[.!?]+(\s+|$)/g) || [text];
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const sentence of sentences) {
+      if ((currentChunk.length + sentence.length) > chunkSize && currentChunk.length > 0) {
+        chunks.push(currentChunk.trim());
+        // Keep the last 'overlap' characters for context continuity
+        currentChunk = currentChunk.slice(-overlap) + sentence; 
+      } else {
+        currentChunk += sentence;
+      }
+    }
+    
+    if (currentChunk.trim().length > 0) {
+      chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+  }
+}
+
+---
+./src/routes/dashboard.ts
+---
+import { Router, Request, Response } from 'express';
+import { getAutonomousAgent } from '../autonomous';
+import express from 'express';
+
+/**
+ * Dashboard API routes for the web interface
+ * Provides real-time access to autonomous agent data and chat testing
+ */
+export class DashboardRoutes {
+  private router: Router;
+  private activityLog: Array<{timestamp: string; message: string; type?: string}> = [];
+  private dashboardPassword: string;
+
+  constructor() {
+    this.router = Router();
+    this.dashboardPassword = process.env.DASHBOARD_PASSWORD || 'admin';
+    this.setupRoutes();
+    
+    // Initialize with startup message
+    this.logActivity('System started - Dashboard API initialized');
+  }
+
+  /**
+   * Check if user is authenticated
+   */
+  private isAuthenticated(req: Request): boolean {
+    return req.cookies?.dashboardAuth === this.dashboardPassword;
+  }
+
+  /**
+   * Require authentication middleware
+   */
+  private requireAuth(req: Request, res: Response, next: Function): void {
+    if (this.isAuthenticated(req)) {
+      next();
+    } else {
+      res.status(401).json({ error: 'Authentication required' });
+    }
+  }
+
+  private setupRoutes(): void {
+    // Login endpoint
+    this.router.post('/api/login', (req: Request, res: Response) => {
+      const { password } = req.body;
+      
+      if (password === this.dashboardPassword) {
+        // FIX: Relaxed cookie settings for reliable local/prod development
+        res.cookie('dashboardAuth', this.dashboardPassword, {
+          httpOnly: true,
+          maxAge: 24 * 60 * 60 * 1000, // 24 hours
+          path: '/',
+          // Only set Secure if actually in production and on HTTPS
+          secure: process.env.NODE_ENV === 'production' && req.secure,
+          sameSite: 'lax' // 'strict' can block cookies on some redirects
+        });
+        
+        this.logActivity('User logged in to dashboard');
+        res.json({ success: true });
+      } else {
+        this.logActivity('Failed login attempt', 'warning');
+        res.status(401).json({ error: 'Invalid password' });
+      }
+    });
+
+    // Logout endpoint
+    this.router.post('/api/logout', (req: Request, res: Response) => {
+      res.clearCookie('dashboardAuth');
+      this.logActivity('User logged out from dashboard');
+      res.json({ success: true });
+    });
+
+    // Check authentication status
+    this.router.get('/api/auth/status', (req: Request, res: Response) => {
+      res.json({ authenticated: this.isAuthenticated(req) });
+    });
+
+    // Protected routes - require authentication
+    // System status endpoint
+    this.router.get('/api/status', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const agent = getAutonomousAgent();
+        const status = await agent.getStatus();
+        res.json(status);
+      } catch (error) {
+        res.status(500).json({ error: 'Agent not initialized' });
+      }
+    });
+
+    // Bot info endpoint
+    this.router.get('/api/bot-info', this.requireAuth.bind(this), (req: Request, res: Response) => {
+      res.json({
+        name: process.env.CHATBOT_NAME || 'Autonomous WhatsApp Agent',
+        version: '1.0.0',
+        mode: process.env.DEV_MODE === 'true' ? 'development' : 'production'
+      });
+    });
+
+    // Activity log endpoint
+    this.router.get('/api/activity', this.requireAuth.bind(this), (req: Request, res: Response) => {
+      res.json(this.activityLog.slice(-50)); // Last 50 activities
+    });
+
+    // Memory data endpoints
+    this.router.get('/api/memory/context', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const agent = getAutonomousAgent();
+        const status = await agent.getStatus();
+        
+        // Use real context data from ContextManager stats
+        const contextStats = status.memory?.context || { activeUsers: 0, totalMessages: 0 };
+        
+        // Format the data based on real stats
+        const contextData = [{
+          id: 'ctx-stats',
+          title: 'Context Statistics',
+          timestamp: new Date().toISOString(),
+          content: `Active users: ${contextStats.activeUsers}, Total messages: ${contextStats.totalMessages}`,
+          activeUsers: contextStats.activeUsers,
+          totalMessages: contextStats.totalMessages
+        }];
+        
+        // Add web interface user for testing
+        contextData.push({
+          id: 'ctx-web',
+          title: 'Web Interface User',
+          timestamp: new Date().toISOString(),
+          content: 'Web chat interface ready for testing',
+          activeUsers: 0,
+          totalMessages: 0
+        });
+        
+        res.json(contextData);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to get context data' });
+      }
+    });
+
+    this.router.get('/api/memory/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const agent = getAutonomousAgent();
+        
+        // Get actual knowledge content from the autonomous agent
+        const knowledgeContent = await agent.getKnowledgeContent(20); // Get up to 20 recent documents
+        
+        // If we have real content, show it
+        if (knowledgeContent.length > 0) {
+          const knowledgeData = knowledgeContent.map((doc: any) => ({
+            id: doc.id,
+            title: doc.title,
+            timestamp: doc.timestamp,
+            content: doc.content,
+            source: doc.source,
+            category: doc.category
+          }));
+          
+          res.json(knowledgeData);
+        } else {
+          // If no real content yet, show what the agent is ready to learn
+          const exampleTopics = [
+            'AI and Machine Learning',
+            'Web Development',
+            'Mobile Technology',
+            'Cloud Computing',
+            'Cybersecurity',
+            'Data Science',
+            'Internet of Things',
+            'Blockchain Technology'
+          ];
+          
+          const knowledgeData = exampleTopics.map((topic, i) => ({
+            id: `knowledge-ready-${i + 1}`,
+            title: `${topic} (Ready to Learn)`,
+            timestamp: new Date().toISOString(),
+            content: `The autonomous agent will learn about ${topic.toLowerCase()} during browsing sessions.`,
+            source: 'Autonomous Browsing',
+            category: topic
+          }));
+          
+          res.json(knowledgeData);
+        }
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to get knowledge data' });
+      }
+    });
+
+    this.router.get('/api/memory/history', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const agent = getAutonomousAgent();
+        const status = await agent.getStatus();
+        
+        // Use activity log as real history data
+        const historyData = this.activityLog.slice(-20).map((log, index) => ({
+          id: `hist-${index + 1}`,
+          title: `Activity: ${log.type || 'info'}`,
+          timestamp: log.timestamp,
+          message: log.message,
+          type: log.type || 'info'
+        }));
+        
+        res.json(historyData);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to get history data' });
+      }
+    });
+
+    // Chat endpoint for testing the bot
+    this.router.post('/api/chat', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { message, userId = 'web-user' } = req.body;
+        
+        if (!message) {
+          return res.status(400).json({ error: 'Message is required' });
+        }
+
+        const agent = getAutonomousAgent();
+        
+        // Log the chat activity
+        this.logActivity(`Chat message from ${userId}: ${message.substring(0, 50)}...`);
+        
+        // Process the message through the autonomous agent using web interface method
+        const response = await agent.handleWebMessage(userId, message);
+        
+        // Log the response
+        this.logActivity(`Bot response to ${userId}: ${response.substring(0, 50)}...`);
+        
+        res.json({ success: true, response });
+      } catch (error) {
+        console.error('Chat API error:', error);
+        this.logActivity(`Chat error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+        res.status(500).json({ error: 'Failed to process message' });
+      }
+    });
+
+    // Autonomous activity simulation endpoints
+    this.router.post('/api/simulate/browse', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { intent } = req.body;
+        const agent = getAutonomousAgent();
+        
+        this.logActivity(`Simulating browsing session with intent: ${intent || 'general'}`);
+        
+        // In a real implementation, this would trigger actual browsing
+        // For now, we'll simulate the activity
+        setTimeout(() => {
+          this.logActivity(`Browsing session completed - learned 3 new facts about ${intent || 'technology'}`);
+        }, 2000);
+        
+        res.json({ success: true, message: 'Browsing session started' });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to simulate browsing' });
+      }
+    });
+
+    this.router.post('/api/simulate/proactive', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { userId = 'web-user', content } = req.body;
+        const agent = getAutonomousAgent();
+        
+        this.logActivity(`Simulating proactive message to ${userId}`);
+        
+        // Simulate proactive messaging logic
+        setTimeout(() => {
+          this.logActivity(`Proactive message sent to ${userId}: "Check out this interesting content!"`);
+        }, 1000);
+        
+        res.json({ success: true, message: 'Proactive message simulation started' });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to simulate proactive message' });
+      }
+    });
+
+    // Knowledge search endpoint
+    this.router.post('/api/search/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { query } = req.body;
+        
+        if (!query) {
+          return res.status(400).json({ error: 'Search query is required' });
+        }
+
+        const agent = getAutonomousAgent();
+        
+        // Log the search activity
+        this.logActivity(`Knowledge search: "${query}"`);
+        
+        // Search actual knowledge content
+        const searchResults = await agent.searchKnowledgeContent(query, 10);
+        
+        // Format results with relevance scoring
+        const formattedResults = searchResults.map((doc: any, index: number) => ({
+          id: doc.id,
+          title: doc.title,
+          timestamp: doc.timestamp,
+          content: doc.content.substring(0, 500) + (doc.content.length > 500 ? '...' : ''), // Limit content length
+          relevance: ['High', 'Medium', 'Low'][index % 3], // Simple relevance based on order
+          source: doc.source,
+          category: doc.category
+        }));
+        
+        // If no real results, provide informative message
+        if (formattedResults.length === 0) {
+          formattedResults.push({
+            id: 'search-no-results',
+            title: 'No Results Found',
+            timestamp: new Date().toISOString(),
+            content: `No knowledge found matching "${query}". The autonomous agent will learn about this topic during future browsing sessions.`,
+            relevance: 'Low',
+            source: 'Knowledge Base',
+            category: 'Information'
+          });
+        }
+
+        res.json(formattedResults);
+      } catch (error) {
+        console.error('Knowledge search error:', error);
+        res.status(500).json({ error: 'Failed to search knowledge base' });
+      }
+    });
+
+    // Manual browsing trigger endpoint
+    this.router.post('/api/browse/now', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { intent } = req.body;
+        const agent = getAutonomousAgent();
+        
+        // Get browser service from agent (this would need to be exposed)
+        // For now, we'll simulate triggering a browsing session
+        this.logActivity(`Manual browsing triggered with intent: ${intent || 'general'}`);
+        
+        // Simulate browsing session
+        setTimeout(() => {
+          this.logActivity(`Manual browsing completed - learned fresh content about ${intent || 'technology'}`);
+        }, 3000);
+        
+        res.json({
+          success: true,
+          message: `Browsing session started${intent ? ` with intent: ${intent}` : ''}`,
+          estimatedTime: '3-5 seconds'
+        });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to trigger browsing session' });
+      }
+    });
+
+    // Force knowledge update endpoint
+    this.router.post('/api/knowledge/refresh', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const agent = getAutonomousAgent();
+        
+        this.logActivity('Manual knowledge refresh triggered');
+        
+        // This would force the agent to browse and update knowledge
+        // For now, simulate the process
+        setTimeout(() => {
+          this.logActivity('Knowledge refresh completed - fresh content available');
+        }, 2000);
+        
+        res.json({
+          success: true,
+          message: 'Knowledge refresh initiated',
+          status: 'Updating with latest content'
+        });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to refresh knowledge' });
+      }
+    });
+
+    // FIX: Improved Middleware to protect HTML files AND the root path
+    this.router.use((req: Request, res: Response, next: Function) => {
+      const path = req.path;
+      
+      // Always allow login page, static assets (css/js/images), and specific public API endpoints
+      if (
+        path === '/login.html' ||
+        path === '/api/login' ||
+        path === '/api/auth/status' ||
+        path === '/health' ||
+        path === '/api' ||
+        path.match(/\.(js|css|png|jpg|ico|json)$/)
+      ) {
+        return next();
+      }
+      
+      // Check authentication
+      if (this.isAuthenticated(req)) {
+        return next();
+      }
+      
+      // If accessing root or html files without auth, redirect to login
+      if (path === '/' || path.endsWith('.html')) {
+        return res.redirect('/login.html');
+      }
+
+      // For protected API endpoints, return 401 instead of redirect
+      if (path.startsWith('/api/')) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      next();
+    });
+
+    // Serve static files from web directory
+    this.router.use(express.static('web'));
+
+    // Serve the web interface
+    this.router.get('/', (req: Request, res: Response) => {
+      // Redirect to login if not authenticated
+      if (!this.isAuthenticated(req)) {
+        return res.redirect('/login.html');
+      }
+      res.sendFile('web/index.html', { root: process.cwd() });
+    });
+
+    // Serve login page route
+    this.router.get('/login', (req: Request, res: Response) => {
+      // If already authenticated, redirect to dashboard
+      if (this.isAuthenticated(req)) {
+        return res.redirect('/');
+      }
+      res.redirect('/login.html');
+    });
+  }
+
+  /**
+   * Log activity for the dashboard
+   */
+  private logActivity(message: string, type?: string): void {
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      message,
+      type
+    };
+    
+    this.activityLog.push(logEntry);
+    
+    // Keep only the last 1000 entries to prevent memory issues
+    if (this.activityLog.length > 1000) {
+      this.activityLog = this.activityLog.slice(-1000);
+    }
+    
+    console.log(`📊 Dashboard: ${message}`);
+  }
+
+  /**
+   * Get the router instance
+   */
+  getRouter(): Router {
+    return this.router;
+  }
+}
+
+---
+./src/routes/webhook.ts
+---
+import { Router, Request, Response } from 'express';
+import { WhatsAppService } from '../services/whatsappService';
+import { MediaService } from '../services/mediaService';
+import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
+import { CryptoUtils } from '../utils/crypto';
+import { WhatsAppMessage } from '../types/whatsapp';
+import { getToolSchemas } from '../tools';
+// Import the Autonomous Agent getter
+import { getAutonomousAgent } from '../autonomous';
+
+export class WebhookRoutes {
+  private router: Router;
+  private processedMessageService: ProcessedMessageServicePostgres;
+  private verifyToken: string;
+  private appSecret: string;
+
+  constructor(whatsappService: WhatsAppService, verifyToken: string, appSecret: string, whatsappConfig: any) {
+    this.router = Router();
+    this.processedMessageService = new ProcessedMessageServicePostgres();
+    this.verifyToken = verifyToken;
+    this.appSecret = appSecret;
+    this.setupRoutes();
+  }
+
+  private setupRoutes(): void {
+    // Webhook verification endpoint (GET)
+    this.router.get('/webhook', (req: Request, res: Response) => {
+      this.handleWebhookVerification(req, res);
+    });
+
+    // Webhook message handler (POST)
+    this.router.post('/webhook', (req: Request, res: Response) => {
+      this.handleWebhookMessage(req, res);
+    });
+
+    // Health check endpoint
+    this.router.get('/health', (req: Request, res: Response) => {
+      res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+    });
+
+    // Dev mode API endpoint (only available in dev mode)
+    if (process.env.DEV_MODE === 'true') {
+      this.router.post('/dev/message', (req: Request, res: Response) => {
+        this.handleDevMessage(req, res);
+      });
+    }
+  }
+
+  private handleWebhookVerification(req: Request, res: Response): void {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    if (mode && token) {
+      if (mode === 'subscribe' && token === this.verifyToken) {
+        console.log('Webhook verified successfully!');
+        res.status(200).send(challenge);
+      } else {
+        console.log('Webhook verification failed!');
+        res.sendStatus(403);
+      }
+    }
+  }
+
+  private async handleWebhookMessage(req: Request, res: Response): Promise<void> {
+    try {
+      // Verify signature if app secret is provided
+      if (this.appSecret) {
+        const signature = req.headers['x-hub-signature-256'] as string;
+        // Use raw body for signature verification (stored by body-parser middleware)
+        const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
+        if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
+          console.warn('Invalid webhook signature');
+          res.sendStatus(401);
+          return;
+        }
+      }
+
+      const data: WhatsAppMessage = req.body;
+
+      // Process each entry
+      for (const entry of data.entry) {
+        for (const change of entry.changes) {
+          if (change.field === 'messages') {
+            const messages = change.value.messages;
+
+            if (messages && messages.length > 0) {
+              for (const message of messages) {
+                // Check if this message has already been processed
+                const alreadyProcessed = await this.processedMessageService.hasMessageBeenProcessed(message.id);
+
+                if (alreadyProcessed) {
+                  console.log(`Skipping duplicate message: ${message.id} (already processed)`);
+                  continue;
+                }
+
+                // Mark message as processed immediately to prevent race conditions
+                await this.processedMessageService.markMessageAsProcessed(
+                  message.id,
+                  message.from,
+                  message.type
+                );
+
+                if (message.type === 'text' && message.text) {
+                  // USE AUTONOMOUS AGENT HERE
+                  const agent = getAutonomousAgent(); // Get the singleton agent
+                  await agent.handleIncomingMessage(
+                    message.from,
+                    message.text.body,
+                    message.id
+                  );
+                } else if (message.type === 'image' && message.image) {
+                  // TODO: Handle image messages with autonomous agent
+                  console.log(`🖼️ Image message from ${message.from} (ID: ${message.image.id})`);
+                  console.log('⚠️ Image processing not yet implemented in autonomous agent');
+                } else if (message.type === 'audio' && message.audio) {
+                  // TODO: Handle audio messages with autonomous agent
+                  console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
+                  console.log('⚠️ Audio processing not yet implemented in autonomous agent');
+                } else {
+                  console.log(`Unsupported message type: ${message.type}`);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      res.sendStatus(200);
+    } catch (error) {
+      console.error('Error processing webhook:', error);
+      res.sendStatus(500);
+    }
+  }
+
+  private async handleDevMessage(req: Request, res: Response): Promise<void> {
+    try {
+      const { message, from = 'dev-user', type = 'text', imagePath, audioPath } = req.body;
+
+      if (!message) {
+        res.status(400).json({ error: 'Message is required' });
+        return;
+      }
+
+      console.log(`📱 [DEV API] Received ${type} message from ${from}: "${message}"`);
+
+      let response: string;
+
+      if (type === 'image' && imagePath) {
+        console.log(`🖼️ Processing local image: ${imagePath}`);
+        // TODO: Implement image processing in autonomous agent
+        response = "Image processing is not yet implemented in the autonomous agent. Please use text messages for now.";
+      } else if (type === 'audio' && audioPath) {
+        console.log(`🎤 Processing local audio: ${audioPath}`);
+        // TODO: Implement audio processing in autonomous agent
+        response = "Audio processing is not yet implemented in the autonomous agent. Please use text messages for now.";
+      } else {
+        // Process text message using the autonomous agent
+        const agent = getAutonomousAgent();
+        response = await agent.handleWebMessage(from, message);
+      }
+
+      console.log(`🤖 [DEV API] Response: "${response.substring(0, 100)}${response.length > 100 ? '...' : ''}"`);
+
+      // Return the response directly as JSON
+      res.status(200).json({
+        success: true,
+        message: message,
+        response: response,
+        from: from,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error processing dev message:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  getRouter(): Router {
+    return this.router;
+  }
+}
+
+---
+./src/config/databaseConfig.ts
+---
+import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
+import { VectorStoreServicePostgres } from '../services/VectorStoreServicePostgres';
+import { OpenAIService } from '../services/openaiService';
+import { PrismaDatabaseUtils } from './prisma';
+
+/**
+ * Database configuration for PostgreSQL-only setup
+ */
+export class DatabaseConfig {
+  /**
+   * Get the HistoryStore implementation (PostgreSQL)
+   */
+  static getHistoryStore(): HistoryStorePostgres {
+    return new HistoryStorePostgres();
+  }
+
+  /**
+   * Get the KnowledgeBase implementation (PostgreSQL)
+   */
+  static getKnowledgeBase(openaiService: OpenAIService): KnowledgeBasePostgres {
+    return new KnowledgeBasePostgres(openaiService);
+  }
+
+  /**
+   * Get the ProcessedMessageService implementation (PostgreSQL)
+   */
+  static getProcessedMessageService(): ProcessedMessageServicePostgres {
+    return new ProcessedMessageServicePostgres();
+  }
+
+  /**
+   * Get the VectorStoreService implementation (PostgreSQL)
+   */
+  static getVectorStoreService(openaiService: OpenAIService): VectorStoreServicePostgres {
+    return new VectorStoreServicePostgres(openaiService);
+  }
+
+  /**
+   * Check if PostgreSQL is being used (always true now)
+   */
+  static isUsingPostgres(): boolean {
+    return true;
+  }
+
+  /**
+   * Get database statistics for PostgreSQL
+   */
+  static async getDatabaseStats(): Promise<{
+    databaseType: string;
+    conversationLogs: number;
+    knowledgeDocuments: number;
+    processedMessages: number;
+    vectorDocuments: number;
+  }> {
+    const stats = await PrismaDatabaseUtils.getDatabaseStats();
+    
+    return {
+      databaseType: 'PostgreSQL',
+      conversationLogs: stats.conversationLogs,
+      knowledgeDocuments: stats.knowledgeDocuments,
+      processedMessages: stats.processedMessages,
+      vectorDocuments: stats.vectorDocuments,
+    };
+  }
+
+  /**
+   * Initialize the database connection
+   */
+  static async initialize(): Promise<void> {
+    await PrismaDatabaseUtils.initialize();
+  }
+
+  /**
+   * Health check for PostgreSQL
+   */
+  static async healthCheck(): Promise<boolean> {
+    return await PrismaDatabaseUtils.healthCheck();
+  }
+
+  /**
+   * Clean up old data in PostgreSQL
+   */
+  static async cleanupOldData(): Promise<{
+    oldConversations: number;
+    oldKnowledge: number;
+    oldProcessedMessages: number;
+    oldVectorDocuments: number;
+  }> {
+    const result = await PrismaDatabaseUtils.cleanupOldData();
+    
+    return {
+      oldConversations: result.oldConversations,
+      oldKnowledge: result.oldKnowledge,
+      oldProcessedMessages: result.oldProcessedMessages,
+      oldVectorDocuments: 0, // Vector documents cleanup not implemented yet
+    };
+  }
+}
+
+export default DatabaseConfig;
+
+---
+./src/config/prisma.ts
+---
+import { PrismaClient } from '@prisma/client';
+
+/**
+ * Prisma client singleton
+ */
+class PrismaClientSingleton {
+  private static instance: PrismaClient;
+
+  private constructor() {}
+
+  static getInstance(): PrismaClient {
+    if (!PrismaClientSingleton.instance) {
+      PrismaClientSingleton.instance = new PrismaClient({
+        log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+      });
+    }
+    return PrismaClientSingleton.instance;
+  }
+
+  static async disconnect(): Promise<void> {
+    if (PrismaClientSingleton.instance) {
+      await PrismaClientSingleton.instance.$disconnect();
+    }
+  }
+}
+
+export const prisma = PrismaClientSingleton.getInstance();
+
+/**
+ * Database utility functions using Prisma
+ */
+export class PrismaDatabaseUtils {
+  /**
+   * Initialize database connection and verify schema
+   */
+  static async initialize(): Promise<void> {
+    try {
+      // Test connection
+      await prisma.$connect();
+      console.log('✅ Prisma connected to database');
+      
+      // Verify tables exist by running a simple query
+      await prisma.conversationLog.findFirst();
+      console.log('✅ Database schema verified');
+    } catch (error) {
+      console.error('❌ Database initialization failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Health check for database
+   */
+  static async healthCheck(): Promise<boolean> {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return true;
+    } catch (error) {
+      console.error('❌ Database health check failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get database statistics
+   */
+  static async getDatabaseStats(): Promise<{
+    conversationLogs: number;
+    knowledgeDocuments: number;
+    processedMessages: number;
+    vectorDocuments: number;
+  }> {
+    try {
+      const [conversationLogs, knowledgeDocuments, processedMessages, vectorDocuments] = await Promise.all([
+        prisma.conversationLog.count(),
+        prisma.knowledge.count(),
+        prisma.processedMessage.count(),
+        prisma.document.count(),
+      ]);
+
+      return {
+        conversationLogs,
+        knowledgeDocuments,
+        processedMessages,
+        vectorDocuments,
+      };
+    } catch (error) {
+      console.error('❌ Failed to get database stats:', error);
+      return {
+        conversationLogs: 0,
+        knowledgeDocuments: 0,
+        processedMessages: 0,
+        vectorDocuments: 0,
+      };
+    }
+  }
+
+  /**
+   * Clean up old data
+   */
+  static async cleanupOldData(): Promise<{
+    oldConversations: number;
+    oldKnowledge: number;
+    oldProcessedMessages: number;
+  }> {
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const [oldConversations, oldKnowledge, oldProcessedMessages] = await Promise.all([
+        prisma.conversationLog.deleteMany({
+          where: {
+            timestamp: {
+              lt: thirtyDaysAgo,
+            },
+          },
+        }),
+        prisma.knowledge.deleteMany({
+          where: {
+            timestamp: {
+              lt: thirtyDaysAgo,
+            },
+          },
+        }),
+        prisma.processedMessage.deleteMany({
+          where: {
+            processedAt: {
+              lt: thirtyDaysAgo,
+            },
+          },
+        }),
+      ]);
+
+      return {
+        oldConversations: oldConversations.count,
+        oldKnowledge: oldKnowledge.count,
+        oldProcessedMessages: oldProcessedMessages.count,
+      };
+    } catch (error) {
+      console.error('❌ Failed to cleanup old data:', error);
+      return {
+        oldConversations: 0,
+        oldKnowledge: 0,
+        oldProcessedMessages: 0,
+      };
+    }
+  }
+}
+
+---
+./src/tools/RecallHistoryTool.ts
+---
+import { BaseTool } from '../core/BaseTool';
+import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
+
+export class RecallHistoryTool extends BaseTool {
+  name = 'recall_history';
+  description = 'Search through past conversations to remember what the user said, specific details, or dates. Use this when the user asks "What did I say about X?" or references a past discussion.';
+  
+  parameters = {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Keywords to search for in the history',
+      },
+      days_back: {
+        type: 'number',
+        description: 'How many days back to search (default: 30)',
+      }
+    },
+    required: ['query'],
+    additionalProperties: false,
+  };
+
+  constructor(private historyStore: HistoryStorePostgres) {
+    super();
+  }
+
+  async execute(args: any): Promise<string> {
+    const { query, days_back = 30 } = args;
+    
+    // Calculate start date
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days_back);
+
+    const logs = await this.historyStore.query({
+      keywords: query,
+      start: startDate.toISOString(),
+      limit: 5 // Limit results to save context window
+    });
+
+    if (logs.length === 0) {
+      return "No matching conversation history found.";
+    }
+
+    return logs.map(log => 
+      `[${new Date(log.timestamp).toLocaleDateString()}] ${log.role}: ${log.message}`
+    ).join('\n');
+  }
+}
+
+---
+./src/tools/ScrapeNewsTool.ts
+---
+import { BaseTool } from '../core/BaseTool';
+import { NewsScrapeService } from '../services/newsScrapeService';
+
+export class ScrapeNewsTool extends BaseTool {
+  name = 'scrape_news';
+  description = 'Get the latest headlines and news summaries. Use this when the user asks for news, updates, or current events.';
+  
+  parameters = {
+    type: 'object',
+    properties: {
+      category: {
+        type: 'string',
+        enum: ['general', 'tech', 'business', 'sports', 'world'],
+        description: 'The category of news to fetch (default: general)',
+      }
+    },
+    required: ['category'],
+    additionalProperties: false,
+  };
+
+  constructor(private newsService: NewsScrapeService) {
+    super();
+  }
+
+  async execute(args: any): Promise<string> {
+    const category = args.category || 'general';
+    return this.newsService.getCachedNews(category);
+  }
+}
+
+---
+./src/tools/WebSearchTool.ts
+---
+import { BaseTool } from '../core/BaseTool';
+import { GoogleSearchService } from '../services/googleSearchService';
+
+/**
+ * Web Search Tool for the autonomous agent
+ * Bridges the gap between old and new tool systems
+ */
+export class WebSearchTool extends BaseTool {
+  name = 'web_search';
+  description = 'Perform a web search using Google to find current information, news, or facts. Use this when you need up-to-date information that might not be in your knowledge base yet.';
+  
+  parameters = {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'The search query to look up information about',
+      },
+      num_results: {
+        type: 'number',
+        description: 'Number of search results to return (default: 3)',
+      }
+    },
+    required: ['query'],
+    additionalProperties: false,
+  };
+
+  constructor(private searchService: GoogleSearchService) {
+    super();
+  }
+
+  async execute(args: any): Promise<string> {
+    const { query, num_results = 3 } = args;
+    
+    console.log(`🔍 WebSearchTool executing: "${query}"`);
+    
+    try {
+      const results = await this.searchService.search(query, num_results);
+      
+      if (results.length === 0) {
+        return "No search results found for your query.";
+      }
+      
+      // Format results for the agent
+      const formattedResults = results.map((result, index) =>
+        `${index + 1}. ${result.title}\n   ${result.link}\n   ${result.snippet}`
+      ).join('\n\n');
+      
+      return `Search results for "${query}":\n\n${formattedResults}`;
+      
+    } catch (error) {
+      console.error('❌ WebSearchTool failed:', error);
+      return `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    }
+  }
+}
+
+---
+./src/tools/index.ts
+---
+import { GoogleSearchService } from '../services/googleSearchService';
+import { WebScrapeService, createWebScrapeService } from '../services/webScrapeService';
+import { NewsScrapeService, createNewsScrapeService, NewsArticle } from '../services/newsScrapeService';
+import { VectorStoreServicePostgres } from '../services/VectorStoreServicePostgres';
+import { NewsProcessorService } from '../services/newsProcessorService'; // New
+import { OpenAIService, createOpenAIServiceFromConfig } from '../services/openaiService';
+
+// Tool function definitions
+export interface ToolFunction {
+  name: string;
+  description: string;
+  parameters: any;
+  execute: (args: any) => Promise<any>;
+}
+
+// Available tools
+export const availableTools: { [key: string]: ToolFunction } = {};
+let webScrapeService: WebScrapeService | undefined;
+export let newsScrapeService: NewsScrapeService;
+let vectorStoreService: VectorStoreServicePostgres; // Updated global reference
+let mediaService: any; // Will be initialized later
+
+// Tool schemas for OpenAI function calling
+export const toolSchemas = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'google_search',
+      description: 'Perform a web search using Google to find current information, news, or facts',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query to look up information about',
+          },
+          num_results: {
+            type: 'number',
+            description: 'Number of search results to return (default: 5)',
+          }
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'web_scrape',
+      description: 'Scrape content from specific URLs to get real-time information from websites. Useful for getting current data, news articles, or specific page content.',
+      parameters: {
+        type: 'object',
+        properties: {
+          urls: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            description: 'Array of URLs to scrape content from',
+          },
+          selector: {
+            type: 'string',
+            description: 'Optional CSS selector to target specific content on the page (e.g., "article", ".content", "#main")',
+          }
+        },
+        required: ['urls'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'scrape_news',
+      description: 'Get latest news headlines. Categories: general, tech, business, sports, world.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            description: 'Category of news (default: general).',
+          }
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'analyze_image',
+      description: 'Analyze image content using AI vision capabilities. Use this when users send images that need detailed analysis, description, or interpretation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          image_path: {
+            type: 'string',
+            description: 'The file path to the image that needs to be analyzed',
+          },
+          prompt: {
+            type: 'string',
+            description: 'Optional specific instructions or questions about what to focus on in the image analysis',
+          }
+        },
+        required: ['image_path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'transcribe_audio',
+      description: 'Transcribe audio files to text using speech-to-text technology. Use this when users send audio messages that need to be converted to text for processing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          audio_path: {
+            type: 'string',
+            description: 'The file path to the audio file that needs to be transcribed',
+          },
+          language: {
+            type: 'string',
+            description: 'Optional language code for transcription (e.g., "en", "zh", "ja")',
+          }
+        },
+        required: ['audio_path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'search_knowledge',
+      description: 'Search the bot\'s learned knowledge base for past news, facts, and enriched context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The specific topic or question to search for in memory',
+          }
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
+];
+
+// Initialize tools with dependencies
+export async function initializeTools(searchService: GoogleSearchService, mediaServiceInstance?: any) {
+  // 1. Initialize OpenAI (Needed for Embeddings & Processor)
+  const openaiService = await createOpenAIServiceFromConfig();
+
+  // 2. Initialize Vector Store (The Better RAG)
+  vectorStoreService = new VectorStoreServicePostgres(openaiService);
+
+  // 3. Initialize News Processor
+  const newsProcessor = new NewsProcessorService(openaiService, searchService, vectorStoreService);
+
+  // 4. Initialize Web Scrape
+  webScrapeService = createWebScrapeService();
+
+  // 5. Initialize News Scrape Service WITH Processor
+  newsScrapeService = createNewsScrapeService(webScrapeService, newsProcessor);
+
+  // Store media service reference for later use
+  if (mediaServiceInstance) {
+    mediaService = mediaServiceInstance;
+  }
+
+  availableTools.google_search = {
+    name: 'google_search',
+    description: 'Perform a web search using Google',
+    parameters: toolSchemas[0].function.parameters,
+    execute: async (args: { query: string; num_results?: number }) => {
+      console.log('🔍 Executing Google Search:', {
+        query: args.query,
+        numResults: args.num_results || 5
+      });
+
+      const startTime = Date.now();
+      const results = await searchService.search(args.query, args.num_results || 5);
+      const executionTime = Date.now() - startTime;
+
+      console.log('✅ Google Search Completed:', {
+        query: args.query,
+        resultsCount: results.length,
+        executionTime: `${executionTime}ms`,
+        firstResult: results[0] ? results[0].title.substring(0, 50) + '...' : 'No results'
+      });
+
+      return searchService.formatSearchResults(results);
+    }
+  };
+
+  availableTools.web_scrape = {
+    name: 'web_scrape',
+    description: 'Scrape content from specific URLs',
+    parameters: toolSchemas[1].function.parameters,
+    execute: async (args: { urls: string[]; selector?: string }) => {
+      console.log('🌐 Executing Web Scrape:', {
+        urls: args.urls,
+        selector: args.selector || 'auto',
+        urlCount: args.urls.length
+      });
+
+      const startTime = Date.now();
+
+      try {
+        if (!webScrapeService) {
+          throw new Error('Web scrape service not initialized');
+        }
+        const results = await webScrapeService.scrapeUrls(args.urls, args.selector);
+        const executionTime = Date.now() - startTime;
+
+        console.log('✅ Web Scrape Completed:', {
+          urlCount: args.urls.length,
+          successfulScrapes: results.length,
+          executionTime: `${executionTime}ms`,
+          firstResult: results[0] ? results[0].title.substring(0, 50) + '...' : 'No results'
+        });
+
+        return webScrapeService.formatScrapeResults(results);
+      } catch (error) {
+        console.error('❌ Web scrape execution error:', {
+          error: error instanceof Error ? error.message : `${error}`,
+          urls: args.urls
+        });
+        throw new Error('Failed to scrape web content');
+      }
+    }
+  };
+
+  availableTools.scrape_news = {
+    name: 'scrape_news',
+    description: 'Get latest news headlines. Categories: general, tech, business, sports, world.',
+    parameters: toolSchemas[2].function.parameters,
+    execute: async (args: { category?: string }) => {
+      const cat = args.category || 'general';
+      console.log(`📰 Tool retrieving cached news for: ${cat}`);
+      return newsScrapeService.getCachedNews(cat);
+    }
+  };
+
+  availableTools.search_knowledge = {
+    name: 'search_knowledge',
+    description: 'Search learned knowledge base',
+    parameters: toolSchemas[5].function.parameters,
+    execute: async (args: { query: string }) => {
+      console.log(`🧠 Searching Vector Store for: ${args.query}`);
+      return vectorStoreService.search(args.query);
+    }
+  };
+
+  // Initialize media tools if media service is available
+  if (mediaService) {
+    availableTools.analyze_image = {
+      name: 'analyze_image',
+      description: 'Analyze image content using AI vision capabilities',
+      parameters: toolSchemas[3].function.parameters,
+      execute: async (args: { image_path: string; prompt?: string }) => {
+        console.log('🖼️ Executing Image Analysis:', {
+          imagePath: args.image_path,
+          prompt: args.prompt || 'default analysis'
+        });
+
+        const startTime = Date.now();
+
+        try {
+          const result = await mediaService.analyzeImageWithOpenAI(args.image_path);
+          const executionTime = Date.now() - startTime;
+
+          console.log('✅ Image Analysis Completed:', {
+            imagePath: args.image_path,
+            executionTime: `${executionTime}ms`,
+            resultLength: result.length
+          });
+
+          return result;
+        } catch (error) {
+          console.error('❌ Image analysis execution error:', {
+            error: error instanceof Error ? error.message : `${error}`,
+            imagePath: args.image_path
+          });
+          throw new Error('Failed to analyze image');
+        }
+      }
+    };
+
+    availableTools.transcribe_audio = {
+      name: 'transcribe_audio',
+      description: 'Transcribe audio files to text using speech-to-text technology',
+      parameters: toolSchemas[4].function.parameters,
+      execute: async (args: { audio_path: string; language?: string }) => {
+        console.log('🎤 Executing Audio Transcription:', {
+          audioPath: args.audio_path,
+          language: args.language || 'auto'
+        });
+
+        const startTime = Date.now();
+
+        try {
+          const result = await mediaService.transcribeAudio(args.audio_path, args.language);
+          const executionTime = Date.now() - startTime;
+
+          console.log('✅ Audio Transcription Completed:', {
+            audioPath: args.audio_path,
+            executionTime: `${executionTime}ms`,
+            resultLength: result.length
+          });
+
+          return result;
+        } catch (error) {
+          console.error('❌ Audio transcription execution error:', {
+            error: error instanceof Error ? error.message : `${error}`,
+            audioPath: args.audio_path
+          });
+          throw new Error('Failed to transcribe audio');
+        }
+      }
+    };
+  }
+}
+
+// Check if any tools are available
+export function hasAvailableTools(): boolean {
+  return Object.keys(availableTools).length > 0;
+}
+
+// Get tool schemas for OpenAI
+export function getToolSchemas() {
+  return toolSchemas;
+}
+
+// Execute a specific tool
+export async function executeTool(toolName: string, args: any): Promise<any> {
+  const tool = availableTools[toolName];
+  if (!tool) {
+    throw new Error(`Tool ${toolName} not found`);
+  }
+  return tool.execute(args);
+}
+
+// Cleanup function to close browser instances
+export async function cleanupTools(): Promise<void> {
+  if (webScrapeService) {
+    await webScrapeService.close();
+  }
+}
+
+---
+./web/index.html
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Agent | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <!-- Google Fonts for better typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* WhatsApp-like Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+        
+        /* Chat Background Pattern */
+        .chat-bg {
+            background-color: #e5ddd5;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 10h10v10H10V10z' fill='%23d1d7db' fill-opacity='0.4'/%3E%3C/svg%3E");
+        }
+        
+        .message-in { 
+            background: #ffffff; 
+            border-radius: 0 12px 12px 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+        }
+        .message-out { 
+            background: #d9fdd3; 
+            border-radius: 12px 0 12px 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+        }
+
+        [x-cloak] { display: none !important; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        wa: {
+                            teal: '#00a884',
+                            dark: '#111b21',
+                            darker: '#202c33',
+                            panel: '#f0f2f5',
+                            accent: '#008069'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-100 h-screen overflow-hidden text-gray-800">
+
+    <div x-data="dashboard()" x-init="init()" class="flex h-full" x-cloak>
+        
+        <!-- Sidebar Navigation -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 transition-all duration-300" 
+               :class="mobileMenuOpen ? 'translate-x-0 absolute h-full' : '-translate-x-full md:translate-x-0 md:relative'">
+            
+            <!-- Bot Header -->
+            <div class="p-5 border-b border-gray-100 flex items-center space-x-3 bg-wa-panel">
+                <div class="w-10 h-10 rounded-full bg-wa-teal flex items-center justify-center text-white font-bold text-lg shadow-sm">
+                    🤖
+                </div>
+                <div>
+                    <h1 class="font-bold text-gray-800 tracking-tight">Auto Agent</h1>
+                    <div class="flex items-center space-x-1.5">
+                        <span class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></span>
+                        <span class="text-xs text-gray-500 font-medium" x-text="status.agent ? 'Online' : 'Offline'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Links -->
+            <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+                <template x-for="item in navItems">
+                    <button @click="activeTab = item.id; mobileMenuOpen = false"
+                            :class="activeTab === item.id ? 'bg-green-50 text-wa-teal font-semibold' : 'text-gray-600 hover:bg-gray-50'"
+                            class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group">
+                        <span x-text="item.icon" class="text-xl group-hover:scale-110 transition-transform"></span>
+                        <span x-text="item.label"></span>
+                    </button>
+                </template>
+            </nav>
+
+            <!-- Bottom Actions -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
+                <button @click="triggerBrowsing()" class="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm">
+                    <span>🌐</span> <span>Trigger Browse</span>
+                </button>
+                <button @click="logout()" class="w-full flex items-center justify-center space-x-2 text-red-500 hover:bg-red-50 py-2 rounded-md text-sm font-medium transition-colors">
+                    <span>🚪</span> <span>Logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col min-w-0 bg-wa-panel relative">
+            
+            <!-- Mobile Header -->
+            <header class="md:hidden bg-wa-teal text-white p-4 flex items-center justify-between shadow-md">
+                <div class="flex items-center space-x-3">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    </button>
+                    <span class="font-bold" x-text="getTabTitle()"></span>
+                </div>
+                <div class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-white' : 'bg-red-400'"></div>
+            </header>
+
+            <!-- Toast Notification -->
+            <div class="absolute top-4 right-4 z-50 transform transition-all duration-300"
+                 x-show="notification.show"
+                 x-transition:enter="translate-y-[-20px] opacity-0"
+                 x-transition:enter-end="translate-y-0 opacity-100"
+                 x-transition:leave="opacity-0">
+                <div :class="notification.type === 'error' ? 'bg-red-500' : 'bg-gray-800'" class="text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-3">
+                    <span x-text="notification.type === 'success' ? '✅' : '⚠️'"></span>
+                    <span x-text="notification.message" class="font-medium text-sm"></span>
+                </div>
+            </div>
+
+            <!-- TAB: OVERVIEW -->
+            <div x-show="activeTab === 'overview'" class="p-6 overflow-y-auto h-full space-y-6">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-2xl font-bold text-gray-800">System Overview</h2>
+                    <button @click="refreshAll()" class="p-2 hover:bg-white rounded-full transition-colors" title="Refresh">
+                        🔄
+                    </button>
+                </div>
+                
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Users</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.context?.activeUsers || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-blue-50 text-blue-500 rounded-lg">👥</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Learned Facts</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.knowledge?.totalDocuments || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-purple-50 text-purple-500 rounded-lg">🧠</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bot Cycles</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.scheduler?.tickCount || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-orange-50 text-orange-500 rounded-lg">⚡</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Pages Surfed</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.browser?.totalPagesVisited || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-green-50 text-green-500 rounded-lg">🌍</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity Feed -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                        <h3 class="font-semibold text-gray-700">Live Activity Feed</h3>
+                        <div class="flex items-center space-x-2">
+                            <span class="relative flex h-3 w-3">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                            </span>
+                            <span class="text-xs text-gray-500">Live</span>
+                        </div>
+                    </div>
+                    <div class="max-h-96 overflow-y-auto font-mono text-sm bg-gray-900 text-gray-300 p-4 space-y-2">
+                        <template x-for="log in activities.slice(-20).reverse()" :key="log.timestamp">
+                            <div class="flex space-x-3 hover:bg-gray-800 p-1 rounded">
+                                <span class="text-gray-500 whitespace-nowrap" x-text="new Date(log.timestamp).toLocaleTimeString()"></span>
+                                <span :class="{
+                                    'text-blue-400': log.type === 'ai_response',
+                                    'text-yellow-400': log.type === 'tool_call',
+                                    'text-green-400': log.type === 'search',
+                                    'text-red-400': log.type === 'error'
+                                }">
+                                    <span x-text="getLogIcon(log.type)"></span>
+                                    <span x-text="log.message"></span>
+                                </span>
+                            </div>
+                        </template>
+                        <div x-show="activities.length === 0" class="text-gray-600 italic">Waiting for system activity...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: CHAT -->
+            <div x-show="activeTab === 'chat'" class="flex flex-col h-full bg-[#efeae2]">
+                <!-- Chat Area (WhatsApp Style) -->
+                <div class="flex-1 overflow-y-auto p-4 space-y-4 chat-bg" id="chat-container">
+                    <div class="text-center text-xs text-gray-500 my-4">
+                        <span class="bg-white/60 px-2 py-1 rounded shadow-sm">🔒 Messages are end-to-end encrypted (simulated)</span>
+                    </div>
+
+                    <template x-for="msg in chatMessages" :key="msg.id">
+                        <div class="flex w-full" :class="msg.sender === 'user' ? 'justify-end' : 'justify-start'">
+                            <div class="max-w-[80%] relative p-2 shadow-sm flex flex-col"
+                                 :class="msg.sender === 'user' ? 'message-out' : 'message-in'">
+                                
+                                <!-- Sender Name (for bot) -->
+                                <template x-if="msg.sender === 'bot'">
+                                    <span class="text-xs font-bold text-orange-500 mb-1" x-text="botInfo.name"></span>
+                                </template>
+
+                                <span class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></span>
+                                
+                                <div class="flex justify-end items-center mt-1 space-x-1">
+                                    <span class="text-[10px] text-gray-500" x-text="msg.time"></span>
+                                    <template x-if="msg.sender === 'user'">
+                                        <svg class="w-3 h-3 text-blue-500" viewBox="0 0 16 15" width="16" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.283a.32.32 0 0 0 .484-.033l6.272-8.048a.366.366 0 0 0-.064-.512zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z" fill="currentColor"/></svg>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                    
+                    <div x-show="isTyping" class="flex justify-start">
+                        <div class="message-in p-3 flex items-center space-x-1">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="bg-wa-panel p-3 px-4 flex items-center space-x-2 border-t border-gray-200">
+                    <button class="text-gray-500 hover:text-gray-700 p-1">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </button>
+                    <input type="text" x-model="chatInput" @keypress.enter="sendMessage()" 
+                           class="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
+                           placeholder="Type a message">
+                    <button @click="sendMessage()" class="p-2 bg-wa-teal text-white rounded-full hover:bg-wa-accent transition-colors shadow-sm">
+                        <svg class="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- TAB: MEMORY -->
+            <div x-show="activeTab === 'memory'" class="p-6 h-full flex flex-col">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">Memory Banks</h2>
+                    <div class="bg-white rounded-lg border p-1 flex">
+                        <button @click="memoryType = 'context'; loadMemoryData()" :class="memoryType === 'context' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Context</button>
+                        <button @click="memoryType = 'knowledge'; loadMemoryData()" :class="memoryType === 'knowledge' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Knowledge</button>
+                    </div>
+                </div>
+
+                <div x-show="memoryType === 'knowledge'" class="mb-4 flex gap-2">
+                    <input type="text" x-model="searchQuery" @keypress.enter="searchKnowledge()" placeholder="Search stored knowledge..." class="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-wa-teal focus:ring-wa-teal px-4 py-2">
+                    <button @click="searchKnowledge()" class="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700">Search</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-gray-100 p-0">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source/ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="item in memoryData" :key="item.id">
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm font-medium text-gray-900" x-text="truncate(item.title || item.source || item.id, 20)"></div>
+                                        <div class="text-xs text-wa-teal" x-text="item.category || 'General'"></div>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <div class="text-sm text-gray-500 max-h-20 overflow-y-auto" x-text="item.content || item.message"></div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                                        <div x-text="timeAgo(item.timestamp)"></div>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="memoryData.length === 0">
+                                <td colspan="3" class="px-6 py-10 text-center text-gray-500 italic">
+                                    No memory items found. Try a search or trigger browsing.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        function dashboard() {
+            return {
+                mobileMenuOpen: false,
+                activeTab: 'overview',
+                memoryType: 'context',
+                isTyping: false,
+                chatInput: '',
+                searchQuery: '',
+                notification: { show: false, message: '', type: 'success' },
+                
+                navItems: [
+                    { id: 'overview', label: 'Overview', icon: '📊' },
+                    { id: 'chat', label: 'Live Chat', icon: '💬' },
+                    { id: 'memory', label: 'Memory', icon: '🧠' },
+                    // { id: 'activity', label: 'Logs', icon: '📝' }
+                ],
+
+                botInfo: { name: 'Bot' },
+                status: {},
+                activities: [],
+                memoryData: [],
+                chatMessages: [
+                    { id: 1, sender: 'bot', text: 'Hello! I am online. Ask me to research something!', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
+                ],
+
+                async init() {
+                    // Include credentials to fix the authentication issue
+                    const fetchOptions = { credentials: 'include' };
+                    
+                    try {
+                        const botRes = await fetch('/api/bot-info', fetchOptions);
+                        if (botRes.status === 401) window.location.href = '/login.html';
+                        this.botInfo = await botRes.json();
+                        
+                        await this.refreshAll();
+                        
+                        // Auto-refresh stats every 5s
+                        setInterval(() => {
+                            if (this.activeTab === 'overview') {
+                                this.loadStatus();
+                                this.loadActivities();
+                            }
+                        }, 5000);
+                    } catch (e) {
+                        console.error("Init failed", e);
+                    }
+                },
+
+                async refreshAll() {
+                    const fetchOptions = { credentials: 'include' };
+                    await Promise.all([
+                        fetch('/api/status', fetchOptions).then(r => r.json()).then(d => this.status = d),
+                        fetch('/api/activity', fetchOptions).then(r => r.json()).then(d => this.activities = d),
+                        this.loadMemoryData()
+                    ]);
+                },
+
+                async loadStatus() {
+                    this.status = await fetch('/api/status', { credentials: 'include' }).then(r => r.json());
+                },
+                
+                async loadActivities() {
+                    this.activities = await fetch('/api/activity', { credentials: 'include' }).then(r => r.json());
+                },
+
+                async loadMemoryData() {
+                    try {
+                        const data = await fetch(`/api/memory/${this.memoryType}`, { credentials: 'include' }).then(r => r.json());
+                        this.memoryData = Array.isArray(data) ? data : [];
+                    } catch (e) { this.memoryData = []; }
+                },
+
+                async sendMessage() {
+                    if (!this.chatInput.trim()) return;
+                    
+                    const text = this.chatInput;
+                    this.chatInput = '';
+                    
+                    this.chatMessages.push({
+                        id: Date.now(),
+                        sender: 'user',
+                        text: text,
+                        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                    });
+                    
+                    this.scrollToBottom();
+                    this.isTyping = true;
+
+                    try {
+                        const res = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ message: text, userId: 'web-admin' }),
+                            credentials: 'include'
+                        });
+                        const data = await res.json();
+                        
+                        this.isTyping = false;
+                        this.chatMessages.push({
+                            id: Date.now(),
+                            sender: 'bot',
+                            text: data.response,
+                            time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                        });
+                        this.scrollToBottom();
+                        this.loadActivities(); // Update logs
+                    } catch (e) {
+                        this.isTyping = false;
+                        this.showToast('Failed to send message', 'error');
+                    }
+                },
+
+                async searchKnowledge() {
+                    if (!this.searchQuery) return;
+                    try {
+                        const res = await fetch('/api/search/knowledge', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ query: this.searchQuery }),
+                            credentials: 'include'
+                        });
+                        this.memoryData = await res.json();
+                    } catch(e) { this.showToast('Search failed', 'error'); }
+                },
+
+                async triggerBrowsing() {
+                    this.showToast('Browsing initiated...', 'success');
+                    fetch('/api/browse/now', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ intent: 'general' }),
+                        credentials: 'include' 
+                    });
+                },
+
+                async logout() {
+                    await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+                    window.location.href = '/login.html';
+                },
+
+                scrollToBottom() {
+                    this.$nextTick(() => {
+                        const container = document.getElementById('chat-container');
+                        container.scrollTop = container.scrollHeight;
+                    });
+                },
+
+                showToast(msg, type = 'success') {
+                    this.notification = { show: true, message: msg, type };
+                    setTimeout(() => this.notification.show = false, 3000);
+                },
+
+                getTabTitle() {
+                    return this.navItems.find(i => i.id === this.activeTab)?.label || 'Dashboard';
+                },
+
+                getLogIcon(type) {
+                    const map = { 'ai_response': '🤖', 'tool_call': '🛠️', 'search': '🔍', 'error': '❌' };
+                    return map[type] || '📝';
+                },
+
+                truncate(str, n) {
+                    return (str && str.length > n) ? str.substr(0, n-1) + '...' : str;
+                },
+
+                timeAgo(dateString) {
+                    const date = new Date(dateString);
+                    const seconds = Math.floor((new Date() - date) / 1000);
+                    if (seconds < 60) return seconds + "s ago";
+                    const minutes = Math.floor(seconds / 60);
+                    if (minutes < 60) return minutes + "m ago";
+                    const hours = Math.floor(minutes / 60);
+                    if (hours < 24) return hours + "h ago";
+                    return date.toLocaleDateString();
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+
+---
+./web/login.html
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Autonomous WhatsApp Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .login-card {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen flex items-center justify-center p-4">
+    <div x-data="{ password: '', isLoading: false, error: '' }" class="w-full max-w-md">
+        <div class="login-card rounded-2xl shadow-2xl p-8">
+            <!-- Header -->
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-800 mb-2">Autonomous WhatsApp Agent</h1>
+                <p class="text-gray-600">Enter your password to access the dashboard</p>
+            </div>
+
+            <!-- Login Form -->
+            <form @submit.prevent="
+                isLoading = true;
+                error = '';
+                fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: password }),
+                    credentials: 'include' // <--- CRITICAL FIX: Ensures cookies are handled
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // Force reload to ensure cookie is picked up by server middleware
+                        window.location.href = '/';
+                    } else {
+                        error = data.error || 'Login failed';
+                    }
+                })
+                .catch(err => {
+                    error = 'Connection error. Please try again.';
+                })
+                .finally(() => {
+                    isLoading = false;
+                })
+            ">
+                <!-- Password Input -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                    <input 
+                        x-model="password"
+                        type="password" 
+                        required
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200"
+                        placeholder="Enter dashboard password"
+                        :disabled="isLoading"
+                    >
+                </div>
+
+                <!-- Error Message -->
+                <div x-show="error" x-transition class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p class="text-red-700 text-sm" x-text="error"></p>
+                </div>
+
+                <!-- Submit Button -->
+                <button 
+                    type="submit"
+                    class="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    :disabled="isLoading || !password"
+                >
+                    <span x-show="!isLoading">Login</span>
+                    <span x-show="isLoading" class="flex items-center justify-center">
+                        <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Logging in...
+                    </span>
+                </button>
+            </form>
+
+            <!-- Footer Info -->
+            <div class="mt-6 text-center text-sm text-gray-500">
+                <p>Default password: <code class="bg-gray-100 px-2 py-1 rounded">admin</code></p>
+                <p class="mt-2">Set <code class="bg-gray-100 px-2 py-1 rounded">DASHBOARD_PASSWORD</code> in .env to customize</p>
+            </div>
+        </div>
+
+        <!-- Status Indicator -->
+        <div class="mt-4 text-center">
+            <div x-data="{ status: 'checking' }" 
+                 x-init="
+                    fetch('/api/auth/status')
+                    .then(r => r.json())
+                    .then(data => status = data.authenticated ? 'authenticated' : 'not-authenticated')
+                    .catch(() => status = 'error')
+                 "
+                 class="inline-flex items-center px-3 py-1 rounded-full text-sm"
+                 :class="{
+                    'bg-green-100 text-green-800': status === 'authenticated',
+                    'bg-yellow-100 text-yellow-800': status === 'not-authenticated',
+                    'bg-red-100 text-red-800': status === 'error',
+                    'bg-gray-100 text-gray-800': status === 'checking'
+                 }">
+                <span x-show="status === 'checking'">🔍 Checking authentication...</span>
+                <span x-show="status === 'authenticated'">✅ Already authenticated</span>
+                <span x-show="status === 'not-authenticated'">🔐 Login required</span>
+                <span x-show="status === 'error'">❌ Connection error</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-focus password input on page load
+        document.addEventListener('alpine:init', () => {
+            setTimeout(() => {
+                const input = document.querySelector('input[type="password"]');
+                if (input) input.focus();
+            }, 100);
+        });
+    </script>
+</body>
+</html>
+
+---

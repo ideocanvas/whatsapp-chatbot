@@ -3,22 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Autonomous WhatsApp Agent</title>
+    <title>Autonomous Agent | Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <!-- Google Fonts for better typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* WhatsApp-like Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+        
+        /* Chat Background Pattern */
+        .chat-bg {
+            background-color: #e5ddd5;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 10h10v10H10V10z' fill='%23d1d7db' fill-opacity='0.4'/%3E%3C/svg%3E");
+        }
+        
+        .message-in { 
+            background: #ffffff; 
+            border-radius: 0 12px 12px 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+        }
+        .message-out { 
+            background: #d9fdd3; 
+            border-radius: 12px 0 12px 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+        }
+
+        [x-cloak] { display: none !important; }
+    </style>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
-                        whatsapp: {
-                            green: '#25D366',
-                            dark: '#075E54',
-                            light: '#128C7E',
-                            message: {
-                                sent: '#DCF8C6',
-                                received: '#FFFFFF'
-                            }
+                        wa: {
+                            teal: '#00a884',
+                            dark: '#111b21',
+                            darker: '#202c33',
+                            panel: '#f0f2f5',
+                            accent: '#008069'
                         }
                     }
                 }
@@ -26,462 +54,441 @@
         }
     </script>
 </head>
-<body class="bg-gray-100 min-h-screen">
-    <div x-data="dashboard()" x-init="init()" class="flex h-screen">
-        <!-- Sidebar -->
-        <div class="w-64 bg-whatsapp-dark text-white flex flex-col">
-            <!-- Header -->
-            <div class="p-4 border-b border-whatsapp-light">
-                <h1 class="text-xl font-bold">🤖 WhatsApp Agent</h1>
-                <p class="text-whatsapp-light text-sm" x-text="botInfo.name"></p>
+<body class="bg-gray-100 h-screen overflow-hidden text-gray-800">
+
+    <div x-data="dashboard()" x-init="init()" class="flex h-full" x-cloak>
+        
+        <!-- Sidebar Navigation -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 transition-all duration-300" 
+               :class="mobileMenuOpen ? 'translate-x-0 absolute h-full' : '-translate-x-full md:translate-x-0 md:relative'">
+            
+            <!-- Bot Header -->
+            <div class="p-5 border-b border-gray-100 flex items-center space-x-3 bg-wa-panel">
+                <div class="w-10 h-10 rounded-full bg-wa-teal flex items-center justify-center text-white font-bold text-lg shadow-sm">
+                    🤖
+                </div>
+                <div>
+                    <h1 class="font-bold text-gray-800 tracking-tight">Auto Agent</h1>
+                    <div class="flex items-center space-x-1.5">
+                        <span class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></span>
+                        <span class="text-xs text-gray-500 font-medium" x-text="status.agent ? 'Online' : 'Offline'"></span>
+                    </div>
+                </div>
             </div>
 
-            <!-- Navigation -->
-            <nav class="flex-1 p-4 space-y-2">
-                <button @click="activeTab = 'overview'" 
-                        :class="activeTab === 'overview' ? 'bg-whatsapp-light' : 'hover:bg-whatsapp-light/50'"
-                        class="w-full text-left p-3 rounded-lg transition-colors">
-                    📊 Overview
-                </button>
-                <button @click="activeTab = 'chat'" 
-                        :class="activeTab === 'chat' ? 'bg-whatsapp-light' : 'hover:bg-whatsapp-light/50'"
-                        class="w-full text-left p-3 rounded-lg transition-colors">
-                    💬 Test Chat
-                </button>
-                <button @click="activeTab = 'memory'" 
-                        :class="activeTab === 'memory' ? 'bg-whatsapp-light' : 'hover:bg-whatsapp-light/50'"
-                        class="w-full text-left p-3 rounded-lg transition-colors">
-                    🧠 Memory
-                </button>
-                <button @click="activeTab = 'activity'" 
-                        :class="activeTab === 'activity' ? 'bg-whatsapp-light' : 'hover:bg-whatsapp-light/50'"
-                        class="w-full text-left p-3 rounded-lg transition-colors">
-                    📝 Activity Log
-                </button>
+            <!-- Navigation Links -->
+            <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+                <template x-for="item in navItems">
+                    <button @click="activeTab = item.id; mobileMenuOpen = false"
+                            :class="activeTab === item.id ? 'bg-green-50 text-wa-teal font-semibold' : 'text-gray-600 hover:bg-gray-50'"
+                            class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group">
+                        <span x-text="item.icon" class="text-xl group-hover:scale-110 transition-transform"></span>
+                        <span x-text="item.label"></span>
+                    </button>
+                </template>
             </nav>
 
-            <!-- Status & Actions -->
-            <div class="p-4 border-t border-whatsapp-light space-y-3">
-                <!-- Status Indicator -->
-                <div class="flex items-center space-x-2 text-sm">
-                    <div class="w-2 h-2 rounded-full" 
-                         :class="status.agent ? 'bg-green-400' : 'bg-red-400'"></div>
-                    <span x-text="status.agent ? 'Agent Active' : 'Agent Offline'"></span>
-                </div>
-
-                <!-- Quick Actions -->
-                <div class="space-y-2">
-                    <button @click="triggerBrowsing()" 
-                            class="w-full bg-whatsapp-green text-white p-2 rounded text-sm hover:bg-green-600 transition-colors">
-                        🌐 Browse Now
-                    </button>
-                    <button @click="refreshKnowledge()" 
-                            class="w-full bg-blue-500 text-white p-2 rounded text-sm hover:bg-blue-600 transition-colors">
-                        📚 Update Knowledge
-                    </button>
-                </div>
-
-                <!-- Logout -->
-                <button @click="logout()" 
-                        class="w-full bg-gray-600 text-white p-2 rounded text-sm hover:bg-gray-700 transition-colors">
-                    🚪 Logout
+            <!-- Bottom Actions -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
+                <button @click="triggerBrowsing()" class="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm">
+                    <span>🌐</span> <span>Trigger Browse</span>
+                </button>
+                <button @click="logout()" class="w-full flex items-center justify-center space-x-2 text-red-500 hover:bg-red-50 py-2 rounded-md text-sm font-medium transition-colors">
+                    <span>🚪</span> <span>Logout</span>
                 </button>
             </div>
-        </div>
+        </aside>
 
-        <!-- Main Content -->
-        <div class="flex-1 flex flex-col">
-            <!-- Top Bar -->
-            <header class="bg-white border-b p-4">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-xl font-semibold" x-text="getTabTitle()"></h2>
-                    <div class="flex items-center space-x-4">
-                        <div class="text-sm text-gray-600">
-                            Auto-refresh: 
-                            <input type="checkbox" x-model="autoRefresh" class="ml-2">
-                        </div>
-                        <button @click="refreshAll()" class="bg-whatsapp-green text-white px-3 py-1 rounded text-sm hover:bg-green-600">
-                            🔄 Refresh
-                        </button>
-                    </div>
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col min-w-0 bg-wa-panel relative">
+            
+            <!-- Mobile Header -->
+            <header class="md:hidden bg-wa-teal text-white p-4 flex items-center justify-between shadow-md">
+                <div class="flex items-center space-x-3">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    </button>
+                    <span class="font-bold" x-text="getTabTitle()"></span>
                 </div>
+                <div class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-white' : 'bg-red-400'"></div>
             </header>
 
-            <!-- Content Area -->
-            <main class="flex-1 p-6 overflow-auto">
-                <!-- Overview Tab -->
-                <div x-show="activeTab === 'overview'" class="space-y-6">
-                    <!-- Stats Grid -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <div class="bg-white p-6 rounded-lg shadow">
-                            <div class="text-2xl font-bold text-whatsapp-dark" x-text="status.memory?.context?.activeUsers || 0"></div>
-                            <div class="text-gray-600">Active Users</div>
-                        </div>
-                        <div class="bg-white p-6 rounded-lg shadow">
-                            <div class="text-2xl font-bold text-whatsapp-dark" x-text="status.memory?.knowledge?.totalDocuments || 0"></div>
-                            <div class="text-gray-600">Knowledge Docs</div>
-                        </div>
-                        <div class="bg-white p-6 rounded-lg shadow">
-                            <div class="text-2xl font-bold text-whatsapp-dark" x-text="status.scheduler?.tickCount || 0"></div>
-                            <div class="text-gray-600">Scheduler Ticks</div>
-                        </div>
-                        <div class="bg-white p-6 rounded-lg shadow">
-                            <div class="text-2xl font-bold text-whatsapp-dark" x-text="status.browser?.totalSessions || 0"></div>
-                            <div class="text-gray-600">Browse Sessions</div>
+            <!-- Toast Notification -->
+            <div class="absolute top-4 right-4 z-50 transform transition-all duration-300"
+                 x-show="notification.show"
+                 x-transition:enter="translate-y-[-20px] opacity-0"
+                 x-transition:enter-end="translate-y-0 opacity-100"
+                 x-transition:leave="opacity-0">
+                <div :class="notification.type === 'error' ? 'bg-red-500' : 'bg-gray-800'" class="text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-3">
+                    <span x-text="notification.type === 'success' ? '✅' : '⚠️'"></span>
+                    <span x-text="notification.message" class="font-medium text-sm"></span>
+                </div>
+            </div>
+
+            <!-- TAB: OVERVIEW -->
+            <div x-show="activeTab === 'overview'" class="p-6 overflow-y-auto h-full space-y-6">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-2xl font-bold text-gray-800">System Overview</h2>
+                    <button @click="refreshAll()" class="p-2 hover:bg-white rounded-full transition-colors" title="Refresh">
+                        🔄
+                    </button>
+                </div>
+                
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Users</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.context?.activeUsers || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-blue-50 text-blue-500 rounded-lg">👥</div>
                         </div>
                     </div>
-
-                    <!-- Recent Activity -->
-                    <div class="bg-white rounded-lg shadow">
-                        <div class="p-4 border-b">
-                            <h3 class="font-semibold">Recent Activity</h3>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Learned Facts</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.knowledge?.totalDocuments || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-purple-50 text-purple-500 rounded-lg">🧠</div>
                         </div>
-                        <div class="p-4 max-h-64 overflow-y-auto">
-                            <template x-for="activity in activities.slice(-10).reverse()" :key="activity.timestamp">
-                                <div class="py-2 border-b last:border-b-0">
-                                    <div class="text-sm text-gray-600" x-text="new Date(activity.timestamp).toLocaleString()"></div>
-                                    <div class="font-medium" x-text="activity.message"></div>
-                                </div>
-                            </template>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bot Cycles</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.scheduler?.tickCount || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-orange-50 text-orange-500 rounded-lg">⚡</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Pages Surfed</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.browser?.totalPagesVisited || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-green-50 text-green-500 rounded-lg">🌍</div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Chat Tab -->
-                <div x-show="activeTab === 'chat'" class="h-full flex flex-col">
-                    <div class="bg-white rounded-lg shadow flex-1 flex flex-col">
-                        <!-- Chat Header -->
-                        <div class="p-4 border-b bg-whatsapp-green text-white rounded-t-lg">
-                            <h3 class="font-semibold" x-text="botInfo.name"></h3>
-                            <div class="text-sm opacity-90">Test Chat Interface</div>
+                <!-- Recent Activity Feed -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                        <h3 class="font-semibold text-gray-700">Live Activity Feed</h3>
+                        <div class="flex items-center space-x-2">
+                            <span class="relative flex h-3 w-3">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                            </span>
+                            <span class="text-xs text-gray-500">Live</span>
                         </div>
+                    </div>
+                    <div class="max-h-96 overflow-y-auto font-mono text-sm bg-gray-900 text-gray-300 p-4 space-y-2">
+                        <template x-for="log in activities.slice(-20).reverse()" :key="log.timestamp">
+                            <div class="flex space-x-3 hover:bg-gray-800 p-1 rounded">
+                                <span class="text-gray-500 whitespace-nowrap" x-text="new Date(log.timestamp).toLocaleTimeString()"></span>
+                                <span :class="{
+                                    'text-blue-400': log.type === 'ai_response',
+                                    'text-yellow-400': log.type === 'tool_call',
+                                    'text-green-400': log.type === 'search',
+                                    'text-red-400': log.type === 'error'
+                                }">
+                                    <span x-text="getLogIcon(log.type)"></span>
+                                    <span x-text="log.message"></span>
+                                </span>
+                            </div>
+                        </template>
+                        <div x-show="activities.length === 0" class="text-gray-600 italic">Waiting for system activity...</div>
+                    </div>
+                </div>
+            </div>
 
-                        <!-- Messages -->
-                        <div class="flex-1 p-4 overflow-y-auto space-y-3" id="chat-messages">
-                            <template x-for="message in chatMessages" :key="message.id">
-                                <div :class="message.sender === 'user' ? 'flex justify-end' : 'flex justify-start'">
-                                    <div :class="message.sender === 'user' ? 'bg-whatsapp.message.sent' : 'bg-whatsapp.message.received border'"
-                                         class="max-w-xs lg:max-w-md rounded-lg p-3 shadow">
-                                        <div class="font-medium" x-text="message.sender === 'user' ? 'You' : botInfo.name"></div>
-                                        <div class="mt-1" x-text="message.text"></div>
-                                        <div class="text-xs text-gray-500 mt-1 text-right" x-text="message.time"></div>
-                                    </div>
+            <!-- TAB: CHAT -->
+            <div x-show="activeTab === 'chat'" class="flex flex-col h-full bg-[#efeae2]">
+                <!-- Chat Area (WhatsApp Style) -->
+                <div class="flex-1 overflow-y-auto p-4 space-y-4 chat-bg" id="chat-container">
+                    <div class="text-center text-xs text-gray-500 my-4">
+                        <span class="bg-white/60 px-2 py-1 rounded shadow-sm">🔒 Messages are end-to-end encrypted (simulated)</span>
+                    </div>
+
+                    <template x-for="msg in chatMessages" :key="msg.id">
+                        <div class="flex w-full" :class="msg.sender === 'user' ? 'justify-end' : 'justify-start'">
+                            <div class="max-w-[80%] relative p-2 shadow-sm flex flex-col"
+                                 :class="msg.sender === 'user' ? 'message-out' : 'message-in'">
+                                
+                                <!-- Sender Name (for bot) -->
+                                <template x-if="msg.sender === 'bot'">
+                                    <span class="text-xs font-bold text-orange-500 mb-1" x-text="botInfo.name"></span>
+                                </template>
+
+                                <span class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></span>
+                                
+                                <div class="flex justify-end items-center mt-1 space-x-1">
+                                    <span class="text-[10px] text-gray-500" x-text="msg.time"></span>
+                                    <template x-if="msg.sender === 'user'">
+                                        <svg class="w-3 h-3 text-blue-500" viewBox="0 0 16 15" width="16" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.283a.32.32 0 0 0 .484-.033l6.272-8.048a.366.366 0 0 0-.064-.512zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z" fill="currentColor"/></svg>
+                                    </template>
                                 </div>
-                            </template>
-                        </div>
-
-                        <!-- Input -->
-                        <div class="p-4 border-t">
-                            <div class="flex space-x-2">
-                                <input x-model="chatInput" 
-                                       @keypress.enter="sendMessage()"
-                                       type="text" 
-                                       placeholder="Type a message..." 
-                                       class="flex-1 border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-whatsapp-green">
-                                <button @click="sendMessage()" 
-                                        class="bg-whatsapp-green text-white px-6 py-3 rounded-lg hover:bg-green-600 transition-colors">
-                                    Send
-                                </button>
                             </div>
                         </div>
+                    </template>
+                    
+                    <div x-show="isTyping" class="flex justify-start">
+                        <div class="message-in p-3 flex items-center space-x-1">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Memory Tab -->
-                <div x-show="activeTab === 'memory'" class="space-y-6">
-                    <!-- Memory Type Selector -->
-                    <div class="flex space-x-2">
-                        <button @click="memoryType = 'context'" 
-                                :class="memoryType === 'context' ? 'bg-whatsapp-dark text-white' : 'bg-white text-gray-700'"
-                                class="px-4 py-2 rounded-lg border transition-colors">
-                            Context
-                        </button>
-                        <button @click="memoryType = 'knowledge'" 
-                                :class="memoryType === 'knowledge' ? 'bg-whatsapp-dark text-white' : 'bg-white text-gray-700'"
-                                class="px-4 py-2 rounded-lg border transition-colors">
-                            Knowledge
-                        </button>
-                        <button @click="memoryType = 'history'" 
-                                :class="memoryType === 'history' ? 'bg-whatsapp-dark text-white' : 'bg-white text-gray-700'"
-                                class="px-4 py-2 rounded-lg border transition-colors">
-                            History
-                        </button>
-                    </div>
+                <!-- Input Area -->
+                <div class="bg-wa-panel p-3 px-4 flex items-center space-x-2 border-t border-gray-200">
+                    <button class="text-gray-500 hover:text-gray-700 p-1">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </button>
+                    <input type="text" x-model="chatInput" @keypress.enter="sendMessage()" 
+                           class="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
+                           placeholder="Type a message">
+                    <button @click="sendMessage()" class="p-2 bg-wa-teal text-white rounded-full hover:bg-wa-accent transition-colors shadow-sm">
+                        <svg class="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"></path></svg>
+                    </button>
+                </div>
+            </div>
 
-                    <!-- Search for Knowledge -->
-                    <div x-show="memoryType === 'knowledge'" class="bg-white p-4 rounded-lg shadow">
-                        <div class="flex space-x-2">
-                            <input x-model="searchQuery" 
-                                   @keypress.enter="searchKnowledge()"
-                                   type="text" 
-                                   placeholder="Search knowledge base..." 
-                                   class="flex-1 border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-whatsapp-green">
-                            <button @click="searchKnowledge()" 
-                                    class="bg-whatsapp-green text-white px-4 py-2 rounded-lg hover:bg-green-600">
-                                Search
-                            </button>
-                        </div>
+            <!-- TAB: MEMORY -->
+            <div x-show="activeTab === 'memory'" class="p-6 h-full flex flex-col">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">Memory Banks</h2>
+                    <div class="bg-white rounded-lg border p-1 flex">
+                        <button @click="memoryType = 'context'; loadMemoryData()" :class="memoryType === 'context' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Context</button>
+                        <button @click="memoryType = 'knowledge'; loadMemoryData()" :class="memoryType === 'knowledge' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Knowledge</button>
                     </div>
+                </div>
 
-                    <!-- Memory Content -->
-                    <div class="bg-white rounded-lg shadow">
-                        <div class="p-4 border-b">
-                            <h3 class="font-semibold" x-text="memoryType.charAt(0).toUpperCase() + memoryType.slice(1) + ' Data'"></h3>
-                        </div>
-                        <div class="p-4 max-h-96 overflow-y-auto">
+                <div x-show="memoryType === 'knowledge'" class="mb-4 flex gap-2">
+                    <input type="text" x-model="searchQuery" @keypress.enter="searchKnowledge()" placeholder="Search stored knowledge..." class="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-wa-teal focus:ring-wa-teal px-4 py-2">
+                    <button @click="searchKnowledge()" class="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700">Search</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-gray-100 p-0">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source/ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
                             <template x-for="item in memoryData" :key="item.id">
-                                <div class="py-3 border-b last:border-b-0">
-                                    <div class="flex justify-between items-start">
-                                        <div class="font-medium" x-text="item.title || item.id"></div>
-                                        <div class="text-sm text-gray-500" x-text="new Date(item.timestamp).toLocaleString()"></div>
-                                    </div>
-                                    <div class="mt-2 text-gray-700" x-text="item.content || item.message"></div>
-                                    <div class="mt-2 flex space-x-4 text-sm text-gray-500">
-                                        <template x-if="item.category">
-                                            <span x-text="'Category: ' + item.category"></span>
-                                        </template>
-                                        <template x-if="item.source">
-                                            <span x-text="'Source: ' + item.source"></span>
-                                        </template>
-                                        <template x-if="item.relevance">
-                                            <span x-text="'Relevance: ' + item.relevance"></span>
-                                        </template>
-                                    </div>
-                                </div>
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm font-medium text-gray-900" x-text="truncate(item.title || item.source || item.id, 20)"></div>
+                                        <div class="text-xs text-wa-teal" x-text="item.category || 'General'"></div>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <div class="text-sm text-gray-500 max-h-20 overflow-y-auto" x-text="item.content || item.message"></div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                                        <div x-text="timeAgo(item.timestamp)"></div>
+                                    </td>
+                                </tr>
                             </template>
-                        </div>
-                    </div>
+                            <tr x-show="memoryData.length === 0">
+                                <td colspan="3" class="px-6 py-10 text-center text-gray-500 italic">
+                                    No memory items found. Try a search or trigger browsing.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
+            </div>
 
-                <!-- Activity Log Tab -->
-                <div x-show="activeTab === 'activity'" class="h-full">
-                    <div class="bg-white rounded-lg shadow h-full flex flex-col">
-                        <div class="p-4 border-b">
-                            <h3 class="font-semibold">Real-time Activity Log</h3>
-                        </div>
-                        <div class="p-4 flex-1 overflow-y-auto font-mono text-sm">
-                            <template x-for="activity in activities" :key="activity.timestamp">
-                                <div class="py-1 border-b last:border-b-0">
-                                    <span class="text-gray-500" x-text="new Date(activity.timestamp).toLocaleTimeString()"></span>
-                                    <span :class="{
-                                        'text-green-600': activity.type === 'info',
-                                        'text-red-600': activity.type === 'error', 
-                                        'text-yellow-600': activity.type === 'warning'
-                                    }" x-text="' ' + activity.message"></span>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </div>
-            </main>
-        </div>
+        </main>
     </div>
 
     <script>
         function dashboard() {
             return {
+                mobileMenuOpen: false,
                 activeTab: 'overview',
                 memoryType: 'context',
-                autoRefresh: true,
+                isTyping: false,
                 chatInput: '',
                 searchQuery: '',
+                notification: { show: false, message: '', type: 'success' },
                 
-                // Data stores
-                botInfo: { name: 'Autonomous WhatsApp Agent' },
+                navItems: [
+                    { id: 'overview', label: 'Overview', icon: '📊' },
+                    { id: 'chat', label: 'Live Chat', icon: '💬' },
+                    { id: 'memory', label: 'Memory', icon: '🧠' },
+                    // { id: 'activity', label: 'Logs', icon: '📝' }
+                ],
+
+                botInfo: { name: 'Bot' },
                 status: {},
                 activities: [],
                 memoryData: [],
                 chatMessages: [
-                    {
-                        id: 1,
-                        sender: 'bot',
-                        text: 'Hello! I\'m your autonomous WhatsApp assistant. How can I help you today?',
-                        time: new Date().toLocaleTimeString()
-                    }
+                    { id: 1, sender: 'bot', text: 'Hello! I am online. Ask me to research something!', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
                 ],
 
-                // Methods
                 async init() {
-                    await this.loadBotInfo();
-                    await this.refreshAll();
-                    this.startAutoRefresh();
-                },
-
-                async loadBotInfo() {
+                    // Include credentials to fix the authentication issue
+                    const fetchOptions = { credentials: 'include' };
+                    
                     try {
-                        const response = await fetch('/api/bot-info');
-                        this.botInfo = await response.json();
-                    } catch (error) {
-                        console.error('Error loading bot info:', error);
+                        const botRes = await fetch('/api/bot-info', fetchOptions);
+                        if (botRes.status === 401) window.location.href = '/login.html';
+                        this.botInfo = await botRes.json();
+                        
+                        await this.refreshAll();
+                        
+                        // Auto-refresh stats every 5s
+                        setInterval(() => {
+                            if (this.activeTab === 'overview') {
+                                this.loadStatus();
+                                this.loadActivities();
+                            }
+                        }, 5000);
+                    } catch (e) {
+                        console.error("Init failed", e);
                     }
                 },
 
                 async refreshAll() {
+                    const fetchOptions = { credentials: 'include' };
                     await Promise.all([
-                        this.loadStatus(),
-                        this.loadActivities(),
+                        fetch('/api/status', fetchOptions).then(r => r.json()).then(d => this.status = d),
+                        fetch('/api/activity', fetchOptions).then(r => r.json()).then(d => this.activities = d),
                         this.loadMemoryData()
                     ]);
                 },
 
                 async loadStatus() {
-                    try {
-                        const response = await fetch('/api/status');
-                        this.status = await response.json();
-                    } catch (error) {
-                        console.error('Error loading status:', error);
-                    }
+                    this.status = await fetch('/api/status', { credentials: 'include' }).then(r => r.json());
                 },
-
+                
                 async loadActivities() {
-                    try {
-                        const response = await fetch('/api/activity');
-                        this.activities = await response.json();
-                    } catch (error) {
-                        console.error('Error loading activities:', error);
-                    }
+                    this.activities = await fetch('/api/activity', { credentials: 'include' }).then(r => r.json());
                 },
 
                 async loadMemoryData() {
                     try {
-                        const response = await fetch(`/api/memory/${this.memoryType}`);
-                        this.memoryData = await response.json();
-                    } catch (error) {
-                        console.error('Error loading memory data:', error);
-                    }
+                        const data = await fetch(`/api/memory/${this.memoryType}`, { credentials: 'include' }).then(r => r.json());
+                        this.memoryData = Array.isArray(data) ? data : [];
+                    } catch (e) { this.memoryData = []; }
                 },
 
                 async sendMessage() {
                     if (!this.chatInput.trim()) return;
-
-                    const message = this.chatInput.trim();
+                    
+                    const text = this.chatInput;
                     this.chatInput = '';
-
-                    // Add user message
+                    
                     this.chatMessages.push({
                         id: Date.now(),
                         sender: 'user',
-                        text: message,
-                        time: new Date().toLocaleTimeString()
+                        text: text,
+                        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
                     });
-
-                    // Scroll to bottom
-                    this.$nextTick(() => {
-                        const container = document.getElementById('chat-messages');
-                        container.scrollTop = container.scrollHeight;
-                    });
+                    
+                    this.scrollToBottom();
+                    this.isTyping = true;
 
                     try {
-                        const response = await fetch('/api/chat', {
+                        const res = await fetch('/api/chat', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message, userId: 'web-user' })
+                            body: JSON.stringify({ message: text, userId: 'web-admin' }),
+                            credentials: 'include'
                         });
-
-                        const data = await response.json();
+                        const data = await res.json();
                         
-                        // Add bot response
+                        this.isTyping = false;
                         this.chatMessages.push({
-                            id: Date.now() + 1,
+                            id: Date.now(),
                             sender: 'bot',
                             text: data.response,
-                            time: new Date().toLocaleTimeString()
+                            time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
                         });
-
-                        // Scroll to bottom again
-                        this.$nextTick(() => {
-                            const container = document.getElementById('chat-messages');
-                            container.scrollTop = container.scrollHeight;
-                        });
-
-                    } catch (error) {
-                        this.chatMessages.push({
-                            id: Date.now() + 1,
-                            sender: 'bot',
-                            text: 'Sorry, I encountered an error. Please try again.',
-                            time: new Date().toLocaleTimeString()
-                        });
+                        this.scrollToBottom();
+                        this.loadActivities(); // Update logs
+                    } catch (e) {
+                        this.isTyping = false;
+                        this.showToast('Failed to send message', 'error');
                     }
                 },
 
                 async searchKnowledge() {
-                    if (!this.searchQuery.trim()) return;
-
+                    if (!this.searchQuery) return;
                     try {
-                        const response = await fetch('/api/search/knowledge', {
+                        const res = await fetch('/api/search/knowledge', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ query: this.searchQuery })
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ query: this.searchQuery }),
+                            credentials: 'include'
                         });
-
-                        this.memoryData = await response.json();
-                        this.memoryType = 'knowledge';
-                    } catch (error) {
-                        console.error('Error searching knowledge:', error);
-                    }
+                        this.memoryData = await res.json();
+                    } catch(e) { this.showToast('Search failed', 'error'); }
                 },
 
                 async triggerBrowsing() {
-                    try {
-                        await fetch('/api/browse/now', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ intent: 'general' })
-                        });
-                        await this.loadActivities();
-                    } catch (error) {
-                        console.error('Error triggering browsing:', error);
-                    }
-                },
-
-                async refreshKnowledge() {
-                    try {
-                        await fetch('/api/knowledge/refresh', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' }
-                        });
-                        await this.loadActivities();
-                    } catch (error) {
-                        console.error('Error refreshing knowledge:', error);
-                    }
+                    this.showToast('Browsing initiated...', 'success');
+                    fetch('/api/browse/now', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ intent: 'general' }),
+                        credentials: 'include' 
+                    });
                 },
 
                 async logout() {
-                    try {
-                        await fetch('/api/logout', { method: 'POST' });
-                        window.location.href = '/login.html';
-                    } catch (error) {
-                        console.error('Error logging out:', error);
-                    }
+                    await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+                    window.location.href = '/login.html';
                 },
 
-                startAutoRefresh() {
-                    setInterval(() => {
-                        if (this.autoRefresh) {
-                            this.refreshAll();
-                        }
-                    }, 5000);
+                scrollToBottom() {
+                    this.$nextTick(() => {
+                        const container = document.getElementById('chat-container');
+                        container.scrollTop = container.scrollHeight;
+                    });
+                },
+
+                showToast(msg, type = 'success') {
+                    this.notification = { show: true, message: msg, type };
+                    setTimeout(() => this.notification.show = false, 3000);
                 },
 
                 getTabTitle() {
-                    const titles = {
-                        overview: 'System Overview',
-                        chat: 'Test Chat',
-                        memory: 'Memory Management',
-                        activity: 'Activity Log'
-                    };
-                    return titles[this.activeTab] || 'Dashboard';
+                    return this.navItems.find(i => i.id === this.activeTab)?.label || 'Dashboard';
+                },
+
+                getLogIcon(type) {
+                    const map = { 'ai_response': '🤖', 'tool_call': '🛠️', 'search': '🔍', 'error': '❌' };
+                    return map[type] || '📝';
+                },
+
+                truncate(str, n) {
+                    return (str && str.length > n) ? str.substr(0, n-1) + '...' : str;
+                },
+
+                timeAgo(dateString) {
+                    const date = new Date(dateString);
+                    const seconds = Math.floor((new Date() - date) / 1000);
+                    if (seconds < 60) return seconds + "s ago";
+                    const minutes = Math.floor(seconds / 60);
+                    if (minutes < 60) return minutes + "m ago";
+                    const hours = Math.floor(minutes / 60);
+                    if (hours < 24) return hours + "h ago";
+                    return date.toLocaleDateString();
                 }
             }
         }
-
-        // Auto-scroll chat to bottom on load
-        document.addEventListener('alpine:initialized', () => {
-            setTimeout(() => {
-                const container = document.getElementById('chat-messages');
-                if (container) container.scrollTop = container.scrollHeight;
-            }, 100);
-        });
     </script>
 </body>
 </html>
