@@ -16,8 +16,8 @@ export NODE_ENV=${NODE_ENV:-production}
 export PORT=${PORT:-3000}
 
 # Check if the dist directory exists and contains the built application
-if [ ! -f "dist/index.js" ]; then
-    echo "Error: dist/index.js not found. Please build the application first."
+if [ ! -f "dist/server.js" ]; then
+    echo "Error: dist/server.js not found. Please build the application first."
     echo "If running in development, you may need to run: npm run build"
     exit 1
 fi
@@ -68,4 +68,4 @@ echo "Node version: $(node --version)"
 echo "NPM version: $(npm --version)"
 
 # Start the application
-exec node dist/index.js
+exec node dist/server.js
