@@ -235,6 +235,27 @@ export async function initializeTools(searchService: GoogleSearchService, mediaS
     }
   };
 
+  availableTools.scrape_news = {
+    name: 'scrape_news',
+    description: 'Get latest news headlines. Categories: general, tech, business, sports, world.',
+    parameters: toolSchemas[2].function.parameters,
+    execute: async (args: { category?: string }) => {
+      const cat = args.category || 'general';
+      console.log(`📰 Tool retrieving cached news for: ${cat}`);
+      return newsScrapeService.getCachedNews(cat);
+    }
+  };
+
+  availableTools.search_knowledge = {
+    name: 'search_knowledge',
+    description: 'Search learned knowledge base',
+    parameters: toolSchemas[5].function.parameters,
+    execute: async (args: { query: string }) => {
+      console.log(`🧠 Searching Vector Store for: ${args.query}`);
+      return vectorStoreService.search(args.query);
+    }
+  };
+
   // Initialize media tools if media service is available
   if (mediaService) {
     availableTools.analyze_image = {
@@ -323,36 +344,6 @@ export async function executeTool(toolName: string, args: any): Promise<any> {
   }
   return tool.execute(args);
 }
-
-  // UPDATED: News Tool
-  availableTools.scrape_news = {
-    name: 'scrape_news',
-    description: 'Get latest news headlines. Categories: general, tech, business, sports, world.',
-    parameters: toolSchemas[2].function.parameters,
-    execute: async (args: { category?: string }) => {
-      const cat = args.category || 'general';
-      console.log(`📰 Tool retrieving cached news for: ${cat}`);
-      return newsScrapeService.getCachedNews(cat);
-    }
-  };
-
-  // ADD NEW TOOL: search_knowledge
-  // ADD NEW TOOL: search_knowledge
-  availableTools.search_knowledge = {
-    name: 'search_knowledge',
-    description: 'Search learned knowledge base',
-    parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string' }
-        },
-        required: ['query']
-    },
-    execute: async (args: { query: string }) => {
-      console.log(`🧠 Searching Vector Store for: ${args.query}`);
-      return vectorStoreService.search(args.query);
-    }
-  };
 
 // Cleanup function to close browser instances
 export async function cleanupTools(): Promise<void> {

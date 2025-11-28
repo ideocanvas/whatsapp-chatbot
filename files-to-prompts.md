@@ -1,84 +1,725 @@
-config/ai/default.json
+./test/crypto.test.ts
 ---
-{
-  "name": "Default Configuration",
-  "description": "Default AI model configuration based on current environment",
-  "config": {
-    "apiKey": "sk-f99acf5d37b9648491c1f89491f196aa0074d86e5290c0aa",
-    "baseURL": "http://192.168.8.166:1234/v1",
-    "model": "openai/gpt-oss-20b",
-    "visionModel": "allenai/olmocr-2-7b",
-    "temperature": 0.7,
-    "maxTokens": 1000,
-    "enableToolCalling": true,
-    "embeddingModel": "text-embedding-nomic-embed-text-v1.5",
-    "prompts": {
-      "textResponse": "You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.",
-      "imageAnalysis": "Analyze this image comprehensively with context awareness. Describe what you see in detail, including:\n\n- Objects, people, animals, text, colors, and environment\n- If it's a food menu or restaurant scene: focus on menu items, prices, cuisine type, and popular dishes\n- If it's a building, landmark, or location: provide architectural details, possible location clues, and historical context if recognizable\n- If it's a product or object: identify the item, brand, purpose, and key features\n- If it's a hand holding something: identify the object being held and its potential use\n- If it's a document or text-heavy: transcribe all text accurately and note the document type\n- If it's nature or scenery: describe the landscape, weather conditions, and geographical features\n- If it's people or events: note activities, emotions, and social context\n\nInclude any text content exactly as it appears. Provide specific details that would help understand the context and purpose of the image.",
-      "toolCalling": "You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.",
-      "errorResponse": "I apologize, but I could not generate a response. Please try again.",
-      "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings, explains I hit the search limit, and suggests next steps. Keep it conversational and short.",
-      "mediaImageAnalysis": "Analyze this image in detail. Describe what you see, including objects, people, text, colors, and any other relevant information. If there is any text in the image, please include all text content exactly as it appears.",
-      "webScrapeImageAnalysis": "Analyze this webpage screenshot and extract the main content. Focus on finding readable text and information from the page.",
-      "enhancedImageResponse": "Based on this detailed image analysis: \"{analysis}\"\n\nGenerate a helpful, engaging, and conversational response with specific contextual awareness:\n\n- If it's a food menu: suggest popular dishes, recommend what to order based on cuisine type, mention any specials or pricing\n- If it's a building or landmark: suggest where it might be located, provide architectural details, historical context, and nearby attractions\n- If it's a hand holding an object: identify what the object is, suggest its purpose or how to use it, provide related recommendations\n- If it's a product: provide recommendations, usage tips, where to buy it, or similar alternatives\n- If it's a document or text-heavy: summarize key information clearly, highlight important details, suggest next steps\n- If it's nature or scenery: provide interesting facts, travel suggestions, best times to visit, or photography tips\n- If it's people or events: provide appropriate commentary, suggest related activities or social context\n- If it's artwork or creative content: discuss the style, possible meaning, or artistic techniques\n\nKeep the response natural, conversational, and focused on being genuinely helpful with practical suggestions.",
-      "audioTranscriptionResponse": "Based on this audio transcription: \"{transcription}\"\n\nGenerate a helpful, engaging, and conversational response. Provide thoughtful commentary, answer questions, or continue the conversation naturally based on the audio content. Keep it conversational and focused on being helpful."
-    }
-  }
-}
+import * as crypto from 'crypto';
+import { CryptoUtils } from '../src/utils/crypto';
+
+describe('Crypto Utils', () => {
+  const appSecret = 'test-app-secret';
+  const requestBody = '{"message": "Hello, World!"}';
+
+  test('should verify valid signature correctly', () => {
+    // Generate a valid signature
+    const expectedSignature = crypto
+      .createHmac('sha256', appSecret)
+      .update(requestBody, 'utf8')
+      .digest('hex');
+
+    const signatureHeader = `sha256=${expectedSignature}`;
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, signatureHeader);
+
+    expect(result).toBe(true);
+  });
+
+  test('should return false for missing signature header', () => {
+    const result = CryptoUtils.verifySignature(appSecret, requestBody);
+    expect(result).toBe(false);
+  });
+
+  test('should return false for invalid signature format', () => {
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, 'invalid-format');
+    expect(result).toBe(false);
+  });
+
+  test('should return false for empty signature header', () => {
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, '');
+    expect(result).toBe(false);
+  });
+
+  test('should return false for incorrect signature', () => {
+    // Generate a valid signature but with different content
+    const differentBody = '{"message": "Different content!"}';
+    const incorrectSignature = crypto
+      .createHmac('sha256', appSecret)
+      .update(differentBody, 'utf8')
+      .digest('hex');
+
+    const signatureHeader = `sha256=${incorrectSignature}`;
+    const result = CryptoUtils.verifySignature(appSecret, requestBody, signatureHeader);
+    expect(result).toBe(false);
+  });
+});
 
 ---
-config/ai/local-llm.json
+./test/logger.test.ts
 ---
-{
-  "name": "Local LLM Configuration",
-  "description": "Configuration for locally hosted LLM models (LM Studio, Ollama, etc.)",
-  "config": {
-    "apiKey": "your_local_api_key_or_none",
-    "baseURL": "http://localhost:1234/v1",
-    "model": "local-model",
-    "visionModel": "local-vision-model",
-    "temperature": 0.8,
-    "maxTokens": 512,
-    "enableToolCalling": false,
-    "embeddingModel": "local-embedding-model",
-    "prompts": {
-      "textResponse": "You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.",
-      "imageAnalysis": "Analyze this image and describe what you see in detail. Focus on the main objects, people, text, and overall scene.",
-      "toolCalling": "You are a helpful assistant explaining limitations.",
-      "errorResponse": "I apologize, but I could not generate a response. Please try again.",
-      "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}"
-    }
-  }
-}
+import { logger } from '../src/utils/logger';
+
+describe('Logger Utility', () => {
+  // Mock console.log to test logging
+  const originalConsoleLog = console.log;
+  const mockLog = jest.fn();
+
+  beforeEach(() => {
+    console.log = mockLog;
+    jest.clearAllMocks();
+    logger.clearLogs(); // Clear logs before each test
+  });
+
+  afterEach(() => {
+    console.log = originalConsoleLog;
+  });
+
+  test('should log AI response messages', () => {
+    logger.logAIResponse('Test AI response');
+    expect(mockLog).toHaveBeenCalledWith('🤖 [AI_RESPONSE] Test AI response', '');
+  });
+
+  test('should log tool call messages', () => {
+    logger.logToolCall('Test tool call');
+    expect(mockLog).toHaveBeenCalledWith('🛠️ [TOOL_CALL] Test tool call', '');
+  });
+
+  test('should log search messages', () => {
+    logger.logSearch('Test search');
+    expect(mockLog).toHaveBeenCalledWith('🔍 [SEARCH] Test search', '');
+  });
+
+  test('should log error messages', () => {
+    logger.logError('Test error');
+    expect(mockLog).toHaveBeenCalledWith('❌ [ERROR] Test error', '');
+  });
+
+  test('should store logs internally', () => {
+    logger.logAIResponse('Test message');
+    const logs = logger.getLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0].type).toBe('ai_response');
+    expect(logs[0].message).toBe('Test message');
+  });
+
+  test('should filter logs by type', () => {
+    logger.logAIResponse('AI message');
+    logger.logError('Error message');
+    const errorLogs = logger.getLogs({ type: 'error' });
+    expect(errorLogs).toHaveLength(1);
+    expect(errorLogs[0].type).toBe('error');
+    expect(errorLogs[0].message).toBe('Error message');
+  });
+});
 
 ---
-config/ai/openai.json
+./test/integration/webScrapeIntegration.test.ts
 ---
-{
-  "name": "OpenAI Configuration",
-  "description": "Configuration for OpenAI API models (GPT-4, GPT-3.5)",
-  "config": {
-    "apiKey": "your_openai_api_key_here",
-    "baseURL": "https://api.openai.com/v1",
-    "model": "gpt-4o",
-    "visionModel": "gpt-4o",
-    "temperature": 0.7,
-    "maxTokens": 1000,
-    "enableToolCalling": true,
-    "embeddingModel": "text-embedding-ada-002",
-    "prompts": {
-      "textResponse": "You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.",
-      "imageAnalysis": "Analyze this image comprehensively with context awareness. Describe what you see in detail, including objects, people, text, colors, and environment. Include any text content exactly as it appears.",
-      "toolCalling": "You are a helpful assistant explaining search limitations. Be honest, helpful, and suggest concrete next steps.",
-      "errorResponse": "I apologize, but I could not generate a response. Please try again.",
-      "searchLimit": "I reached the maximum search limit while researching \"{query}\". Here's what I found so far:\n\n{results}\n\nPlease create a helpful WhatsApp-style response that summarizes these findings.",
-      "audioTranscriptionResponse": "Based on this audio transcription: \"{transcription}\"\n\nGenerate a helpful, engaging, and conversational response. Provide thoughtful commentary, answer questions, or continue the conversation naturally based on the audio content. Keep it conversational and focused on being helpful."
+import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/webScrapeService';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+// Integration test configuration
+const TEST_TIMEOUT = 60000; // 60 seconds for browser operations
+const TEST_URLS = {
+  // These are public test websites that are safe for scraping
+  simple: 'https://example.com',
+  contentRich: 'https://httpbin.org/html',
+  invalid: 'https://invalid-url-that-does-not-exist.test'
+};
+
+describe('WebScrapeService Integration Tests', () => {
+  let webScrapeService: WebScrapeService;
+
+  beforeAll(async () => {
+    // Create service with longer timeouts for integration tests
+    webScrapeService = new WebScrapeService({
+      timeout: 30000,
+      navigationTimeout: 15000,
+      maxRetries: 1,
+      concurrency: 2,
+      simulateHuman: false // Disable human simulation for faster tests
+    });
+
+    // Initialize the service
+    await webScrapeService.initialize();
+  }, TEST_TIMEOUT);
+
+  afterAll(async () => {
+    // Clean up browser
+    await webScrapeService.close();
+  });
+
+  describe('Basic URL Scraping', () => {
+    it('should successfully scrape example.com', async () => {
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.simple);
+
+      expect(result).toEqual({
+        title: expect.any(String),
+        url: TEST_URLS.simple,
+        content: expect.any(String),
+        extractedAt: expect.any(String),
+        method: expect.stringMatching(/html|visual/) // Allow both methods
+      });
+
+      // Basic content validation
+      expect(result.title).toBeTruthy();
+      expect(result.content.length).toBeGreaterThan(0);
+      expect(result.method).toMatch(/html|visual/); // Allow both methods
+
+      console.log(`✅ Scraped ${TEST_URLS.simple}: ${result.title} (${result.content.length} chars)`);
+    }, TEST_TIMEOUT);
+
+    it('should scrape content-rich pages', async () => {
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.contentRich);
+
+      expect(result).toEqual({
+        title: expect.any(String),
+        url: TEST_URLS.contentRich,
+        content: expect.any(String),
+        extractedAt: expect.any(String),
+        method: 'html'
+      });
+
+      // Content-rich page should have more content
+      expect(result.content.length).toBeGreaterThan(100);
+
+      console.log(`✅ Scraped ${TEST_URLS.contentRich}: ${result.title} (${result.content.length} chars)`);
+    }, TEST_TIMEOUT);
+
+    it('should handle specific selector extraction', async () => {
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.contentRich, 'h1');
+
+      expect(result).toEqual({
+        title: expect.any(String),
+        url: TEST_URLS.contentRich,
+        content: expect.any(String),
+        extractedAt: expect.any(String),
+        method: expect.stringMatching(/html|visual/) // Allow both methods
+      });
+
+      // Selector-based extraction should work
+      expect(result.content).toBeTruthy();
+
+      console.log(`✅ Selector extraction: "${result.content.substring(0, 50)}..."`);
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Error Handling', () => {
+    it('should handle invalid URLs gracefully', async () => {
+      await expect(webScrapeService.scrapeUrl(TEST_URLS.invalid))
+        .rejects.toThrow();
+
+      console.log(`✅ Properly handled invalid URL: ${TEST_URLS.invalid}`);
+    }, TEST_TIMEOUT);
+
+    it('should handle timeout scenarios', async () => {
+      // Create a service with very short timeout
+      const fastService = new WebScrapeService({
+        navigationTimeout: 1000, // 1 second timeout
+        maxRetries: 0
+      });
+
+      await fastService.initialize();
+
+      // This should timeout quickly
+      await expect(fastService.scrapeUrl('https://httpbin.org/delay/3')) // 3 second delay
+        .rejects.toThrow();
+
+      await fastService.close();
+
+      console.log('✅ Properly handled timeout scenario');
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Concurrent Scraping', () => {
+    it('should scrape multiple URLs concurrently', async () => {
+      const urls = [
+        TEST_URLS.simple,
+        TEST_URLS.contentRich,
+        'https://httpbin.org/json'
+      ];
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      expect(results).toHaveLength(3);
+      expect(results.every(r => r !== null)).toBe(true);
+
+      results.forEach((result, index) => {
+        expect(result).toEqual({
+          title: expect.any(String),
+          url: urls[index],
+          content: expect.any(String),
+          extractedAt: expect.any(String),
+          method: expect.stringMatching(/html|visual/) // Allow both methods
+        });
+      });
+
+      console.log(`✅ Concurrent scraping completed: ${results.length} URLs`);
+    }, TEST_TIMEOUT);
+
+    it('should handle mixed success/failure in concurrent scraping', async () => {
+      const urls = [
+        TEST_URLS.simple,
+        TEST_URLS.invalid, // This should fail
+        TEST_URLS.contentRich
+      ];
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      // Should have 2 successful results (the invalid URL should be filtered out)
+      expect(results.length).toBeGreaterThanOrEqual(2);
+      expect(results.every(r => r !== null)).toBe(true);
+
+      console.log(`✅ Mixed success/failure handled: ${results.length} successful out of ${urls.length}`);
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Service Lifecycle', () => {
+    it('should initialize and close properly', async () => {
+      const service = new WebScrapeService();
+
+      // Should be able to initialize
+      await expect(service.initialize()).resolves.not.toThrow();
+
+      // Should be able to scrape after initialization
+      const result = await service.scrapeUrl(TEST_URLS.simple);
+      expect(result).toBeDefined();
+
+      // Should be able to close
+      await expect(service.close()).resolves.not.toThrow();
+
+      console.log('✅ Service lifecycle test passed');
+    }, TEST_TIMEOUT);
+
+    it('should handle repeated initialization', async () => {
+      await webScrapeService.initialize(); // Already initialized in beforeAll
+
+      // Should still work after re-initialization
+      const result = await webScrapeService.scrapeUrl(TEST_URLS.simple);
+      expect(result).toBeDefined();
+
+      console.log('✅ Repeated initialization handled');
+    }, TEST_TIMEOUT);
+  });
+
+  describe('Result Formatting', () => {
+    it('should format results correctly', async () => {
+      const results = await webScrapeService.scrapeUrls([TEST_URLS.simple, TEST_URLS.contentRich]);
+
+      const formatted = webScrapeService.formatScrapeResults(results);
+
+      expect(formatted).toContain('Example Domain');
+      // The content may vary depending on the actual page content
+      expect(formatted).toContain('URL:');
+      expect(formatted).toContain('Content:');
+      expect(formatted).toMatch(/html|visual/);
+
+      console.log('✅ Result formatting works correctly');
+    }, TEST_TIMEOUT);
+
+    it('should handle empty results formatting', () => {
+      const formatted = webScrapeService.formatScrapeResults([]);
+      expect(formatted).toBe('No content scraped.');
+
+      console.log('✅ Empty results formatting handled');
+    });
+  });
+
+  describe('Configuration', () => {
+    it('should create service from environment variables', () => {
+      // Temporarily set environment variables
+      const originalTimeout = process.env.WEB_SCRAPE_TIMEOUT;
+      const originalRetries = process.env.WEB_SCRAPE_MAX_RETRIES;
+      const originalConcurrency = process.env.WEB_SCRAPE_CONCURRENCY;
+
+      process.env.WEB_SCRAPE_TIMEOUT = '45000';
+      process.env.WEB_SCRAPE_MAX_RETRIES = '2';
+      process.env.WEB_SCRAPE_CONCURRENCY = '4';
+
+      const service = createWebScrapeService();
+      expect(service).toBeInstanceOf(WebScrapeService);
+
+      // Restore environment variables
+      if (originalTimeout) process.env.WEB_SCRAPE_TIMEOUT = originalTimeout;
+      if (originalRetries) process.env.WEB_SCRAPE_MAX_RETRIES = originalRetries;
+      if (originalConcurrency) process.env.WEB_SCRAPE_CONCURRENCY = originalConcurrency;
+
+      console.log('✅ Factory function works correctly');
+    });
+  });
+});
+
+// Additional test for visual extraction (requires OpenAI configuration)
+describe('WebScrapeService Visual Extraction (Conditional)', () => {
+  let webScrapeService: WebScrapeService;
+
+  beforeAll(async () => {
+    webScrapeService = new WebScrapeService({
+      timeout: 30000,
+      navigationTimeout: 15000,
+      maxRetries: 1
+    });
+    await webScrapeService.initialize();
+  }, TEST_TIMEOUT);
+
+  afterAll(async () => {
+    await webScrapeService.close();
+  });
+
+  it('should handle sparse content scenarios', async () => {
+    // Use a URL that returns minimal content (binary data endpoint)
+    // The service should handle this gracefully
+    try {
+      const result = await webScrapeService.scrapeUrl('https://httpbin.org/bytes/10');
+
+      // If it succeeds, verify the result structure
+      if (result) {
+        expect(result).toEqual({
+          title: expect.any(String),
+          url: 'https://httpbin.org/bytes/10',
+          content: expect.any(String),
+          extractedAt: expect.any(String),
+          method: expect.stringMatching(/html|visual/)
+        });
+      }
+    } catch (error) {
+      // It's acceptable for this to fail - binary endpoints aren't meant for scraping
+      console.log('✅ Binary endpoint properly rejected:', error instanceof Error ? error.message : String(error));
     }
-  }
-}
+
+    console.log('✅ Sparse content scenarios handled correctly');
+  }, TEST_TIMEOUT);
+});
 
 ---
-src/dev-test.ts
+./test/services/webScrapeService.test.ts
+---
+import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/webScrapeService';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { OpenAIService } from '../../src/services/openaiService';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Mock dependencies
+jest.mock('playwright');
+jest.mock('../../src/services/openaiService');
+jest.mock('fs');
+jest.mock('path');
+
+const mockChromium = chromium as jest.Mocked<typeof chromium>;
+const mockFs = fs as jest.Mocked<typeof fs>;
+const mockPath = path as jest.Mocked<typeof path>;
+const mockOpenAIService = OpenAIService as jest.MockedClass<typeof OpenAIService>;
+
+describe('WebScrapeService', () => {
+  let webScrapeService: WebScrapeService;
+  let mockBrowser: jest.Mocked<Browser>;
+  let mockContext: jest.Mocked<BrowserContext>;
+  let mockPage: jest.Mocked<Page>;
+
+  beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+
+    // Setup mock browser, context, and page
+    mockBrowser = {
+      newContext: jest.fn(),
+      close: jest.fn(),
+      isConnected: jest.fn().mockReturnValue(true),
+    } as any;
+
+    mockContext = {
+      newPage: jest.fn(),
+      close: jest.fn(),
+      route: jest.fn(),
+    } as any;
+
+    mockPage = {
+      goto: jest.fn(),
+      title: jest.fn(),
+      evaluate: jest.fn(),
+      screenshot: jest.fn(),
+      locator: jest.fn().mockReturnValue({
+        first: jest.fn().mockReturnValue({
+          isVisible: jest.fn(),
+          click: jest.fn(),
+        }),
+      }),
+      waitForTimeout: jest.fn(),
+    } as any;
+
+    // Setup mock implementations
+    mockChromium.launch.mockResolvedValue(mockBrowser);
+    mockBrowser.newContext.mockResolvedValue(mockContext);
+    mockContext.newPage.mockResolvedValue(mockPage);
+    mockPage.goto.mockResolvedValue({} as any);
+    mockPage.title.mockResolvedValue('Test Page');
+    mockPage.evaluate.mockResolvedValue('Test content extracted from page');
+    mockPage.screenshot.mockResolvedValue(Buffer.from('mock screenshot'));
+
+    // Setup mock path operations
+    mockPath.dirname.mockReturnValue('/mock/dir');
+    mockPath.join.mockImplementation((...args) => args.join('/'));
+    mockPath.extname.mockReturnValue('.jpg');
+
+    // Setup mock file system operations
+    mockFs.existsSync.mockReturnValue(false);
+    mockFs.mkdirSync.mockImplementation(() => '/mock/dir');
+    mockFs.readFileSync.mockReturnValue(Buffer.from('mock file content'));
+    mockFs.unlinkSync.mockImplementation(() => {});
+
+    // Setup mock OpenAI service
+    mockOpenAIService.prototype.isConfigured.mockReturnValue(true);
+    mockOpenAIService.prototype.analyzeImage.mockResolvedValue('Analyzed image content');
+
+    // Create service instance with minimal config
+    webScrapeService = new WebScrapeService({
+      timeout: 10000,
+      maxRetries: 1,
+      concurrency: 1,
+    });
+  });
+
+  describe('constructor', () => {
+    it('should initialize with default configuration', () => {
+      const service = new WebScrapeService();
+
+      expect(service).toBeInstanceOf(WebScrapeService);
+    });
+
+    it('should override default configuration with provided values', () => {
+      const customConfig = {
+        timeout: 30000,
+        maxRetries: 3,
+        concurrency: 5,
+        simulateHuman: false,
+      };
+
+      const service = new WebScrapeService(customConfig);
+
+      expect(service).toBeInstanceOf(WebScrapeService);
+    });
+
+    it('should initialize OpenAI service', () => {
+      expect(mockOpenAIService).toHaveBeenCalled();
+    });
+  });
+
+  describe('initialize', () => {
+    it('should launch browser if not initialized', async () => {
+      await webScrapeService.initialize();
+
+      expect(mockChromium.launch).toHaveBeenCalledWith({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-blink-features=AutomationControlled'
+        ]
+      });
+    });
+
+    it('should not launch browser if already initialized', async () => {
+      // First initialization
+      await webScrapeService.initialize();
+
+      // Reset mock to track second call
+      mockChromium.launch.mockClear();
+
+      // Second initialization should not launch browser again
+      await webScrapeService.initialize();
+
+      expect(mockChromium.launch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('scrapeUrl', () => {
+    it('should successfully scrape a URL', async () => {
+      const url = 'https://example.com';
+      const result = await webScrapeService.scrapeUrl(url);
+
+      expect(result).toEqual({
+        title: 'Test Page',
+        url: url,
+        content: 'Test content extracted from page',
+        extractedAt: expect.any(String),
+        method: 'html'
+      });
+
+      expect(mockPage.goto).toHaveBeenCalledWith(url, {
+        timeout: 30000,
+        waitUntil: 'domcontentloaded'
+      });
+    });
+
+    it('should use custom selector when provided', async () => {
+      const url = 'https://example.com';
+      const selector = '.content';
+
+      await webScrapeService.scrapeUrl(url, selector);
+
+      expect(mockPage.evaluate).toHaveBeenCalledWith(expect.any(Function), selector);
+    });
+
+    it('should handle navigation timeout errors', async () => {
+      mockPage.goto.mockRejectedValue(new Error('Navigation timeout'));
+
+      const url = 'https://example.com';
+
+      await expect(webScrapeService.scrapeUrl(url)).rejects.toThrow('Navigation timeout');
+    });
+
+    it('should retry on network errors', async () => {
+      // Mock first call to fail, second to succeed
+      mockPage.goto
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({} as any);
+
+      const url = 'https://example.com';
+
+      const result = await webScrapeService.scrapeUrl(url);
+
+      expect(result).toBeDefined();
+      expect(mockPage.goto).toHaveBeenCalledTimes(2);
+    });
+
+    it('should switch to visual extraction when content is sparse', async () => {
+      // Mock sparse content (less than 300 characters)
+      mockPage.evaluate.mockResolvedValue('Short content');
+
+      const url = 'https://example.com';
+      const result = await webScrapeService.scrapeUrl(url);
+
+      expect(result.method).toBe('visual');
+      expect(mockOpenAIService.prototype.analyzeImage).toHaveBeenCalled();
+    });
+  });
+
+  describe('scrapeUrls', () => {
+    it('should scrape multiple URLs concurrently', async () => {
+      const urls = [
+        'https://example.com/1',
+        'https://example.com/2',
+        'https://example.com/3'
+      ];
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      expect(results).toHaveLength(3);
+      expect(results.every(r => r !== null)).toBe(true);
+    });
+
+    it('should handle failed URLs gracefully', async () => {
+      const urls = [
+        'https://example.com/success',
+        'https://example.com/fail',
+        'https://example.com/success2'
+      ];
+
+      // Mock one URL to fail
+      mockPage.goto
+        .mockResolvedValueOnce({} as any)
+        .mockRejectedValueOnce(new Error('Failed'))
+        .mockResolvedValueOnce({} as any);
+
+      const results = await webScrapeService.scrapeUrls(urls);
+
+      expect(results).toHaveLength(2); // Only successful results
+      expect(results.every(r => r !== null)).toBe(true);
+    });
+  });
+
+  describe('close', () => {
+    it('should close browser when called', async () => {
+      await webScrapeService.initialize();
+      await webScrapeService.close();
+
+      expect(mockBrowser.close).toHaveBeenCalled();
+    });
+
+    it('should not throw error if browser is not initialized', async () => {
+      await expect(webScrapeService.close()).resolves.not.toThrow();
+    });
+  });
+
+  describe('formatScrapeResults', () => {
+    it('should format results correctly', () => {
+      const results: WebScrapeResult[] = [
+        {
+          title: 'Test Page 1',
+          url: 'https://example.com/1',
+          content: 'Content 1',
+          extractedAt: '2024-01-01T00:00:00Z',
+          method: 'html'
+        },
+        {
+          title: 'Test Page 2',
+          url: 'https://example.com/2',
+          content: 'Content 2',
+          extractedAt: '2024-01-01T00:00:00Z',
+          method: 'visual'
+        }
+      ];
+
+      const formatted = webScrapeService.formatScrapeResults(results);
+
+      expect(formatted).toContain('Test Page 1');
+      expect(formatted).toContain('Test Page 2');
+      expect(formatted).toContain('html');
+      expect(formatted).toContain('visual');
+    });
+
+    it('should return message for empty results', () => {
+      const formatted = webScrapeService.formatScrapeResults([]);
+
+      expect(formatted).toBe('No content scraped.');
+    });
+  });
+
+  describe('error handling', () => {
+    it('should handle browser initialization failures', async () => {
+      mockChromium.launch.mockRejectedValue(new Error('Browser failed to launch'));
+
+      await expect(webScrapeService.scrapeUrl('https://example.com'))
+        .rejects.toThrow('Browser not initialized');
+    });
+
+    it('should handle context creation failures', async () => {
+      mockBrowser.newContext.mockRejectedValue(new Error('Context creation failed'));
+
+      await expect(webScrapeService.scrapeUrl('https://example.com'))
+        .rejects.toThrow('Context creation failed');
+    });
+  });
+});
+
+describe('createWebScrapeService', () => {
+  it('should create service with environment variables', () => {
+    // Mock environment variables
+    process.env.WEB_SCRAPE_TIMEOUT = '60000';
+    process.env.WEB_SCRAPE_MAX_RETRIES = '3';
+    process.env.WEB_SCRAPE_CONCURRENCY = '5';
+
+    const service = createWebScrapeService();
+
+    expect(service).toBeInstanceOf(WebScrapeService);
+  });
+
+  it('should use defaults when environment variables are not set', () => {
+    // Clear environment variables
+    delete process.env.WEB_SCRAPE_TIMEOUT;
+    delete process.env.WEB_SCRAPE_MAX_RETRIES;
+    delete process.env.WEB_SCRAPE_CONCURRENCY;
+
+    const service = createWebScrapeService();
+
+    expect(service).toBeInstanceOf(WebScrapeService);
+  });
+});
+
+---
+./src/dev-test.ts
 ---
 #!/usr/bin/env node
 
@@ -219,7 +860,7 @@ program
 program.parse();
 
 ---
-src/index.ts
+./src/index.ts
 ---
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
@@ -339,7 +980,7 @@ app.listen(port, () => {
 });
 
 ---
-src/services/conversationStorageService.ts
+./src/services/conversationStorageService.ts
 ---
 import * as fs from 'fs';
 import * as path from 'path';
@@ -565,7 +1206,7 @@ export class ConversationStorageService {
 }
 
 ---
-src/services/googleSearchService.ts
+./src/services/googleSearchService.ts
 ---
 import axios from 'axios';
 
@@ -732,7 +1373,128 @@ export function createGoogleSearchServiceFromEnv(): GoogleSearchService {
 }
 
 ---
-src/services/knowledgeExtractionService.ts
+./src/services/knowledgeBaseService.ts
+---
+import * as fs from 'fs';
+import * as path from 'path';
+import { OpenAIService } from './openaiService';
+
+export interface KnowledgeDocument {
+  id: string;
+  content: string;
+  embedding: number[];
+  metadata: {
+    source: string;
+    date: string;
+    category: string;
+    topics: string[];
+  };
+}
+
+export class KnowledgeBaseService {
+  private storagePath: string;
+  private documents: KnowledgeDocument[] = [];
+  private openaiService: OpenAIService;
+
+  constructor(openaiService: OpenAIService, storageDir: string = 'data/knowledge') {
+    this.openaiService = openaiService;
+    this.storagePath = path.join(storageDir, 'vectors.json');
+    this.ensureDirectory(storageDir);
+    this.loadDatabase();
+  }
+
+  private ensureDirectory(dir: string) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
+
+  private loadDatabase() {
+    if (fs.existsSync(this.storagePath)) {
+      const data = fs.readFileSync(this.storagePath, 'utf-8');
+      this.documents = JSON.parse(data);
+    }
+  }
+
+  private saveDatabase() {
+    fs.writeFileSync(this.storagePath, JSON.stringify(this.documents, null, 2));
+  }
+
+  /**
+   * Calculates Cosine Similarity between two vectors
+   */
+  private cosineSimilarity(vecA: number[], vecB: number[]): number {
+    const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+    const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+    const magnitudeB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+    return dotProduct / (magnitudeA * magnitudeB);
+  }
+
+  /**
+   * Check if similar content already exists to prevent duplicates
+   */
+  async hasDuplicate(content: string): Promise<boolean> {
+    // Simple check: strict string matching or high similarity
+    // Here we use strict matching for efficiency
+    return this.documents.some(doc => doc.content === content);
+  }
+
+  /**
+   * Add a new piece of knowledge
+   */
+  async addKnowledge(content: string, metadata: KnowledgeDocument['metadata']): Promise<void> {
+    if (await this.hasDuplicate(content)) {
+      console.log('Duplicate knowledge skipped.');
+      return;
+    }
+
+    try {
+      const embedding = await this.openaiService.createEmbedding(content);
+      
+      const doc: KnowledgeDocument = {
+        id: `doc_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        content,
+        embedding,
+        metadata
+      };
+
+      this.documents.push(doc);
+      this.saveDatabase();
+      console.log(`🧠 Knowledge saved: [${metadata.category}] ${content.substring(0, 50)}...`);
+    } catch (error) {
+      console.error('Failed to add knowledge:', error);
+    }
+  }
+
+  /**
+   * RAG Search: Find relevant context for a query
+   */
+  async search(query: string, limit: number = 3, threshold: number = 0.75): Promise<string> {
+    try {
+      const queryEmbedding = await this.openaiService.createEmbedding(query);
+
+      const results = this.documents
+        .map(doc => ({
+          ...doc,
+          similarity: this.cosineSimilarity(queryEmbedding, doc.embedding)
+        }))
+        .filter(doc => doc.similarity >= threshold)
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, limit);
+
+      if (results.length === 0) return "No relevant knowledge found in the database.";
+
+      return results.map(r => 
+        `[Date: ${r.metadata.date} | Source: ${r.metadata.source}]\n${r.content}`
+      ).join('\n\n');
+
+    } catch (error) {
+      console.error('Knowledge search failed:', error);
+      return "Error searching knowledge base.";
+    }
+  }
+}
+
+---
+./src/services/knowledgeExtractionService.ts
 ---
 import { OpenAIService } from './openaiService';
 import { ConversationStorageService } from './conversationStorageService';
@@ -964,7 +1726,7 @@ ${formattedHistory}`;
 }
 
 ---
-src/services/mediaService.ts
+./src/services/mediaService.ts
 ---
 import axios from 'axios';
 import * as fs from 'fs';
@@ -1300,9 +2062,89 @@ Generate a helpful, engaging, and conversational response. Provide thoughtful co
 }
 
 ---
-src/services/newsScrapeService.ts
+./src/services/newsProcessorService.ts
 ---
+import { OpenAIService } from './openaiService';
+import { GoogleSearchService } from './googleSearchService';
+import { VectorStoreService } from './vectorStoreService'; // UPDATED
+import { NewsArticle } from './newsScrapeService';
+
+export class NewsProcessorService {
+  private openaiService: OpenAIService;
+  private googleService: GoogleSearchService;
+  private vectorStore: VectorStoreService; // UPDATED
+
+  constructor(
+    openaiService: OpenAIService,
+    googleService: GoogleSearchService,
+    vectorStore: VectorStoreService // UPDATED
+  ) {
+    this.openaiService = openaiService;
+    this.googleService = googleService;
+    this.vectorStore = vectorStore;
+  }
+
+  /**
+   * Analyzes an article, enriches it with Google Search if complex, and learns it.
+   */
+  async processAndLearn(article: NewsArticle, category: string): Promise<void> {
+    try {
+      console.log(`🤔 Learning: ${article.title}`);
+
+      // 1. Check if we need to search Google (same as before)
+      const analysisPrompt = `
+        Analyze this news article.
+        1. Summarize the key facts in 2 sentences.
+        2. Identify if this topic requires more context to be fully understood (e.g., technical terms, historical context, stock symbols).
+        3. If yes, generate a specific search query. If no, output "NO_SEARCH".
+        
+        Article:
+        ${article.title}
+        ${article.content.substring(0, 1000)}
+      `;
+
+      const analysis = await this.openaiService.generateTextResponse(analysisPrompt);
+      
+      let fullContent = `Title: ${article.title}\n\n${article.content}`;
+      let sourceLabel = 'web_scrape';
+
+      // 2. Enrichment Step (Google Search)
+      // If the LLM suggests a search (and it's not NO_SEARCH), we enrich.
+      const searchMatch = analysis.match(/Search Query: "(.*)"/i) || analysis.split('\n').pop()?.match(/"(.*)"/);
+      
+      if (!analysis.includes("NO_SEARCH") && searchMatch) {
+        const query = searchMatch[1];
+        console.log(`🔍 Enriching knowledge with Google Search: ${query}`);
+        
+        const searchResults = await this.googleService.search(query, 3);
+        const searchContext = this.googleService.formatSearchResults(searchResults);
+
+        // Append context to the content we want to save
+        fullContent += `\n\n--- Additional Context from Google Search ---\n${searchContext}`;
+        sourceLabel = 'web_scrape_enriched';
+      }
+
+      // 3. Store in Vector DB (The DB handles chunking and embedding now)
+      await this.vectorStore.addDocument(fullContent, {
+        source: sourceLabel,
+        date: new Date().toISOString().split('T')[0],
+        category: category,
+        title: article.title
+      });
+
+    } catch (error) {
+      console.error('Error processing news for learning:', error);
+    }
+  }
+}
+
+---
+./src/services/newsScrapeService.ts
+---
+import * as fs from 'fs';
+import * as path from 'path';
 import { WebScrapeService, WebScrapeResult } from './webScrapeService';
+import { NewsProcessorService } from './newsProcessorService'; // Import new service
 
 export interface NewsArticle {
   title: string;
@@ -1310,6 +2152,7 @@ export interface NewsArticle {
   content: string;
   source: string;
   category?: string;
+  scrapedAt?: string;
 }
 
 // Define supported categories
@@ -1317,6 +2160,7 @@ type NewsCategory = 'general' | 'tech' | 'business' | 'sports' | 'world';
 
 export class NewsScrapeService {
   private webScrapeService: WebScrapeService;
+  private newsProcessor?: NewsProcessorService; // Optional dependency
   
   // Storage for our cached news summaries
   private newsCache: Map<string, string> = new Map();
@@ -1326,11 +2170,11 @@ export class NewsScrapeService {
   // Hong Kong focused, Mobile-Friendly URLs
   private categorySources: Record<NewsCategory, string[]> = {
     'general': [
-       'https://news.rthk.hk/rthk/en/', 
+       'https://news.rthk.hk/rthk/en/',
        'https://hongkongfp.com/'
     ],
     'world': [
-       'https://www.bbc.com/news/world' 
+       'https://www.bbc.com/news/world'
     ],
     'tech': [
        'https://techcrunch.com/',
@@ -1344,8 +2188,9 @@ export class NewsScrapeService {
     ]
   };
 
-  constructor(webScrapeService: WebScrapeService) {
+  constructor(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService) {
     this.webScrapeService = webScrapeService;
+    this.newsProcessor = newsProcessor;
   }
 
   /**
@@ -1367,6 +2212,13 @@ export class NewsScrapeService {
 
     try {
       const categories = Object.keys(this.categorySources) as NewsCategory[];
+      const dateStr = new Date().toISOString().split('T')[0];
+      const storageBase = path.join('data', 'news', dateStr);
+
+      // Ensure daily directory exists
+      if (!fs.existsSync(storageBase)) {
+        fs.mkdirSync(storageBase, { recursive: true });
+      }
 
       for (const cat of categories) {
         const urls = this.categorySources[cat];
@@ -1374,9 +2226,14 @@ export class NewsScrapeService {
         const results = await this.webScrapeService.scrapeUrls(urls, undefined, true);
         
         if (results.length > 0) {
+            // 1. Format for Cache (Immediate Tool Access)
             const formatted = this.formatNewsForLLM(results);
             this.newsCache.set(cat, formatted);
-            console.log(`✅ Cached ${results.length} articles for [${cat}]`);
+            
+            // 2. Save Raw Files & Trigger Learning
+            await this.handlePersistenceAndLearning(results, cat, storageBase);
+            
+            console.log(`✅ Cached & Processed ${results.length} articles for [${cat}]`);
         }
       }
       this.lastUpdated = new Date();
@@ -1384,6 +2241,31 @@ export class NewsScrapeService {
       console.error('❌ Background Service Error:', error);
     } finally {
       this.isScraping = false;
+    }
+  }
+
+  private async handlePersistenceAndLearning(results: WebScrapeResult[], category: string, storageBase: string) {
+    const filePath = path.join(storageBase, `${category}.json`);
+    
+    // Convert to NewsArticle format
+    const articles: NewsArticle[] = results.map(r => ({
+        title: r.title,
+        url: r.url,
+        content: r.content,
+        source: 'web_scrape',
+        category: category,
+        scrapedAt: new Date().toISOString()
+    }));
+
+    // Save to Disk
+    fs.writeFileSync(filePath, JSON.stringify(articles, null, 2));
+
+    // Trigger "Learning" if Processor is available
+    if (this.newsProcessor) {
+        // Limit to top 2 articles per category to save tokens/time
+        for (const article of articles.slice(0, 2)) {
+            await this.newsProcessor.processAndLearn(article, category);
+        }
     }
   }
 
@@ -1421,12 +2303,12 @@ export class NewsScrapeService {
   }
 }
 
-export function createNewsScrapeService(webScrapeService: WebScrapeService): NewsScrapeService {
-  return new NewsScrapeService(webScrapeService);
+export function createNewsScrapeService(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService): NewsScrapeService {
+  return new NewsScrapeService(webScrapeService, newsProcessor);
 }
 
 ---
-src/services/openaiService.ts
+./src/services/openaiService.ts
 ---
 import OpenAI from 'openai';
 import * as fs from 'fs';
@@ -1822,166 +2704,68 @@ export function createOpenAIServiceFromEnv(): OpenAIService {
 }
 
 ---
-src/services/processedMessageService.ts
+./src/services/processedMessageService.ts
 ---
-import * as sqlite3 from 'sqlite3';
+import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
 
 export class ProcessedMessageService {
-  private db!: sqlite3.Database;
+  private db: Database.Database;
   private dbPath: string;
 
   constructor(dbPath: string = 'data/processed_messages.db') {
     this.dbPath = path.resolve(process.cwd(), dbPath);
     this.ensureDatabaseDirectory();
-    // Database initialization will be handled asynchronously
-    // The first operation will trigger table creation if needed
+    this.db = new Database(this.dbPath);
+    this.initializeDatabase();
   }
 
   private ensureDatabaseDirectory(): void {
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
-      console.log(`Created database directory: ${dir}`);
     }
   }
 
-  private async initializeDatabase(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.db = new sqlite3.Database(this.dbPath, (err) => {
-        if (err) {
-          console.error('Error opening database:', err);
-          reject(err);
-          return;
-        }
-        console.log(`Connected to processed messages database: ${this.dbPath}`);
+  private initializeDatabase(): void {
+    // WAL mode is better for concurrency
+    this.db.pragma('journal_mode = WAL');
 
-        // Create table if it doesn't exist
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS processed_messages (
-            message_id TEXT PRIMARY KEY,
-            processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            sender_number TEXT,
-            message_type TEXT
-          )
-        `, (err) => {
-          if (err) {
-            console.error('Error creating table:', err);
-            reject(err);
-            return;
-          }
-          console.log('Processed messages table ready');
-
-          // Create index for faster lookups
-          this.db.run(`
-            CREATE INDEX IF NOT EXISTS idx_processed_at
-            ON processed_messages(processed_at)
-          `, (err) => {
-            if (err) {
-              console.error('Error creating index:', err);
-              reject(err);
-              return;
-            }
-
-            // Clean up old entries periodically (older than 30 days)
-            setInterval(() => {
-              this.cleanupOldEntries(30);
-            }, 24 * 60 * 60 * 1000); // Run every 24 hours
-
-            resolve();
-          });
-        });
-      });
-    });
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS processed_messages (
+        message_id TEXT PRIMARY KEY,
+        processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        sender_number TEXT,
+        message_type TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_messages(processed_at);
+    `);
+    
+    console.log('✅ Processed messages database ready (better-sqlite3)');
+    
+    // Cleanup old entries on startup
+    this.cleanupOldEntries(30);
   }
 
-  /**
-   * Check if a message has already been processed
-   * @param messageId The WhatsApp message ID to check
-   * @returns Promise<boolean> indicating if message was already processed
-   */
   async hasMessageBeenProcessed(messageId: string): Promise<boolean> {
-    // Ensure database is initialized
-    if (!this.db) {
-      await this.initializeDatabase();
-    }
-
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT message_id FROM processed_messages WHERE message_id = ?',
-        [messageId],
-        (err, row) => {
-          if (err) {
-            console.error('Error checking processed message:', err);
-            reject(err);
-          } else {
-            resolve(!!row);
-          }
-        }
-      );
-    });
+    const stmt = this.db.prepare('SELECT message_id FROM processed_messages WHERE message_id = ?');
+    const result = stmt.get(messageId);
+    return !!result;
   }
 
-  /**
-   * Mark a message as processed to prevent duplicate handling
-   * @param messageId The WhatsApp message ID to mark as processed
-   * @param senderNumber The sender's phone number
-   * @param messageType The type of message (text, image, audio)
-   */
-  async markMessageAsProcessed(
-    messageId: string,
-    senderNumber?: string,
-    messageType?: string
-  ): Promise<void> {
-    // Ensure database is initialized
-    if (!this.db) {
-      await this.initializeDatabase();
-    }
-
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        `INSERT OR REPLACE INTO processed_messages
-         (message_id, sender_number, message_type)
-         VALUES (?, ?, ?)`,
-        [messageId, senderNumber, messageType],
-        function(err) {
-          if (err) {
-            console.error('Error marking message as processed:', err);
-            reject(err);
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
+  async markMessageAsProcessed(messageId: string, senderNumber?: string, messageType?: string): Promise<void> {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO processed_messages (message_id, sender_number, message_type)
+      VALUES (?, ?, ?)
+    `);
+    stmt.run(messageId, senderNumber, messageType);
   }
 
-  /**
-   * Clean up old processed message entries
-   * @param daysOlderThan Delete entries older than this many days
-   */
   async cleanupOldEntries(daysOlderThan: number = 30): Promise<number> {
-    // Ensure database is initialized
-    if (!this.db) {
-      await this.initializeDatabase();
-    }
-
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'DELETE FROM processed_messages WHERE processed_at < datetime("now", ?)',
-        [`-${daysOlderThan} days`],
-        function(err) {
-          if (err) {
-            console.error('Error cleaning up old entries:', err);
-            reject(err);
-          } else {
-            console.log(`Cleaned up ${this.changes} old processed message entries`);
-            resolve(this.changes);
-          }
-        }
-      );
-    });
+    const stmt = this.db.prepare(`DELETE FROM processed_messages WHERE processed_at < datetime('now', '-${daysOlderThan} days')`);
+    const info = stmt.run();
+    return info.changes;
   }
 
   /**
@@ -1992,9 +2776,9 @@ export class ProcessedMessageService {
     last24Hours: number;
     byType: Record<string, number>;
   }> {
-    const totalProcessed = await this.getCount();
-    const last24Hours = await this.getCountLast24Hours();
-    const byType = await this.getCountByType();
+    const totalProcessed = this.getCount();
+    const last24Hours = this.getCountLast24Hours();
+    const byType = this.getCountByType();
 
     return {
       totalProcessed,
@@ -2003,71 +2787,191 @@ export class ProcessedMessageService {
     };
   }
 
-  private async getCount(): Promise<number> {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT COUNT(*) as count FROM processed_messages',
-        (err, row: any) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(row.count);
-          }
-        }
-      );
-    });
+  private getCount(): number {
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM processed_messages');
+    const result = stmt.get() as { count: number };
+    return result.count;
   }
 
-  private async getCountLast24Hours(): Promise<number> {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT COUNT(*) as count FROM processed_messages WHERE processed_at > datetime("now", "-1 day")',
-        (err, row: any) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(row.count);
-          }
-        }
-      );
-    });
+  private getCountLast24Hours(): number {
+    const stmt = this.db.prepare("SELECT COUNT(*) as count FROM processed_messages WHERE processed_at > datetime('now', '-1 day')");
+    const result = stmt.get() as { count: number };
+    return result.count;
   }
 
-  private async getCountByType(): Promise<Record<string, number>> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT message_type, COUNT(*) as count FROM processed_messages GROUP BY message_type',
-        (err, rows: any[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            const result: Record<string, number> = {};
-            rows.forEach(row => {
-              result[row.message_type || 'unknown'] = row.count;
-            });
-            resolve(result);
-          }
-        }
-      );
+  private getCountByType(): Record<string, number> {
+    const stmt = this.db.prepare('SELECT message_type, COUNT(*) as count FROM processed_messages GROUP BY message_type');
+    const rows = stmt.all() as Array<{ message_type: string | null, count: number }>;
+    
+    const result: Record<string, number> = {};
+    rows.forEach(row => {
+      result[row.message_type || 'unknown'] = row.count;
     });
+    return result;
   }
 
-  /**
-   * Close the database connection
-   */
   close(): void {
-    this.db.close((err) => {
-      if (err) {
-        console.error('Error closing database:', err);
-      } else {
-        console.log('Database connection closed');
-      }
-    });
+    this.db.close();
   }
 }
 
 ---
-src/services/webScrapeService.ts
+./src/services/vectorStoreService.ts
+---
+import Database from 'better-sqlite3';
+import * as fs from 'fs';
+import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { OpenAIService } from './openaiService';
+import { TextChunker } from '../utils/textChunker';
+
+export interface DocumentMetadata {
+  source: string;
+  date: string;
+  category: string;
+  title?: string;
+}
+
+interface VectorRow {
+  id: string;
+  content: string;
+  vector: Buffer; // Changed from String to Buffer (BLOB)
+  title: string;
+  date: string;
+}
+
+export class VectorStoreService {
+  private db: Database.Database;
+  private openaiService: OpenAIService;
+
+  constructor(openaiService: OpenAIService, storageDir: string = 'data/lancedb') {
+    this.openaiService = openaiService;
+    
+    const dbPath = path.resolve(process.cwd(), storageDir);
+    if (!fs.existsSync(dbPath)) fs.mkdirSync(dbPath, { recursive: true });
+    
+    this.db = new Database(path.join(dbPath, 'vectors.sqlite'));
+    this.initDB();
+  }
+
+  private initDB() {
+    this.db.pragma('journal_mode = WAL');
+    // We store 'vector' as BLOB now
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        source TEXT,
+        date TEXT,
+        category TEXT,
+        title TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_category ON documents(category);
+    `);
+    console.log('✅ SQLite Vector Store Initialized (BLOB Mode)');
+  }
+
+  /**
+   * Optimized Cosine Similarity for Float64 Arrays
+   */
+  private cosineSimilarity(vecA: Float64Array, vecB: Float64Array): number {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+      dot += vecA[i] * vecB[i];
+      normA += vecA[i] * vecA[i];
+      normB += vecB[i] * vecB[i];
+    }
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  async addDocument(content: string, metadata: DocumentMetadata): Promise<void> {
+    if (!content) return;
+    const chunks = TextChunker.split(content);
+    console.log(`📚 Ingesting "${metadata.title}" - ${chunks.length} chunks`);
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO documents (id, content, vector, source, date, category, title)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertMany = this.db.transaction((items) => {
+      for (const item of items) insertStmt.run(item.id, item.content, item.vector, item.source, item.date, item.category, item.title);
+    });
+
+    const records = [];
+    
+    for (const chunk of chunks) {
+      try {
+        const embedding = await this.openaiService.createEmbedding(chunk);
+        
+        // CONVERT ARRAY TO BUFFER (Float64)
+        const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
+
+        records.push({
+          id: uuidv4(),
+          content: chunk,
+          vector: vectorBuffer, // Store as BLOB
+          source: metadata.source,
+          date: metadata.date,
+          category: metadata.category,
+          title: metadata.title || ''
+        });
+      } catch (e) {
+        console.warn('Embedding failed:', e);
+      }
+    }
+
+    if (records.length > 0) {
+      insertMany(records);
+      console.log(`💾 Saved ${records.length} vectors to SQLite (BLOB format).`);
+    }
+  }
+
+  async search(query: string, limit: number = 4, filter?: { category?: string }): Promise<string> {
+    try {
+      const queryEmbedding = await this.openaiService.createEmbedding(query);
+      // Convert query to TypedArray for faster math
+      const queryVec = new Float64Array(queryEmbedding);
+
+      let sql = 'SELECT content, vector, title, date FROM documents';
+      if (filter?.category) sql += ` WHERE category = '${filter.category}'`;
+      
+      const rows = this.db.prepare(sql).all() as VectorRow[];
+
+      const results = rows.map(row => {
+        // CONVERT BLOB BACK TO FLOAT ARRAY
+        const docVec = new Float64Array(
+          row.vector.buffer,
+          row.vector.byteOffset,
+          row.vector.byteLength / 8
+        );
+
+        return {
+          ...row,
+          score: this.cosineSimilarity(queryVec, docVec)
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+      if (results.length === 0) return "No relevant knowledge found.";
+
+      return results.map(r =>
+        `[Source: ${r.title} (${r.date})]\n${r.content}`
+      ).join('\n\n---\n\n');
+
+    } catch (error) {
+      console.error('Vector search failed:', error);
+      return "Error searching knowledge base.";
+    }
+  }
+}
+
+---
+./src/services/webScrapeService.ts
 ---
 import { chromium, Browser, Page, BrowserContext } from 'playwright';
 import * as fs from 'fs';
@@ -2474,7 +3378,7 @@ export function createWebScrapeService(): WebScrapeService {
 }
 
 ---
-src/services/whatsappService.ts
+./src/services/whatsappService.ts
 ---
 import axios from 'axios';
 import { WhatsAppResponse, WhatsAppAPIConfig } from '../types/whatsapp';
@@ -2552,7 +3456,7 @@ export class WhatsAppService {
 }
 
 ---
-src/handlers/messageHandler.ts
+./src/handlers/messageHandler.ts
 ---
 import { WhatsAppService } from '../services/whatsappService';
 import { MediaService, MediaInfo } from '../services/mediaService';
@@ -2850,6 +3754,21 @@ Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
     }
 
     try {
+      // --- DIRECT NEWS HANDLING: Bypass AI tool calling for news requests ---
+      const lowerMessage = messageText.toLowerCase();
+      const isNewsRequest = lowerMessage.includes('news') ||
+                           lowerMessage.includes('新聞') ||
+                           lowerMessage.includes('港聞') ||
+                           lowerMessage.includes('頭條') ||
+                           lowerMessage.includes('today') ||
+                           lowerMessage.includes('今日') ||
+                           lowerMessage.includes('有咩');
+
+      if (isNewsRequest) {
+        console.log('📰 Direct news request detected, bypassing AI tool calling');
+        return await this.handleNewsRequestDirectly(messageText, senderNumber);
+      }
+
       let userName = 'the user';
       let userKnowledge = {};
 
@@ -2924,6 +3843,109 @@ Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
       // Fall back to regular response generation
       return this.generateResponse(messageText, senderNumber);
     }
+  }
+
+  /**
+   * Directly handle news requests without relying on AI tool calling
+   */
+  private async handleNewsRequestDirectly(messageText: string, senderNumber?: string): Promise<string> {
+    try {
+      // Import the news scrape service directly
+      const { newsScrapeService } = await import('../tools/index');
+      
+      if (!newsScrapeService) {
+        throw new Error('News scrape service not available');
+      }
+      
+      // Determine category based on message
+      let category = 'general';
+      const lowerMessage = messageText.toLowerCase();
+      
+      if (lowerMessage.includes('tech') || lowerMessage.includes('技術')) category = 'tech';
+      else if (lowerMessage.includes('business') || lowerMessage.includes('商業') || lowerMessage.includes('財經')) category = 'business';
+      else if (lowerMessage.includes('sport') || lowerMessage.includes('體育')) category = 'sports';
+      else if (lowerMessage.includes('world') || lowerMessage.includes('國際')) category = 'world';
+      
+      // Get fresh news data directly
+      const newsData = newsScrapeService.getCachedNews(category);
+      
+      // Parse and format the news for the user
+      const formattedNews = this.formatNewsForUser(newsData, category, messageText);
+      
+      return formattedNews;
+    } catch (error) {
+      console.error('Error handling news request directly:', error);
+      return '抱歉，我暫時無法獲取最新新聞。請稍後再試。';
+    }
+  }
+
+  /**
+   * Format news data into a user-friendly response
+   */
+  private formatNewsForUser(newsData: string, category: string, originalMessage: string): string {
+    // Extract the actual news content (remove system info)
+    const newsContent = newsData.replace(/\[SYSTEM:.*?\]\n\n/, '');
+    
+    // Check if this is a Chinese language request
+    const isChineseRequest = originalMessage.includes('新聞') ||
+                            originalMessage.includes('港聞') ||
+                            originalMessage.includes('有咩') ||
+                            originalMessage.includes('今日');
+    
+    if (newsContent.includes('I am currently updating my news feed')) {
+      return isChineseRequest
+        ? '我正在更新新聞資訊，請稍等一分鐘再問我。🌟'
+        : 'I am currently updating my news feed. Please ask again in 1 minute.';
+    }
+    
+    // Parse the news content and create a summary
+    const headlines = newsContent.split('\n\n').slice(0, 3); // Get top 3 headlines
+    
+    if (isChineseRequest) {
+      let response = `嗨！👋 今日${this.getChineseCategoryName(category)}頭條：\n\n`;
+      
+      headlines.forEach((headline, index) => {
+        const titleMatch = headline.match(/Headline: (.*?)\n/);
+        const summaryMatch = headline.match(/Summary: (.*?)(\.\.\.)?$/);
+        
+        if (titleMatch && summaryMatch) {
+          response += `${index + 1}️⃣ ${titleMatch[1]}\n`;
+          response += `   ${summaryMatch[1].substring(0, 100)}...\n\n`;
+        }
+      });
+      
+      response += '想深入了解哪一個故事嗎？或者想看看其他類別的新聞？💬';
+      return response;
+    } else {
+      let response = `Hi! 👋 Today's top ${category} headlines:\n\n`;
+      
+      headlines.forEach((headline, index) => {
+        const titleMatch = headline.match(/Headline: (.*?)\n/);
+        const summaryMatch = headline.match(/Summary: (.*?)(\.\.\.)?$/);
+        
+        if (titleMatch && summaryMatch) {
+          response += `${index + 1}️⃣ ${titleMatch[1]}\n`;
+          response += `   ${summaryMatch[1].substring(0, 100)}...\n\n`;
+        }
+      });
+      
+      response += 'Want more details on any story? Or check out other categories? 💬';
+      return response;
+    }
+  }
+
+  /**
+   * Get Chinese category name
+   */
+  private getChineseCategoryName(category: string): string {
+    const categoryMap: { [key: string]: string } = {
+      'general': '綜合',
+      'tech': '科技',
+      'business': '商業',
+      'sports': '體育',
+      'world': '國際'
+    };
+    return categoryMap[category] || '綜合';
   }
 
   /**
@@ -3051,7 +4073,7 @@ Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
 }
 
 ---
-src/types/aiConfig.ts
+./src/types/aiConfig.ts
 ---
 export interface AIConfig {
   // API Configuration
@@ -3092,7 +4114,7 @@ export interface AIConfigManagerOptions {
 }
 
 ---
-src/types/conversation.ts
+./src/types/conversation.ts
 ---
 export interface UserProfile {
   name?: string;
@@ -3134,7 +4156,7 @@ export interface ConversationStorageConfig {
 }
 
 ---
-src/types/whatsapp.ts
+./src/types/whatsapp.ts
 ---
 export interface WhatsAppMessage {
   object: string;
@@ -3193,7 +4215,7 @@ export interface WhatsAppAPIConfig {
 }
 
 ---
-src/utils/configLoader.ts
+./src/utils/configLoader.ts
 ---
 import * as fs from 'fs';
 import * as path from 'path';
@@ -3320,7 +4342,7 @@ export function createConfigLoaderFromEnv(): ConfigLoader {
 }
 
 ---
-src/utils/crypto.ts
+./src/utils/crypto.ts
 ---
 import * as crypto from 'crypto';
 
@@ -3352,7 +4374,7 @@ export class CryptoUtils {
 }
 
 ---
-src/utils/logger.ts
+./src/utils/logger.ts
 ---
 /**
  * Enhanced logging utility for tool calling and AI responses
@@ -3454,7 +4476,7 @@ export class Logger {
 export const logger = Logger.getInstance();
 
 ---
-src/utils/responseCleaner.ts
+./src/utils/responseCleaner.ts
 ---
 /**
  * Utility functions for cleaning and processing LLM responses
@@ -3546,7 +4568,42 @@ export function containsThinkingTags(response: string): boolean {
 }
 
 ---
-src/routes/webhook.ts
+./src/utils/textChunker.ts
+---
+// src/utils/textChunker.ts
+
+export class TextChunker {
+  /**
+   * Splits text into chunks of ~chunkSize characters, respecting sentence boundaries.
+   */
+  static split(text: string, chunkSize: number = 800, overlap: number = 100): string[] {
+    if (!text) return [];
+    
+    // Split by rough sentence boundaries to avoid cutting words in half
+    const sentences = text.match(/[^.!?]+[.!?]+(\s+|$)/g) || [text];
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const sentence of sentences) {
+      if ((currentChunk.length + sentence.length) > chunkSize && currentChunk.length > 0) {
+        chunks.push(currentChunk.trim());
+        // Keep the last 'overlap' characters for context continuity
+        currentChunk = currentChunk.slice(-overlap) + sentence; 
+      } else {
+        currentChunk += sentence;
+      }
+    }
+    
+    if (currentChunk.trim().length > 0) {
+      chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+  }
+}
+
+---
+./src/routes/webhook.ts
 ---
 import { Router, Request, Response } from 'express';
 import { WhatsAppService } from '../services/whatsappService';
@@ -3792,11 +4849,14 @@ File path: ${audioPath}`;
 }
 
 ---
-src/tools/index.ts
+./src/tools/index.ts
 ---
 import { GoogleSearchService } from '../services/googleSearchService';
 import { WebScrapeService, createWebScrapeService } from '../services/webScrapeService';
 import { NewsScrapeService, createNewsScrapeService, NewsArticle } from '../services/newsScrapeService';
+import { VectorStoreService } from '../services/vectorStoreService'; // Updated
+import { NewsProcessorService } from '../services/newsProcessorService'; // New
+import { OpenAIService, createOpenAIServiceFromConfig } from '../services/openaiService';
 
 // Tool function definitions
 export interface ToolFunction {
@@ -3808,8 +4868,9 @@ export interface ToolFunction {
 
 // Available tools
 export const availableTools: { [key: string]: ToolFunction } = {};
-let webScrapeService: WebScrapeService;
+let webScrapeService: WebScrapeService | undefined;
 export let newsScrapeService: NewsScrapeService;
+let vectorStoreService: VectorStoreService; // Updated global reference
 let mediaService: any; // Will be initialized later
 
 // Tool schemas for OpenAI function calling
@@ -3922,10 +4983,43 @@ export const toolSchemas = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'search_knowledge',
+      description: 'Search the bot\'s learned knowledge base for past news, facts, and enriched context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The specific topic or question to search for in memory',
+          }
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 // Initialize tools with dependencies
-export function initializeTools(searchService: GoogleSearchService, mediaServiceInstance?: any) {
+export async function initializeTools(searchService: GoogleSearchService, mediaServiceInstance?: any) {
+  // 1. Initialize OpenAI (Needed for Embeddings & Processor)
+  const openaiService = await createOpenAIServiceFromConfig();
+
+  // 2. Initialize Vector Store (The Better RAG)
+  vectorStoreService = new VectorStoreService(openaiService);
+
+  // 3. Initialize News Processor
+  const newsProcessor = new NewsProcessorService(openaiService, searchService, vectorStoreService);
+
+  // 4. Initialize Web Scrape
+  webScrapeService = createWebScrapeService();
+
+  // 5. Initialize News Scrape Service WITH Processor
+  newsScrapeService = createNewsScrapeService(webScrapeService, newsProcessor);
+
   // Store media service reference for later use
   if (mediaServiceInstance) {
     mediaService = mediaServiceInstance;
@@ -3956,12 +5050,6 @@ export function initializeTools(searchService: GoogleSearchService, mediaService
     }
   };
 
-  // Initialize web scrape service
-  webScrapeService = createWebScrapeService();
-
-  // Initialize news scrape service
-  newsScrapeService = createNewsScrapeService(webScrapeService);
-
   availableTools.web_scrape = {
     name: 'web_scrape',
     description: 'Scrape content from specific URLs',
@@ -3976,6 +5064,9 @@ export function initializeTools(searchService: GoogleSearchService, mediaService
       const startTime = Date.now();
 
       try {
+        if (!webScrapeService) {
+          throw new Error('Web scrape service not initialized');
+        }
         const results = await webScrapeService.scrapeUrls(args.urls, args.selector);
         const executionTime = Date.now() - startTime;
 
@@ -4095,6 +5186,24 @@ export async function executeTool(toolName: string, args: any): Promise<any> {
       const cat = args.category || 'general';
       console.log(`📰 Tool retrieving cached news for: ${cat}`);
       return newsScrapeService.getCachedNews(cat);
+    }
+  };
+
+  // ADD NEW TOOL: search_knowledge
+  // ADD NEW TOOL: search_knowledge
+  availableTools.search_knowledge = {
+    name: 'search_knowledge',
+    description: 'Search learned knowledge base',
+    parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' }
+        },
+        required: ['query']
+    },
+    execute: async (args: { query: string }) => {
+      console.log(`🧠 Searching Vector Store for: ${args.query}`);
+      return vectorStoreService.search(args.query);
     }
   };
 

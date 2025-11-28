@@ -4,6 +4,7 @@ import * as path from 'path';
 import { cleanLLMResponse } from '../utils/responseCleaner';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { executeTool } from '../tools';
+import { ToolRegistry } from '../core/ToolRegistry';
 import { AIConfig } from '../types/aiConfig';
 import { ConfigLoader } from '../utils/configLoader';
 
@@ -112,7 +113,8 @@ export class OpenAIService {
   async generateResponseWithTools(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     tools?: ChatCompletionTool[],
-    maxToolRounds: number = 15 // Increased from 5 to 15 as requested
+    maxToolRounds: number = 15, // Increased from 5 to 15 as requested
+    toolRegistry?: ToolRegistry // Optional ToolRegistry for new BaseTool system
   ): Promise<string> {
     if (!this.config.enableToolCalling || !tools || tools.length === 0) {
       // Fall back to regular response generation without tools
@@ -161,8 +163,15 @@ export class OpenAIService {
         return cleanLLMResponse(message.content || 'I apologize, but I could not generate a response.');
       }
 
-      // Process tool calls
-      const toolResults = await this.processToolCalls(message.tool_calls);
+      // Process tool calls using appropriate method
+      let toolResults;
+      if (toolRegistry) {
+        // Use new BaseTool system via ToolRegistry
+        toolResults = await this.processToolCallsWithRegistry(message.tool_calls, toolRegistry);
+      } else {
+        // Use old tool system
+        toolResults = await this.processToolCalls(message.tool_calls);
+      }
 
       // Add tool results to the conversation
       for (const result of toolResults) {
@@ -226,6 +235,48 @@ export class OpenAIService {
 
       } catch (error) {
         console.error('❌ Tool execution failed:', {
+          toolName: toolCall.function.name,
+          error: error instanceof Error ? error.message : `${error}`
+        });
+
+        results.push({
+          tool_call_id: toolCall.id,
+          error: error instanceof Error ? error.message : 'Tool execution failed'
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Process tool calls using ToolRegistry (for new BaseTool system)
+   */
+  async processToolCallsWithRegistry(toolCalls: any[], toolRegistry: ToolRegistry): Promise<any[]> {
+    const results: any[] = [];
+
+    for (const toolCall of toolCalls) {
+      try {
+        console.log('🛠️ Processing tool call with registry:', {
+          toolName: toolCall.function.name,
+          arguments: toolCall.function.arguments
+        });
+
+        const args = JSON.parse(toolCall.function.arguments);
+        const result = await toolRegistry.executeTool(toolCall.function.name, args);
+
+        results.push({
+          tool_call_id: toolCall.id,
+          result: result
+        });
+
+        console.log('✅ Tool execution completed with registry:', {
+          toolName: toolCall.function.name,
+          resultLength: typeof result === 'string' ? result.length : 'object'
+        });
+
+      } catch (error) {
+        console.error('❌ Tool execution failed with registry:', {
           toolName: toolCall.function.name,
           error: error instanceof Error ? error.message : `${error}`
         });

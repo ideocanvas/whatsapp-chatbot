@@ -1,0 +1,61 @@
+{
+  "autonomous": {
+    "scheduler": {
+      "tickIntervalMs": 60000,
+      "browsingChanceWhenUsersActive": 0.3,
+      "proactiveCheckChance": 0.5,
+      "maintenanceIntervalMs": 300000
+    },
+    "browser": {
+      "maxPagesPerHour": 10,
+      "dailyUrls": [
+        "https://techcrunch.com",
+        "https://news.ycombinator.com",
+        "https://hongkongfp.com",
+        "https://www.bbc.com/news/world",
+        "https://www.cnbc.com/world"
+      ],
+      "mobileMode": true,
+      "pageDelayMs": {
+        "min": 2000,
+        "max": 5000
+      }
+    },
+    "memory": {
+      "shortTermTtlMs": 3600000,
+      "longTermCleanupDays": 30,
+      "historyCleanupDays": 365,
+      "maxUserInterests": 10
+    },
+    "messaging": {
+      "rateLimitDelayMs": 2000,
+      "proactiveCooldownMs": 900000,
+      "maxRetries": 3,
+      "retryBackoffMs": 30000,
+      "mobileOptimization": {
+        "maxWords": 50,
+        "removeMarkdown": true,
+        "naturalSpacing": true
+      }
+    },
+    "agent": {
+      "maxToolRounds": 10,
+      "relevanceThreshold": 0.7,
+      "interestDiscovery": {
+        "minMessageLength": 10,
+        "interestPatterns": [
+          "tech", "technology", "programming", "coding", "ai", "artificial intelligence", "machine learning",
+          "business", "finance", "stock", "market", "economy", "investment",
+          "sports", "football", "basketball", "tennis", "soccer", "game",
+          "news", "current events", "headlines", "breaking",
+          "travel", "vacation", "holiday", "destination",
+          "food", "cooking", "recipe", "restaurant", "cuisine",
+          "music", "song", "artist", "album", "concert",
+          "movie", "film", "cinema", "actor", "director",
+          "gaming", "video game", "console", "pc gaming",
+          "health", "fitness", "exercise", "wellness", "diet"
+        ]
+      }
+    }
+  }
+}

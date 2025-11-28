@@ -294,6 +294,21 @@ Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
     }
 
     try {
+      // --- DIRECT NEWS HANDLING: Bypass AI tool calling for news requests ---
+      const lowerMessage = messageText.toLowerCase();
+      const isNewsRequest = lowerMessage.includes('news') ||
+                           lowerMessage.includes('新聞') ||
+                           lowerMessage.includes('港聞') ||
+                           lowerMessage.includes('頭條') ||
+                           lowerMessage.includes('today') ||
+                           lowerMessage.includes('今日') ||
+                           lowerMessage.includes('有咩');
+
+      if (isNewsRequest) {
+        console.log('📰 Direct news request detected, bypassing AI tool calling');
+        return await this.handleNewsRequestDirectly(messageText, senderNumber);
+      }
+
       let userName = 'the user';
       let userKnowledge = {};
 
@@ -368,6 +383,109 @@ Learned Knowledge: ${JSON.stringify(userKnowledge, null, 2)}`;
       // Fall back to regular response generation
       return this.generateResponse(messageText, senderNumber);
     }
+  }
+
+  /**
+   * Directly handle news requests without relying on AI tool calling
+   */
+  private async handleNewsRequestDirectly(messageText: string, senderNumber?: string): Promise<string> {
+    try {
+      // Import the news scrape service directly
+      const { newsScrapeService } = await import('../tools/index');
+      
+      if (!newsScrapeService) {
+        throw new Error('News scrape service not available');
+      }
+      
+      // Determine category based on message
+      let category = 'general';
+      const lowerMessage = messageText.toLowerCase();
+      
+      if (lowerMessage.includes('tech') || lowerMessage.includes('技術')) category = 'tech';
+      else if (lowerMessage.includes('business') || lowerMessage.includes('商業') || lowerMessage.includes('財經')) category = 'business';
+      else if (lowerMessage.includes('sport') || lowerMessage.includes('體育')) category = 'sports';
+      else if (lowerMessage.includes('world') || lowerMessage.includes('國際')) category = 'world';
+      
+      // Get fresh news data directly
+      const newsData = newsScrapeService.getCachedNews(category);
+      
+      // Parse and format the news for the user
+      const formattedNews = this.formatNewsForUser(newsData, category, messageText);
+      
+      return formattedNews;
+    } catch (error) {
+      console.error('Error handling news request directly:', error);
+      return '抱歉，我暫時無法獲取最新新聞。請稍後再試。';
+    }
+  }
+
+  /**
+   * Format news data into a user-friendly response
+   */
+  private formatNewsForUser(newsData: string, category: string, originalMessage: string): string {
+    // Extract the actual news content (remove system info)
+    const newsContent = newsData.replace(/\[SYSTEM:.*?\]\n\n/, '');
+    
+    // Check if this is a Chinese language request
+    const isChineseRequest = originalMessage.includes('新聞') ||
+                            originalMessage.includes('港聞') ||
+                            originalMessage.includes('有咩') ||
+                            originalMessage.includes('今日');
+    
+    if (newsContent.includes('I am currently updating my news feed')) {
+      return isChineseRequest
+        ? '我正在更新新聞資訊，請稍等一分鐘再問我。🌟'
+        : 'I am currently updating my news feed. Please ask again in 1 minute.';
+    }
+    
+    // Parse the news content and create a summary
+    const headlines = newsContent.split('\n\n').slice(0, 3); // Get top 3 headlines
+    
+    if (isChineseRequest) {
+      let response = `嗨！👋 今日${this.getChineseCategoryName(category)}頭條：\n\n`;
+      
+      headlines.forEach((headline, index) => {
+        const titleMatch = headline.match(/Headline: (.*?)\n/);
+        const summaryMatch = headline.match(/Summary: (.*?)(\.\.\.)?$/);
+        
+        if (titleMatch && summaryMatch) {
+          response += `${index + 1}️⃣ ${titleMatch[1]}\n`;
+          response += `   ${summaryMatch[1].substring(0, 100)}...\n\n`;
+        }
+      });
+      
+      response += '想深入了解哪一個故事嗎？或者想看看其他類別的新聞？💬';
+      return response;
+    } else {
+      let response = `Hi! 👋 Today's top ${category} headlines:\n\n`;
+      
+      headlines.forEach((headline, index) => {
+        const titleMatch = headline.match(/Headline: (.*?)\n/);
+        const summaryMatch = headline.match(/Summary: (.*?)(\.\.\.)?$/);
+        
+        if (titleMatch && summaryMatch) {
+          response += `${index + 1}️⃣ ${titleMatch[1]}\n`;
+          response += `   ${summaryMatch[1].substring(0, 100)}...\n\n`;
+        }
+      });
+      
+      response += 'Want more details on any story? Or check out other categories? 💬';
+      return response;
+    }
+  }
+
+  /**
+   * Get Chinese category name
+   */
+  private getChineseCategoryName(category: string): string {
+    const categoryMap: { [key: string]: string } = {
+      'general': '綜合',
+      'tech': '科技',
+      'business': '商業',
+      'sports': '體育',
+      'world': '國際'
+    };
+    return categoryMap[category] || '綜合';
   }
 
   /**
