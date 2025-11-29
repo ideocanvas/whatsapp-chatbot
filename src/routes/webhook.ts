@@ -145,8 +145,16 @@ export class WebhookRoutes {
                   ).catch(err => console.error('Agent image processing error:', err));
 
                 } else if (message.type === 'audio' && message.audio) {
-                  console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
-                  console.log('⚠️ Audio processing not yet implemented in autonomous agent');
+                  // ✅ NEW: Handle Audio Messages
+                  console.log(`🎤 Processing audio message from ${message.from}`);
+                  
+                  agent.handleAudioMessage(
+                    message.from,
+                    message.audio.id,
+                    message.audio.mime_type,
+                    message.audio.sha256
+                  ).catch(err => console.error('Agent audio processing error:', err));
+                  
                 } else {
                   console.log(`Unsupported message type: ${message.type}`);
                 }

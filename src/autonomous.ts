@@ -284,6 +284,66 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
+   * NEW: Handle incoming Audio messages
+   * Workflow: Download -> Transcribe -> AI Response -> Synthesize (TTS) -> Send Audio
+   */
+  async handleAudioMessage(userId: string, audioId: string, mimeType: string, sha256: string): Promise<void> {
+    if (!this.isInitialized || !this.agent || !this.whatsapp || !this.mediaService) {
+      throw new Error('Agent not initialized');
+    }
+
+    // 1. Interrupt background tasks
+    if (this.scheduler) this.scheduler.interrupt();
+
+    console.log(`🎤 Incoming AUDIO from ${userId}`);
+
+    try {
+      // 2. Download Audio
+      const mediaInfo = await this.mediaService.downloadAndSaveMedia(audioId, mimeType, sha256, 'audio');
+      
+      // 3. Transcribe (Speech-to-Text)
+      console.log(`👂 Transcribing audio: ${mediaInfo.filename}`);
+      // Assuming 'en' or auto-detect. You can change 'en' to undefined to auto-detect if supported.
+      const transcription = await this.mediaService.transcribeAudio(mediaInfo.filepath);
+      console.log(`📝 User said: "${transcription}"`);
+
+      // 4. Get Agent Text Response
+      // We pass the transcription as if the user typed it
+      const textResponse = await this.agent.handleUserMessage(userId, transcription);
+
+      // 5. Synthesize Response (Text-to-Speech)
+      console.log(`🗣️ Synthesizing voice response...`);
+      const audioResponse = await this.mediaService.synthesizeAudio(textResponse, {
+        voice: 'af_heart', // You can change the voice here
+        speed: 1.0
+      });
+
+      // 6. Upload Generated Audio to WhatsApp
+      const uploadedMediaId = await this.whatsapp.uploadMedia(audioResponse.filepath, 'audio/wav'); // API usually returns WAV
+
+      if (uploadedMediaId) {
+        // 7. Send Audio Message
+        await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
+        
+        // Optional: Also send the text version for clarity
+        // await this.whatsapp.sendMessage(userId, `(Transcript): ${textResponse}`);
+      } else {
+        // Fallback to text if upload fails
+        await this.whatsapp.sendMessage(userId, textResponse);
+      }
+
+      console.log(`✅ Voice interaction completed for ${userId}`);
+
+    } catch (error) {
+      console.error(`❌ Error processing audio from ${userId}:`, error);
+      const fallback = "I heard you, but had trouble processing the audio. Please type your message instead.";
+      if (process.env.DEV_MODE !== 'true') {
+        await this.whatsapp.sendMessage(userId, fallback);
+      }
+    }
+  }
+
+  /**
    * Handle web interface messages (returns response instead of sending)
    */
   async handleWebMessage(userId: string, message: string): Promise<string> {
