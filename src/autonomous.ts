@@ -318,11 +318,15 @@ class AutonomousWhatsAppAgent {
         speed: 1.0
       });
 
-      // 6. Upload Generated Audio to WhatsApp
-      const uploadedMediaId = await this.whatsapp.uploadMedia(audioResponse.filepath, 'audio/wav'); // API usually returns WAV
+      // 6. Convert WAV to WhatsApp-compatible format (OGG)
+      console.log(`🔄 Converting audio to WhatsApp-compatible format...`);
+      const convertedAudio = await this.mediaService.convertAudioToWhatsAppFormat(audioResponse.filepath, 'ogg');
+
+      // 7. Upload Converted Audio to WhatsApp
+      const uploadedMediaId = await this.whatsapp.uploadMedia(convertedAudio.filepath, convertedAudio.mimeType);
 
       if (uploadedMediaId) {
-        // 7. Send Audio Message
+        // 8. Send Audio Message
         await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
         
         // Optional: Also send the text version for clarity

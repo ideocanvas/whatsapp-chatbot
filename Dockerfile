@@ -7,7 +7,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies including all Playwright browsers
+# Install dependencies including all Playwright browsers and FFmpeg
 RUN apt-get update && apt-get install -y \
     fonts-liberation \
     libasound2 \
@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     wget \
     xdg-utils \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npx playwright install chromium --with-deps
@@ -49,7 +50,7 @@ RUN npm run build
 # Production stage
 FROM node:20-bookworm-slim AS production
 
-# Install dumb-init and all required system dependencies for Playwright
+# Install dumb-init and all required system dependencies for Playwright and FFmpeg
 RUN apt-get update && apt-get install -y \
     dumb-init \
     ca-certificates \
@@ -77,6 +78,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     wget \
     xdg-utils \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app user

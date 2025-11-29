@@ -1,9 +1,13 @@
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import FormData from 'form-data';
 import { WhatsAppAPIConfig } from '../types/whatsapp';
 import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+
+const execAsync = promisify(exec);
 
 export interface MediaInfo {
   filename: string;
@@ -275,6 +279,92 @@ export class MediaService {
 
       const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to synthesize audio: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Convert audio file from WAV to WhatsApp-compatible format (OGG with Opus codec)
+   * WhatsApp supports: audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg
+   */
+  async convertAudioToWhatsAppFormat(inputFilePath: string, outputFormat: 'ogg' | 'mp3' = 'ogg'): Promise<MediaInfo> {
+    try {
+      if (!fs.existsSync(inputFilePath)) {
+        throw new Error(`Input file not found: ${inputFilePath}`);
+      }
+
+      // Check if FFmpeg is available
+      try {
+        await execAsync('ffmpeg -version');
+      } catch (error) {
+        throw new Error('FFmpeg is not installed or not available in PATH');
+      }
+
+      const inputExt = path.extname(inputFilePath).toLowerCase();
+      if (inputExt !== '.wav') {
+        console.warn(`Warning: Input file is ${inputExt}, expected .wav. Conversion may still work.`);
+      }
+
+      // Create output file path
+      const timestamp = Date.now();
+      const outputFilename = `converted_${timestamp}.${outputFormat}`;
+      const outputFilePath = path.join('data', 'media', outputFilename);
+
+      // Ensure directory exists
+      const dir = path.dirname(outputFilePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Build FFmpeg command based on output format
+      let ffmpegCommand: string;
+      let mimeType: string;
+
+      if (outputFormat === 'ogg') {
+        // Convert to OGG with Opus codec (WhatsApp's preferred format)
+        ffmpegCommand = `ffmpeg -i "${inputFilePath}" -c:a libopus -b:a 64k -ac 1 -vn -y "${outputFilePath}"`;
+        mimeType = 'audio/ogg';
+      } else {
+        // Convert to MP3
+        ffmpegCommand = `ffmpeg -i "${inputFilePath}" -c:a libmp3lame -b:a 128k -ac 1 -vn -y "${outputFilePath}"`;
+        mimeType = 'audio/mpeg';
+      }
+
+      console.log(`Converting audio: ${inputFilePath} -> ${outputFilePath}`);
+      console.log(`FFmpeg command: ${ffmpegCommand}`);
+
+      // Execute FFmpeg conversion
+      const { stdout, stderr } = await execAsync(ffmpegCommand);
+
+      if (stderr) {
+        console.warn('FFmpeg stderr:', stderr);
+      }
+
+      // Verify output file was created
+      if (!fs.existsSync(outputFilePath)) {
+        throw new Error('FFmpeg conversion failed - output file not created');
+      }
+
+      const stats = fs.statSync(outputFilePath);
+      
+      if (stats.size === 0) {
+        throw new Error('FFmpeg conversion failed - output file is empty');
+      }
+
+      console.log(`✅ Audio conversion successful: ${stats.size} bytes`);
+
+      return {
+        filename: outputFilename,
+        filepath: outputFilePath,
+        mimeType,
+        size: stats.size,
+        sha256: '', // Not needed for generated content
+        type: 'audio'
+      };
+
+    } catch (error) {
+      console.error('Error converting audio:', error);
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
+      throw new Error(`Failed to convert audio: ${errorMessage}`);
     }
   }
 
