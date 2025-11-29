@@ -14,6 +14,14 @@ export interface MediaInfo {
   type: 'image' | 'audio';
 }
 
+// --- NEW: Options for TTS ---
+export interface TTSOptions {
+  voice?: string;      // e.g., 'af_heart'
+  speed?: number;      // e.g., 1.0
+  lang_code?: string;  // 'a' (US English), 'b' (UK English), 'z' (Chinese), etc.
+  model_repo?: string; // e.g., 'prince-canuma/Kokoro-82M' or 'mlx-community/Spark-TTS...'
+}
+
 export class MediaService {
   private config: WhatsAppAPIConfig;
   private openaiService: OpenAIService | null;
@@ -192,6 +200,81 @@ export class MediaService {
       console.error('Error transcribing audio:', error);
       const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to transcribe audio: ${errorMessage}`);
+    }
+  }
+
+  // ==========================================
+  //  🆕 NEW METHOD: Synthesize Audio (TTS)
+  // ==========================================
+  async synthesizeAudio(text: string, options: TTSOptions = {}): Promise<MediaInfo> {
+    try {
+      const apiUrl = process.env.AUDIO_SERVICE_API_URL;
+      const apiKey = process.env.AUDIO_SERVICE_API_KEY;
+
+      if (!apiUrl || !apiKey) {
+        throw new Error('Audio service not configured');
+      }
+
+      if (!text) {
+        throw new Error('Text is required for synthesis');
+      }
+
+      // Default Configuration
+      const payload = {
+        text: text,
+        model_repo: options.model_repo || 'prince-canuma/Kokoro-82M', // Default to Kokoro
+        voice: options.voice || 'af_heart',
+        speed: options.speed || 1.0,
+        lang_code: options.lang_code || 'a' // Default US English
+      };
+
+      console.log(`Synthesizing audio: "${text.substring(0, 50)}..." with model ${payload.model_repo}`);
+
+      // NOTE: Synthesize endpoint expects JSON, not FormData
+      const response = await axios.post(`${apiUrl}synthesize`, payload, {
+        responseType: 'arraybuffer', // Critical: We expect a binary WAV file back
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      // Prepare file path
+      const timestamp = Date.now();
+      const filename = `tts_${timestamp}.wav`;
+      const filepath = path.join('data', 'media', filename);
+
+      // Ensure directory exists
+      const dir = path.dirname(filepath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Save the buffer to disk
+      fs.writeFileSync(filepath, response.data);
+      const stats = fs.statSync(filepath);
+
+      return {
+        filename,
+        filepath,
+        mimeType: 'audio/wav',
+        size: stats.size,
+        sha256: '', // Not strictly needed for generated content, or calculate if needed
+        type: 'audio'
+      };
+
+    } catch (error) {
+      console.error('Error synthesizing audio:', error);
+      
+      // Handle axios error response specially to read the text error from arraybuffer
+      if (axios.isAxiosError(error) && error.response && error.response.data) {
+        const errorBuffer = error.response.data as Buffer;
+        const errorText = errorBuffer.toString('utf8');
+        throw new Error(`TTS Failed: ${errorText}`);
+      }
+
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
+      throw new Error(`Failed to synthesize audio: ${errorMessage}`);
     }
   }
 
