@@ -305,16 +305,27 @@ export class MediaService {
           return this.synthesizeAudio("I sent you a text response.", options);
       }
 
+      // 2. Auto-detect Language for Kokoro
+      // Check for Chinese characters (CJK Unified Ideographs)
+      const hasChinese = /[\u4e00-\u9fa5]/.test(cleanedText);
+      let langCode = options.lang_code || 'a'; // Default US English
+
+      // If Chinese detected and no override provided, switch to 'z'
+      if (hasChinese && !options.lang_code) {
+          console.log("🇨🇳 Chinese characters detected, switching TTS lang_code to 'z'");
+          langCode = 'z';
+      }
+
       // Default Configuration
       const payload = {
         text: cleanedText,
         model_repo: options.model_repo || 'prince-canuma/Kokoro-82M', // Default to Kokoro
         voice: options.voice || 'af_heart',
         speed: options.speed || 1.0,
-        lang_code: options.lang_code || 'a' // Default US English
+        lang_code: langCode
       };
 
-      console.log(`Synthesizing audio: "${cleanedText.substring(0, 50)}..." with model ${payload.model_repo}`);
+      console.log(`Synthesizing audio: "${cleanedText.substring(0, 50)}..." with model ${payload.model_repo} (lang: ${payload.lang_code})`);
 
       // NOTE: Synthesize endpoint expects JSON, not FormData
       const response = await axios.post(`${apiUrl}synthesize`, payload, {
