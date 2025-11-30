@@ -3,6 +3,8 @@ import { ContextManager } from '../memory/ContextManager';
 import { ToolRegistry } from './ToolRegistry';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ActionQueueService } from '../services/ActionQueueService';
+import { UserProfileService } from '../services/UserProfileService';
+import { UpdateProfileTool } from '../tools/UpdateProfileTool';
 
 /**
  * The Brain of the autonomous agent system.
@@ -16,7 +18,8 @@ export class Agent {
     private contextMgr: ContextManager,
     private kb: KnowledgeBasePostgres,
     private tools: ToolRegistry,
-    private actionQueue: ActionQueueService
+    private actionQueue: ActionQueueService,
+    private profileService: UserProfileService // Injected dependency
   ) {
     this.chatbotName = process.env.CHATBOT_NAME || 'Lucy';
   }
@@ -28,30 +31,47 @@ export class Agent {
     // 1. Add to Short-term context
     this.contextMgr.addMessage(userId, 'user', message);
 
-    // 2. Check if we need RAG (Knowledge Base)
-    let systemContext = await this.getSystemPrompt(userId);
-    
-    // Retrieve relevant facts from Long-term memory
+    // 2. Fetch User Profile
+    const userProfileStr = await this.profileService.getProfileContext(userId);
+    const userProfileObj = await this.profileService.getProfile(userId);
+
+    // 3. Prepare Dynamic System Prompt
+    let systemContext = await this.getSystemPrompt(userId, userProfileStr);
+
+    // 4. RAG Logic (Existing)
     const relevantFacts = await this.kb.search(message);
     if (relevantFacts && !relevantFacts.includes('No relevant knowledge')) {
       systemContext += `\n\n🧠 Relevant Knowledge:\n${relevantFacts}`;
     }
 
-    // 3. Build Tool definitions
-    const toolDefs = this.tools.getOpenAITools();
+    // 5. Add "UpdateProfileTool" specifically for this user context
+    const profileTool = new UpdateProfileTool(this.profileService, userId);
+    
+    // Create a temporary registry for this request that includes the base tools + context-aware tool
+    const requestTools = [...this.tools.getOpenAITools(), profileTool.toOpenAISchema()];
+    
+    // We need a way to execute this tool since it's not in the global registry
+    // We can create a temporary registry wrapper or handle it inside generateResponse
+    const tempRegistry = new ToolRegistry();
+    // Copy existing tools
+    this.tools.getAvailableTools().forEach(name => {
+        const t = this.tools.getTool(name);
+        if(t) tempRegistry.registerTool(t);
+    });
+    // Add our specific tool
+    tempRegistry.registerTool(profileTool);
 
-    // 4. Generate Response (with Tool Calling loop)
+    // 6. Generate Response
     const history = this.contextMgr.getHistory(userId);
     
     const response = await this.generateResponseWithContext({
       systemPrompt: systemContext,
       history: history,
-      tools: toolDefs,
+      tools: requestTools, // Use the expanded toolset
       userMessage: message,
-      toolRegistry: this.tools
+      toolRegistry: tempRegistry // Use the temp registry
     });
 
-    // 5. Save and Return (with mobile optimization)
     this.contextMgr.addMessage(userId, 'assistant', response);
     return this.optimizeForMobile(response);
   }
@@ -136,8 +156,18 @@ Your decision:`;
   /**
    * Get system prompt with mobile optimization and long-term context
    */
-  private async getSystemPrompt(userId: string): Promise<string> {
+  private async getSystemPrompt(userId: string, profileContext?: string): Promise<string> {
     let systemPrompt = `You are ${this.chatbotName}, a witty, concise WhatsApp assistant.
+
+${profileContext || ''}
+
+**CORE BEHAVIORS:**
+1. **Be Proactive**: If the "User Profile" above has "Unknown" fields (Name, Location) or few facts, naturally ask the user about them during conversation.
+   - Example: If discussing weather, ask "By the way, where are you located so I can check for you?"
+   - Example: If discussing hobbies, ask "What do you do for fun?"
+   - Don't interrogate. Ask only one personal question every few turns.
+
+2. **Save Information**: Whenever the user tells you a fact about themselves (name, job, pet, hobby), IMMEDIATELY use the 'update_profile' tool to save it. Do not ask for confirmation, just save it.
 
 **CRITICAL RESPONSE GUIDELINES:**
 1. **Mobile Optimization**: Responses MUST be under 50 words unless specifically requested. Use natural spacing.

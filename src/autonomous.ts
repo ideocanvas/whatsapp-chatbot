@@ -20,6 +20,7 @@ import { NewsProcessorService } from './services/newsProcessorService';
 import { DatabaseConfig } from './config/databaseConfig';
 import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
 import * as fs from 'fs'; // Added for reading generated audio files
+import { UserProfileService } from './services/UserProfileService';
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
@@ -41,6 +42,7 @@ class AutonomousWhatsAppAgent {
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
   private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
   private summaryStore?: SummaryStore;
+  private userProfileService?: UserProfileService;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -63,6 +65,9 @@ class AutonomousWhatsAppAgent {
       this.historyStore = DatabaseConfig.getHistoryStore();
       this.vectorStore = DatabaseConfig.getVectorStoreService(this.openai);
       this.actionQueue = new ActionQueueService();
+      
+      // Initialize User Profile Service
+      this.userProfileService = new UserProfileService();
 
       // Set dependencies for ContextManager (rolling summarization)
       this.contextMgr.setDependencies(this.summaryStore, this.openai);
@@ -109,8 +114,8 @@ class AutonomousWhatsAppAgent {
           this.tools.registerTool(new DeepResearchTool(this.browser));
       }
 
-      // 4. Initialize Agent
-      this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue);
+      // 4. Initialize Agent (pass UserProfileService)
+      this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue, this.userProfileService);
 
       // 5. Initialize Scheduler
       this.scheduler = new Scheduler(

@@ -91,3 +91,22 @@ model ConversationSummary {
   @@index([timestamp])
   @@unique([userId, contextHash])
 }
+
+// User profiles for structured personal information storage
+model UserProfile {
+  userId        String   @id
+  name          String?
+  location      String?
+  language      String?  @default("en")
+  
+  // Structured facts (JSONB in Postgres)
+  // Example: { "job": "Engineer", "hobby": "Hiking", "pet": "Dog named Rex" }
+  facts         Json     @default("{}")
+  
+  // Metadata for proactivity
+  completeness  Int      @default(0) // 0-100 score of how much we know
+  lastAsked     DateTime? // When did we last ask a personal question?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
