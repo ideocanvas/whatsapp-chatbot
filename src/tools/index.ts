@@ -304,11 +304,15 @@ export async function initializeTools(searchService: GoogleSearchService, mediaS
         const startTime = Date.now();
 
         try {
-          const result = await mediaService.transcribeAudio(args.audio_path, args.language);
+          // Convert audio to WAV format for better transcription (fixes OGG/Opus issues)
+          console.log(`🔄 Converting audio to WAV format: ${args.audio_path}`);
+          const convertedAudioPath = await mediaService.convertAudioToWav(args.audio_path);
+          
+          const result = await mediaService.transcribeAudio(convertedAudioPath, args.language);
           const executionTime = Date.now() - startTime;
 
           console.log('✅ Audio Transcription Completed:', {
-            audioPath: args.audio_path,
+            audioPath: convertedAudioPath,
             executionTime: `${executionTime}ms`,
             resultLength: result.length
           });

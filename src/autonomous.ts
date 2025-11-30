@@ -355,10 +355,14 @@ class AutonomousWhatsAppAgent {
       // 2. Download Audio
       const mediaInfo = await this.mediaService.downloadAndSaveMedia(audioId, mimeType, sha256, 'audio');
       
-      // 3. Transcribe (Speech-to-Text)
-      console.log(`👂 Transcribing audio: ${mediaInfo.filename}`);
+      // 3. Convert audio to WAV format for better transcription (fixes OGG/Opus issues)
+      console.log(`🔄 Converting audio to WAV format: ${mediaInfo.filename}`);
+      const convertedAudioPath = await this.mediaService.convertAudioToWav(mediaInfo.filepath);
+      
+      // 4. Transcribe (Speech-to-Text)
+      console.log(`👂 Transcribing audio: ${convertedAudioPath}`);
       // Assuming 'en' or auto-detect. You can change 'en' to undefined to auto-detect if supported.
-      const transcription = await this.mediaService.transcribeAudio(mediaInfo.filepath);
+      const transcription = await this.mediaService.transcribeAudio(convertedAudioPath);
       console.log(`📝 User said: "${transcription}"`);
 
       // LOG USER MESSAGE (AUDIO) TO HISTORY
@@ -457,7 +461,9 @@ class AutonomousWhatsAppAgent {
           analysisResult = analysis;
         } else if (attachment.type === 'audio') {
           console.log(`🎤 Transcribing web audio attachment: ${attachment.filePath}`);
-          const transcription = await this.mediaService.transcribeAudio(attachment.filePath);
+          // Convert audio to WAV format for better transcription
+          const convertedAudioPath = await this.mediaService.convertAudioToWav(attachment.filePath);
+          const transcription = await this.mediaService.transcribeAudio(convertedAudioPath);
           console.log(`📝 Transcription: "${transcription}"`);
           processedMessage = transcription;
           if (message) processedMessage += `\n\n(User Note: ${message})`;

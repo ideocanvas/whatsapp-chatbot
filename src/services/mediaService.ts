@@ -30,6 +30,20 @@ export class MediaService {
   private config: WhatsAppAPIConfig;
   private openaiService: OpenAIService | null;
 
+  // Known Whisper Hallucinations (Common phrases generated on silence/noise)
+  private readonly HALLUCINATIONS = [
+    "subtitle by amara.org",
+    "subtitles by amara.org",
+    "thank you for watching",
+    "thanks for watching",
+    "you",
+    "bye",
+    "copyright",
+    "all rights reserved",
+    "audio",
+    "silence"
+  ];
+
   constructor(config: WhatsAppAPIConfig) {
     this.config = config;
 
@@ -127,7 +141,9 @@ export class MediaService {
       'video/quicktime': 'mov'
     };
 
-    return mimeToExt[mimeType] || 'bin';
+    // Fix: Handle formats with codecs like "audio/ogg; codecs=opus"
+    const cleanMime = mimeType.split(';')[0].trim();
+    return mimeToExt[cleanMime] || 'bin';
   }
 
   getMediaInfoResponse(mediaInfo: MediaInfo): string {
@@ -182,28 +198,84 @@ export class MediaService {
       }
 
       // Make API request to audio service
+      console.log(`📡 Sending audio to transcription service: ${fileName} (${audioBuffer.length} bytes)`);
       const response = await axios.post(`${apiUrl}transcribe`, form, {
         headers: {
           'X-API-Key': apiKey,
           ...form.getHeaders(),
         },
       });
-      console.log('response', response);
-      // Handle different response formats from audio service
+      
+      let rawText = "";
       if (response.data.text) {
-        // Direct text response format: { text: "transcribed text" }
-        return response.data.text;
+        rawText = response.data.text;
       } else if (response.data.success && response.data.text) {
-        // Success-based response format: { success: true, text: "transcribed text" }
-        return response.data.text;
+        rawText = response.data.text;
       } else {
         throw new Error(response.data.error || response.data.detail || 'Transcription failed');
       }
+
+      // Filter hallucinations
+      const cleanText = this.filterHallucinations(rawText);
+      console.log(`📝 Transcription result: "${cleanText}" (Raw: "${rawText}")`);
+      
+      return cleanText || "[Audio contains no speech or was unintelligible]";
 
     } catch (error) {
       console.error('Error transcribing audio:', error);
       const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to transcribe audio: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Helper to clean up Whisper hallucinations
+   */
+  private filterHallucinations(text: string): string {
+    const lower = text.trim().toLowerCase();
+    
+    // Check if the entire text is a known hallucination
+    if (this.HALLUCINATIONS.some(h => lower === h || lower.startsWith(h))) {
+        return "";
+    }
+    
+    // Remove "Subtitle by..." if it appears at the end
+    return text.replace(/Subtitles? by .*$/i, "").trim();
+  }
+
+  /**
+   * NEW: Force convert any audio to standard WAV (16kHz, mono) for best transcription results
+   * This fixes issues with WhatsApp OGG/Opus files
+   */
+  async convertAudioToWav(inputFilePath: string): Promise<string> {
+    try {
+      // Check if FFmpeg is available
+      try {
+        await execAsync('ffmpeg -version');
+      } catch (error) {
+        console.warn('⚠️ FFmpeg not found. Skipping conversion. Transcription may fail for OGG files.');
+        return inputFilePath;
+      }
+
+      const timestamp = Date.now();
+      const outputFilename = `converted_${timestamp}.wav`;
+      const outputFilePath = path.join('data', 'media', outputFilename);
+
+      // 16kHz sample rate (-ar 16000), mono (-ac 1), 16-bit PCM (default for wav)
+      // This is the "Gold Standard" format for Whisper and most STT engines
+      const ffmpegCommand = `ffmpeg -i "${inputFilePath}" -ar 16000 -ac 1 -y "${outputFilePath}"`;
+      
+      console.log(`🔄 Normalizing audio for transcription: ${inputFilePath} -> ${outputFilePath}`);
+      const { stderr } = await execAsync(ffmpegCommand);
+      
+      if (stderr && !fs.existsSync(outputFilePath)) {
+          console.warn(`⚠️ FFmpeg warning: ${stderr}`);
+      }
+
+      return outputFilePath;
+    } catch (error) {
+      console.error('Error converting audio to WAV:', error);
+      return inputFilePath; // Fallback to original file
     }
   }
 
