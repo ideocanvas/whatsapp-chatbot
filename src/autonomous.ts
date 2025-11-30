@@ -211,8 +211,31 @@ class AutonomousWhatsAppAgent {
     console.log(`📱 Incoming message from ${userId}: ${message.substring(0, 50)}...`);
 
     try {
+      // LOG USER MESSAGE TO HISTORY
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: message,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'text',
+          metadata: { messageId }
+        });
+      }
+
       // Process through the agent
       const response = await this.agent.handleUserMessage(userId, message);
+
+      // LOG AGENT RESPONSE TO HISTORY
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
 
       // Send response via WhatsApp (or log in dev mode)
       if (process.env.DEV_MODE === 'true') {
@@ -257,6 +280,26 @@ class AutonomousWhatsAppAgent {
       console.log(`👁️ Analyzing image: ${mediaInfo.filename}`);
       const analysis = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
       
+      // LOG USER MESSAGE (IMAGE) TO HISTORY
+      // We store the analysis in the message text so it's searchable via Recall tool
+      if (this.historyStore) {
+        const storedMessage = caption ? `${caption} [Image Analysis: ${analysis}]` : `[Image Analysis: ${analysis}]`;
+        await this.historyStore.storeMessage({
+          userId,
+          message: storedMessage,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'image',
+          metadata: {
+              imageId,
+              mimeType,
+              filepath: mediaInfo.filepath,
+              analysis,
+              caption
+          }
+        });
+      }
+
       // 3. Construct Augmented Message for Agent
       // We present the image analysis as system context or augmented user message
       const augmentedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${caption ? `User Caption: "${caption}"` : 'No caption provided.'}`;
@@ -265,6 +308,17 @@ class AutonomousWhatsAppAgent {
       
       // 4. Pass to standard agent handler
       const response = await this.agent.handleUserMessage(userId, augmentedMessage);
+
+      // LOG AGENT RESPONSE
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
 
       if (process.env.DEV_MODE === 'true') {
         console.log(`💬 Response to ${userId}: ${response}`);
@@ -307,9 +361,36 @@ class AutonomousWhatsAppAgent {
       const transcription = await this.mediaService.transcribeAudio(mediaInfo.filepath);
       console.log(`📝 User said: "${transcription}"`);
 
+      // LOG USER MESSAGE (AUDIO) TO HISTORY
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: transcription || '[Unintelligible Audio]',
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'audio',
+          metadata: {
+              audioId,
+              mimeType,
+              filepath: mediaInfo.filepath
+          }
+        });
+      }
+
       // 4. Get Agent Text Response
       // We pass the transcription as if the user typed it
       const textResponse = await this.agent.handleUserMessage(userId, transcription);
+
+      // LOG AGENT RESPONSE
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: textResponse,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
 
       // 5. Synthesize Response (Text-to-Speech)
       console.log(`🗣️ Synthesizing voice response...`);
@@ -365,6 +446,7 @@ class AutonomousWhatsAppAgent {
 
     try {
       let processedMessage = message;
+      let analysisResult = '';
 
       // Handle Attachment logic simulating real media processing
       if (attachment && this.mediaService) {
@@ -372,6 +454,7 @@ class AutonomousWhatsAppAgent {
           console.log(`👁️ Analyzing web image attachment: ${attachment.filePath}`);
           const analysis = await this.mediaService.analyzeImageWithOpenAI(attachment.filePath);
           processedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${message ? `User Caption: "${message}"` : ''}`;
+          analysisResult = analysis;
         } else if (attachment.type === 'audio') {
           console.log(`🎤 Transcribing web audio attachment: ${attachment.filePath}`);
           const transcription = await this.mediaService.transcribeAudio(attachment.filePath);
@@ -381,8 +464,49 @@ class AutonomousWhatsAppAgent {
         }
       }
 
+      // LOG USER MESSAGE
+      if (this.historyStore) {
+        // Calculate what to store. If it's an image, include analysis for searchability.
+        let storeMsg = message;
+        let msgType: 'text'|'image'|'audio' = 'text';
+
+        if (attachment) {
+            msgType = attachment.type;
+            if (attachment.type === 'image') {
+                storeMsg = message ? `${message} [Image Analysis: ${analysisResult}]` : `[Image Analysis: ${analysisResult}]`;
+            } else if (attachment.type === 'audio') {
+                storeMsg = processedMessage; // The transcription
+            }
+        }
+
+        await this.historyStore.storeMessage({
+          userId,
+          message: storeMsg,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: msgType,
+          metadata: attachment ? { filePath: attachment.filePath } : undefined
+        });
+      }
+
       // Process through the agent but don't send via WhatsApp
-      const response = await this.agent.handleUserMessage(userId, processedMessage);
+      // Note: For image attachments, we pass the 'processedMessage' (augmented with analysis) to the agent
+      // For audio, we pass the transcription
+      // For text, just the text
+      const inputToAgent = attachment ? processedMessage : message;
+      const response = await this.agent.handleUserMessage(userId, inputToAgent);
+      
+      // LOG AGENT RESPONSE
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
+
       console.log(`✅ Web message processed for ${userId}`);
       return response;
     } catch (error) {

@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
-import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -217,7 +216,6 @@ export class DashboardRoutes {
         }
 
         const agent = getAutonomousAgent();
-        const historyStore = new HistoryStorePostgres();
         
         let attachment: { type: 'image' | 'audio', filePath: string } | undefined;
         let messageType: 'text' | 'image' | 'audio' = 'text';
@@ -260,31 +258,14 @@ export class DashboardRoutes {
             }
         }
 
-        // Log the chat activity
+        // Log the chat activity (Dashboard view only)
         this.logActivity(`Web UI chat from ${webUiUserId}: ${messageType} message`);
         
-        // Store user message in database like normal WhatsApp messages
-        await historyStore.storeMessage({
-          userId: webUiUserId,
-          message: message || `[${messageType.toUpperCase()} SENT]`,
-          role: 'user',
-          timestamp: new Date().toISOString(),
-          messageType: messageType,
-          metadata: attachment ? { filePath: attachment.filePath } : undefined
-        });
+        // NOTE: The agent.handleWebMessage method now handles both processing AND storage.
+        // No need for manual history storage here.
         
-        // Process the message through the autonomous agent using web interface method
-        // Pass the attachment info if present
+        // Process the message through the autonomous agent
         const response = await agent.handleWebMessage(webUiUserId, message || '', attachment);
-        
-        // Store bot response in database
-        await historyStore.storeMessage({
-          userId: webUiUserId,
-          message: response,
-          role: 'assistant',
-          timestamp: new Date().toISOString(),
-          messageType: 'text'
-        });
         
         // Log the response
         this.logActivity(`Bot response to ${webUiUserId}: ${response.substring(0, 50)}...`);
