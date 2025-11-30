@@ -295,16 +295,26 @@ export class MediaService {
         throw new Error('Text is required for synthesis');
       }
 
+      // 1. Clean the text to remove emojis and Markdown before synthesis
+      const cleanedText = this.cleanTextForTTS(text);
+      console.log(`🗣️ Cleaned TTS Text: "${cleanedText.substring(0, 50)}..."`);
+
+      if (!cleanedText) {
+          // If message was only emojis/formatting, fallback to simple text
+          console.warn("Text contained only emojis/formatting. Using default response.");
+          return this.synthesizeAudio("I sent you a text response.", options);
+      }
+
       // Default Configuration
       const payload = {
-        text: text,
+        text: cleanedText,
         model_repo: options.model_repo || 'prince-canuma/Kokoro-82M', // Default to Kokoro
         voice: options.voice || 'af_heart',
         speed: options.speed || 1.0,
         lang_code: options.lang_code || 'a' // Default US English
       };
 
-      console.log(`Synthesizing audio: "${text.substring(0, 50)}..." with model ${payload.model_repo}`);
+      console.log(`Synthesizing audio: "${cleanedText.substring(0, 50)}..." with model ${payload.model_repo}`);
 
       // NOTE: Synthesize endpoint expects JSON, not FormData
       const response = await axios.post(`${apiUrl}synthesize`, payload, {
@@ -352,6 +362,23 @@ export class MediaService {
       const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to synthesize audio: ${errorMessage}`);
     }
+  }
+
+  /**
+   * Helper function to remove Emojis, Markdown, and URLs for cleaner speech
+   */
+  private cleanTextForTTS(text: string): string {
+    return text
+      // Remove URLs
+      .replace(/https?:\/\/[^\s]+/g, ' a link ')
+      // Remove Emojis and Pictographs (Unicode property escapes)
+      .replace(/\p{Emoji_Presentation}/gu, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      // Remove Markdown bold/italic (* or _) and code (`)
+      .replace(/(\*|_|`)/g, '')
+      // Collapse multiple spaces into one
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**
