@@ -265,12 +265,16 @@ export class DashboardRoutes {
         // No need for manual history storage here.
         
         // Process the message through the autonomous agent
-        const response = await agent.handleWebMessage(webUiUserId, message || '', attachment);
+        const result = await agent.handleWebMessage(webUiUserId, message || '', attachment);
+        
+        // Extract text response (result could be string in old version, but we updated it to object)
+        const responseText = typeof result === 'string' ? result : result.text;
+        const responseAudio = typeof result === 'string' ? undefined : result.audio;
         
         // Log the response
-        this.logActivity(`Bot response to ${webUiUserId}: ${response.substring(0, 50)}...`);
+        this.logActivity(`Bot response to ${webUiUserId}: ${responseText.substring(0, 50)}...`);
         
-        res.json({ success: true, response });
+        res.json({ success: true, response: responseText, audio: responseAudio });
       } catch (error) {
         console.error('Chat API error:', error);
         this.logActivity(`Chat error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');

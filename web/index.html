@@ -241,6 +241,13 @@
                                     </div>
                                 </template>
 
+                                <!-- Audio Response (Bot) -->
+                                <template x-if="msg.audio">
+                                    <div class="mb-2">
+                                        <audio controls autoplay :src="msg.audio" class="w-full h-8 max-w-[200px]"></audio>
+                                    </div>
+                                </template>
+
                                 <span class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></span>
                                 
                                 <div class="flex justify-end items-center mt-1 space-x-1">
@@ -495,6 +502,7 @@
                             id: Date.now(),
                             sender: 'bot',
                             text: data.response,
+                            audio: data.audio, // Add audio data to message object
                             time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
                         });
                         this.scrollToBottom();

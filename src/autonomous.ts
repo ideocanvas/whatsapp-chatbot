@@ -19,6 +19,7 @@ import { NewsScrapeService, createNewsScrapeService } from './services/newsScrap
 import { NewsProcessorService } from './services/newsProcessorService';
 import { DatabaseConfig } from './config/databaseConfig';
 import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
+import * as fs from 'fs'; // Added for reading generated audio files
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
@@ -435,8 +436,9 @@ class AutonomousWhatsAppAgent {
   /**
    * Handle web interface messages (returns response instead of sending)
    * Supports optional attachment (simulated upload)
+   * Returns object with text and optional audio (base64)
    */
-  async handleWebMessage(userId: string, message: string, attachment?: { type: 'image' | 'audio', filePath: string }): Promise<string> {
+  async handleWebMessage(userId: string, message: string, attachment?: { type: 'image' | 'audio', filePath: string }): Promise<{ text: string, audio?: string }> {
     if (!this.isInitialized || !this.agent) {
       throw new Error('Agent not initialized');
     }
@@ -500,24 +502,42 @@ class AutonomousWhatsAppAgent {
       // For audio, we pass the transcription
       // For text, just the text
       const inputToAgent = attachment ? processedMessage : message;
-      const response = await this.agent.handleUserMessage(userId, inputToAgent);
+      const responseText = await this.agent.handleUserMessage(userId, inputToAgent);
       
       // LOG AGENT RESPONSE
       if (this.historyStore) {
         await this.historyStore.storeMessage({
           userId,
-          message: response,
+          message: responseText,
           role: 'assistant',
           timestamp: new Date().toISOString(),
           messageType: 'text'
         });
       }
 
+      let audioData: string | undefined;
+
+      // Generate TTS Audio response if input was audio
+      if (attachment && attachment.type === 'audio' && this.mediaService) {
+          try {
+              console.log(`🗣️ Generating audio response for Web UI...`);
+              const audioInfo = await this.mediaService.synthesizeAudio(responseText);
+              
+              if (fs.existsSync(audioInfo.filepath)) {
+                  const buffer = fs.readFileSync(audioInfo.filepath);
+                  // Convert to base64 Data URI
+                  audioData = `data:${audioInfo.mimeType};base64,${buffer.toString('base64')}`;
+              }
+          } catch (e) {
+              console.error('Failed to synthesize audio for web response:', e);
+          }
+      }
+
       console.log(`✅ Web message processed for ${userId}`);
-      return response;
+      return { text: responseText, audio: audioData };
     } catch (error) {
       console.error(`❌ Error processing web message from ${userId}:`, error);
-      return "Sorry, I encountered an issue processing your message. Please try again.";
+      return { text: "Sorry, I encountered an issue processing your message. Please try again." };
     }
   }
 

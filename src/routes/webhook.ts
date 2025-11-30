@@ -195,7 +195,8 @@ export class WebhookRoutes {
       } else {
         // Process text message using the autonomous agent
         const agent = getAutonomousAgent();
-        response = await agent.handleWebMessage(from, message);
+        const result = await agent.handleWebMessage(from, message);
+        response = typeof result === 'string' ? result : result.text;
       }
 
       console.log(`🤖 [DEV API] Response: "${response.substring(0, 100)}${response.length > 100 ? '...' : ''}"`);
