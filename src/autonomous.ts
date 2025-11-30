@@ -415,8 +415,21 @@ class AutonomousWhatsAppAgent {
         // 8. Send Audio Message
         await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
         
-        // Optional: Also send the text version for clarity
-        // await this.whatsapp.sendMessage(userId, `(Transcript): ${textResponse}`);
+        // 9. Check for URLs and send them as text if present
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const links = textResponse.match(urlRegex);
+
+        if (links && links.length > 0) {
+            // Deduplicate links
+            const uniqueLinks = [...new Set(links)];
+            const linkMessage = `🔗 *Links mentioned:*\n${uniqueLinks.join('\n')}`;
+            
+            console.log(`🔗 Link(s) detected, sending text fallback to ${userId}`);
+            
+            // Short delay to ensure audio arrives first on client
+            await new Promise(resolve => setTimeout(resolve, 800));
+            await this.whatsapp.sendMessage(userId, linkMessage);
+        }
       } else {
         // Fallback to text if upload fails
         await this.whatsapp.sendMessage(userId, textResponse);
