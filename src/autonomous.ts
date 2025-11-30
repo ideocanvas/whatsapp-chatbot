@@ -349,8 +349,9 @@ class AutonomousWhatsAppAgent {
 
   /**
    * Handle web interface messages (returns response instead of sending)
+   * Supports optional attachment (simulated upload)
    */
-  async handleWebMessage(userId: string, message: string): Promise<string> {
+  async handleWebMessage(userId: string, message: string, attachment?: { type: 'image' | 'audio', filePath: string }): Promise<string> {
     if (!this.isInitialized || !this.agent) {
       throw new Error('Agent not initialized');
     }
@@ -360,11 +361,28 @@ class AutonomousWhatsAppAgent {
         this.scheduler.interrupt();
     }
 
-    console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}...`);
+    console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}... ${attachment ? `[With ${attachment.type}]` : ''}`);
 
     try {
+      let processedMessage = message;
+
+      // Handle Attachment logic simulating real media processing
+      if (attachment && this.mediaService) {
+        if (attachment.type === 'image') {
+          console.log(`👁️ Analyzing web image attachment: ${attachment.filePath}`);
+          const analysis = await this.mediaService.analyzeImageWithOpenAI(attachment.filePath);
+          processedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${message ? `User Caption: "${message}"` : ''}`;
+        } else if (attachment.type === 'audio') {
+          console.log(`🎤 Transcribing web audio attachment: ${attachment.filePath}`);
+          const transcription = await this.mediaService.transcribeAudio(attachment.filePath);
+          console.log(`📝 Transcription: "${transcription}"`);
+          processedMessage = transcription;
+          if (message) processedMessage += `\n\n(User Note: ${message})`;
+        }
+      }
+
       // Process through the agent but don't send via WhatsApp
-      const response = await this.agent.handleUserMessage(userId, message);
+      const response = await this.agent.handleUserMessage(userId, processedMessage);
       console.log(`✅ Web message processed for ${userId}`);
       return response;
     } catch (error) {

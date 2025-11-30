@@ -224,6 +224,23 @@
                                     <span class="text-xs font-bold text-orange-500 mb-1" x-text="botInfo.name"></span>
                                 </template>
 
+                                <!-- Attachments Preview -->
+                                <template x-if="msg.attachment">
+                                    <div class="mb-2 rounded overflow-hidden">
+                                        <!-- Image Preview -->
+                                        <template x-if="msg.attachment.type === 'image'">
+                                            <img :src="msg.attachment.data" class="max-w-full h-auto rounded" style="max-height: 200px;">
+                                        </template>
+                                        <!-- Audio Preview -->
+                                        <template x-if="msg.attachment.type === 'audio'">
+                                            <div class="bg-gray-100 p-2 rounded flex items-center space-x-2">
+                                                <span class="text-xl">🎤</span>
+                                                <span class="text-xs text-gray-500">Audio Message</span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
                                 <span class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></span>
                                 
                                 <div class="flex justify-end items-center mt-1 space-x-1">
@@ -245,11 +262,38 @@
                     </div>
                 </div>
 
+                <!-- Attachment Preview Bar -->
+                <div x-show="activeAttachment" class="bg-gray-100 px-4 py-2 flex items-center justify-between border-t border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <template x-if="activeAttachment?.type === 'image'">
+                            <div class="h-10 w-10 bg-gray-300 rounded overflow-hidden">
+                                <img :src="activeAttachment.data" class="h-full w-full object-cover">
+                            </div>
+                        </template>
+                        <template x-if="activeAttachment?.type === 'audio'">
+                            <div class="h-10 w-10 bg-blue-100 rounded flex items-center justify-center text-blue-600">
+                                🎤
+                            </div>
+                        </template>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-semibold text-gray-700" x-text="activeAttachment?.type === 'image' ? 'Image Attached' : 'Audio Attached'"></span>
+                            <span class="text-[10px] text-gray-500" x-text="activeAttachment?.name"></span>
+                        </div>
+                    </div>
+                    <button @click="clearAttachment()" class="text-gray-500 hover:text-red-500">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
                 <!-- Input Area -->
                 <div class="bg-wa-panel p-3 px-4 flex items-center space-x-2 border-t border-gray-200">
-                    <button class="text-gray-500 hover:text-gray-700 p-1">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <!-- File Input (Hidden) -->
+                    <input type="file" x-ref="fileInput" class="hidden" accept="image/*,audio/*" @change="handleFileSelect($event)">
+                    
+                    <button @click="$refs.fileInput.click()" class="text-gray-500 hover:text-gray-700 p-1" title="Attach Image or Audio">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                     </button>
+                    
                     <input type="text" x-model="chatInput" @keydown.enter="sendMessage()"
                            class="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
                            placeholder="Type a message (press Enter to send)">
@@ -320,6 +364,7 @@
                 isTyping: false,
                 chatInput: '',
                 searchQuery: '',
+                activeAttachment: null, // { type, data, name }
                 notification: { show: false, message: '', type: 'success' },
                 
                 navItems: [
@@ -334,7 +379,7 @@
                 activities: [],
                 memoryData: [],
                 chatMessages: [
-                    { id: 1, sender: 'bot', text: 'Hello! I am online. Ask me to research something!', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
+                    { id: 1, sender: 'bot', text: 'Hello! I am online. Ask me to research something, or upload an image/audio!', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
                 ],
 
                 async init() {
@@ -384,16 +429,46 @@
                     } catch (e) { this.memoryData = []; }
                 },
 
+                handleFileSelect(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const type = file.type.startsWith('image/') ? 'image' : 'audio';
+                        this.activeAttachment = {
+                            type: type,
+                            data: e.target.result, // Base64 string
+                            name: file.name
+                        };
+                        this.showToast(`${type === 'image' ? 'Image' : 'Audio'} attached`, 'success');
+                    };
+                    reader.readAsDataURL(file);
+                    
+                    // Reset input so same file can be selected again if needed
+                    event.target.value = '';
+                },
+
+                clearAttachment() {
+                    this.activeAttachment = null;
+                },
+
                 async sendMessage() {
-                    if (!this.chatInput.trim()) return;
+                    if (!this.chatInput.trim() && !this.activeAttachment) return;
                     
                     const text = this.chatInput;
-                    this.chatInput = '';
+                    const attachment = this.activeAttachment; // Capture current attachment
                     
+                    // Clear inputs immediately
+                    this.chatInput = '';
+                    this.clearAttachment();
+                    
+                    // Optimistic update
                     this.chatMessages.push({
                         id: Date.now(),
                         sender: 'user',
                         text: text,
+                        attachment: attachment,
                         time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
                     });
                     
@@ -401,10 +476,16 @@
                     this.isTyping = true;
 
                     try {
+                        const payload = { message: text };
+                        if (attachment) {
+                            if (attachment.type === 'image') payload.image = attachment.data;
+                            if (attachment.type === 'audio') payload.audio = attachment.data;
+                        }
+
                         const res = await fetch('/api/chat', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: text }),
+                            body: JSON.stringify(payload),
                             credentials: 'include'
                         });
                         const data = await res.json();
@@ -417,7 +498,7 @@
                             time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
                         });
                         this.scrollToBottom();
-                        this.loadActivities(); // Update logs
+                        this.loadActivities();
                     } catch (e) {
                         this.isTyping = false;
                         this.showToast('Failed to send message', 'error');

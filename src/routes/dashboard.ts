@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
 import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * Dashboard API routes for the web interface
@@ -207,30 +209,73 @@ export class DashboardRoutes {
     // Chat endpoint for testing the bot
     this.router.post('/api/chat', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { message } = req.body;
+        const { message, image, audio } = req.body; // Expect base64 strings if image/audio provided
         const webUiUserId = process.env.WEB_UI_USER_ID || 'web-ui-user';
         
-        if (!message) {
-          return res.status(400).json({ error: 'Message is required' });
+        if (!message && !image && !audio) {
+          return res.status(400).json({ error: 'Message or attachment is required' });
         }
 
         const agent = getAutonomousAgent();
         const historyStore = new HistoryStorePostgres();
         
+        let attachment: { type: 'image' | 'audio', filePath: string } | undefined;
+        let messageType: 'text' | 'image' | 'audio' = 'text';
+
+        // Handle File Upload (Base64 -> Temporary File)
+        if (image || audio) {
+            try {
+                const base64Str = image || audio;
+                // Extract clean base64 string (remove data:image/xyz;base64, prefix)
+                const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                
+                if (matches && matches.length === 3) {
+                    const mimeType = matches[1];
+                    const dataBuffer = Buffer.from(matches[2], 'base64');
+                    
+                    const type = image ? 'image' : 'audio';
+                    // Determine extension from mime
+                    let ext = 'bin';
+                    if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+                    else if (mimeType.includes('png')) ext = 'png';
+                    else if (mimeType.includes('webp')) ext = 'webp';
+                    else if (mimeType.includes('wav')) ext = 'wav';
+                    else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) ext = 'mp3';
+                    else if (mimeType.includes('ogg')) ext = 'ogg';
+
+                    const filename = `web_${type}_${Date.now()}.${ext}`;
+                    const uploadDir = path.join(process.cwd(), 'data', 'uploads');
+                    
+                    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+                    
+                    const filePath = path.join(uploadDir, filename);
+                    fs.writeFileSync(filePath, dataBuffer);
+                    
+                    attachment = { type, filePath };
+                    messageType = type;
+                }
+            } catch (e) {
+                console.error("Failed to process attachment:", e);
+                return res.status(400).json({ error: 'Invalid attachment data' });
+            }
+        }
+
         // Log the chat activity
-        this.logActivity(`Web UI chat message from ${webUiUserId}: ${message.substring(0, 50)}...`);
+        this.logActivity(`Web UI chat from ${webUiUserId}: ${messageType} message`);
         
         // Store user message in database like normal WhatsApp messages
         await historyStore.storeMessage({
           userId: webUiUserId,
-          message: message,
+          message: message || `[${messageType.toUpperCase()} SENT]`,
           role: 'user',
           timestamp: new Date().toISOString(),
-          messageType: 'text'
+          messageType: messageType,
+          metadata: attachment ? { filePath: attachment.filePath } : undefined
         });
         
         // Process the message through the autonomous agent using web interface method
-        const response = await agent.handleWebMessage(webUiUserId, message);
+        // Pass the attachment info if present
+        const response = await agent.handleWebMessage(webUiUserId, message || '', attachment);
         
         // Store bot response in database
         await historyStore.storeMessage({
