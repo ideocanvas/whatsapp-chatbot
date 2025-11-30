@@ -4,6 +4,8 @@ import { WhatsAppService } from '../services/whatsappService';
 import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * The Heartbeat of the autonomous agent system.
@@ -26,6 +28,10 @@ export class Scheduler {
     lastTick: new Date()
   };
 
+  // Persistence settings
+  private readonly DATA_DIR = path.join(process.cwd(), 'data');
+  private readonly STATE_FILE = path.join(this.DATA_DIR, 'scheduler_state.json');
+
   constructor(
     private browser: BrowserService,
     private contextMgr: ContextManager,
@@ -33,7 +39,9 @@ export class Scheduler {
     private agent: Agent,
     private actionQueue: ActionQueueService,
     private kb: KnowledgeBasePostgres
-  ) {}
+  ) {
+    this.loadState();
+  }
 
   /**
    * Start the scheduler with 1-minute ticks
@@ -64,6 +72,7 @@ export class Scheduler {
   stop(): void {
     this.isRunning = false;
     console.log('🛑 Autonomous Agent Scheduler Stopped');
+    this.saveState(); // Save on stop
   }
 
   interrupt(): void {
@@ -81,6 +90,9 @@ export class Scheduler {
 
     this.tickCount++;
     this.stats.lastTick = new Date();
+    
+    // Save stats periodically (every 5 ticks)
+    if (this.tickCount % 5 === 0) this.saveState();
 
     try {
       // 1. Get STRICTLY active users (last contact < 1 hour)
@@ -130,6 +142,7 @@ export class Scheduler {
    */
   private async accumulateNews(activeUsers: string[]): Promise<void> {
     console.log(`📥 Accumulating news for ${activeUsers.length} active users`);
+    let changed = false;
 
     for (const userId of activeUsers) {
       // 1. Strict Interest Filter: If user has no interests, skip immediately
@@ -153,9 +166,12 @@ export class Scheduler {
           if (!userBatch.has(relevantContent)) {
               userBatch.add(relevantContent);
               console.log(`📦 Added news item to queue for ${userId} (Queue size: ${userBatch.size})`);
+              changed = true;
           }
       }
     }
+
+    if (changed) this.saveState();
   }
 
   /**
@@ -164,6 +180,7 @@ export class Scheduler {
    */
   private async flushNewsBatches(): Promise<void> {
       console.log('🔄 Flushing news batches...');
+      let changed = false;
       
       for (const [userId, contentSet] of this.pendingNewsBatch.entries()) {
           if (contentSet.size === 0) continue;
@@ -173,6 +190,7 @@ export class Scheduler {
           
           // Clear the batch immediately to prevent double sending if processing takes time
           this.pendingNewsBatch.delete(userId);
+          changed = true;
 
           // Ask Agent to deduplicate and summarize
           console.log(`🤖 Generating digest for ${userId} from ${rawItems.length} items...`);
@@ -190,6 +208,8 @@ export class Scheduler {
               console.log(`🚫 No digest generated for ${userId} (Content filtered or deduplicated to zero)`);
           }
       }
+
+      if (changed) this.saveState();
   }
 
   private async findFreshRelevantContent(userId: string): Promise<string | null> {
@@ -247,4 +267,52 @@ export class Scheduler {
       lastTick: this.stats.lastTick
     };
   }
+
+  // --- Persistence Methods ---
+
+  private saveState() {
+      try {
+          if (!fs.existsSync(this.DATA_DIR)) {
+              fs.mkdirSync(this.DATA_DIR, { recursive: true });
+          }
+
+          // Convert Map<string, Set<string>> to friendly JSON format: [string, string[]][]
+          const serializedBatch = Array.from(this.pendingNewsBatch.entries()).map(([userId, set]) => {
+              return [userId, Array.from(set)];
+          });
+
+          const state = {
+              stats: this.stats,
+              tickCount: this.tickCount,
+              pendingNewsBatch: serializedBatch
+          };
+
+          fs.writeFileSync(this.STATE_FILE, JSON.stringify(state, null, 2));
+      } catch (error) {
+          console.error('❌ Failed to save scheduler state:', error);
+      }
+  }
+
+  private loadState() {
+      try {
+          if (fs.existsSync(this.STATE_FILE)) {
+              const raw = fs.readFileSync(this.STATE_FILE, 'utf-8');
+              const state = JSON.parse(raw);
+
+              if (state.stats) this.stats = state.stats;
+              if (state.tickCount) this.tickCount = state.tickCount;
+              
+              if (Array.isArray(state.pendingNewsBatch)) {
+                  // Convert back to Map<string, Set<string>>
+                  this.pendingNewsBatch = new Map(
+                      state.pendingNewsBatch.map(([userId, items]: [string, string[]]) => [userId, new Set(items)])
+                  );
+              }
+              console.log(`📦 Loaded scheduler state: ${this.pendingNewsBatch.size} pending batches`);
+          }
+      } catch (error) {
+          console.error('❌ Failed to load scheduler state:', error);
+      }
+  }
+
 }

@@ -1,4 +1,6 @@
 import { SummaryStore } from './SummaryStore';
+import * as fs from 'fs';
+import * as path from 'path';
 
 interface ConversationContext {
   userId: string;
@@ -14,6 +16,14 @@ export class ContextManager {
   private readonly ANALYSIS_INTERVAL = 5; // Analyze interests every 5 messages
   private summaryStore?: SummaryStore;
   private openai?: any;
+
+  // Persistence settings
+  private readonly DATA_DIR = path.join(process.cwd(), 'data');
+  private readonly STATE_FILE = path.join(this.DATA_DIR, 'context_state.json');
+
+  constructor() {
+    this.loadState();
+  }
 
   setDependencies(summaryStore: any, openai: any) {
     this.summaryStore = summaryStore;
@@ -57,6 +67,8 @@ export class ContextManager {
             ctx.messageCountSinceAnalysis = 0;
         }
     }
+
+    this.saveState(); // Persist changes
   }
 
   getActiveUsers(): string[] {
@@ -81,6 +93,7 @@ export class ContextManager {
 
     const lowerContent = content.toLowerCase();
     const interests: string[] = [];
+    let changed = false;
 
     // Pattern: "I like/love/want/interested in X"
     const intentPrefixes = [
@@ -112,8 +125,11 @@ export class ContextManager {
       if (!ctx.userInterests.includes(interest)) {
         ctx.userInterests.push(interest);
         console.log(`🎯 Discovered interest via Regex for ${userId}: ${interest}`);
+        changed = true;
       }
     });
+
+    if (changed) this.saveState();
   }
 
   /**
@@ -154,6 +170,7 @@ Example output: ["tech", "ai", "startups"]
               if (Array.isArray(newInterests)) {
                   ctx.userInterests = newInterests; // Overwrite with high-quality LLM list
                   console.log(`🧠 LLM refined interests for ${userId}: ${ctx.userInterests.join(', ')}`);
+                  this.saveState(); // Persist changes
               }
           }
       } catch (e) {
@@ -172,6 +189,8 @@ Example output: ["tech", "ai", "startups"]
         removedCount++;
       }
     }
+    
+    if (removedCount > 0) this.saveState();
     return removedCount;
   }
 
@@ -204,5 +223,36 @@ Example output: ["tech", "ai", "startups"]
     let totalMessages = 0;
     this.activeContexts.forEach(ctx => totalMessages += ctx.messages.length);
     return { activeUsers: this.activeContexts.size, totalMessages };
+  }
+
+  // --- Persistence Methods ---
+
+  private saveState() {
+    try {
+        if (!fs.existsSync(this.DATA_DIR)) {
+            fs.mkdirSync(this.DATA_DIR, { recursive: true });
+        }
+        
+        // Convert Map to Array for JSON serialization
+        const state = Array.from(this.activeContexts.entries());
+        fs.writeFileSync(this.STATE_FILE, JSON.stringify(state, null, 2));
+    } catch (error) {
+        console.error('❌ Failed to save context state:', error);
+    }
+  }
+
+  private loadState() {
+    try {
+        if (fs.existsSync(this.STATE_FILE)) {
+            const raw = fs.readFileSync(this.STATE_FILE, 'utf-8');
+            const state = JSON.parse(raw);
+            this.activeContexts = new Map(state);
+            console.log(`🧠 Loaded ${this.activeContexts.size} active conversation contexts from disk`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to load context state:', error);
+        // Fallback to empty map
+        this.activeContexts = new Map();
+    }
   }
 }
