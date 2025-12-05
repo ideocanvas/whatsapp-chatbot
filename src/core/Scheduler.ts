@@ -14,11 +14,13 @@ import * as path from 'path';
 export class Scheduler {
   private isRunning: boolean = false;
   private tickCount: number = 0;
-  
+
   // [NEW] Batching storage
   // Map<UserId, Set<ContentString>> to automatically handle exact string duplicates
   private pendingNewsBatch: Map<string, Set<string>> = new Map();
-  private readonly BATCH_FLUSH_INTERVAL = 30; // Flush every 30 ticks (minutes)
+  private readonly BATCH_FLUSH_INTERVAL: number;
+  private readonly TICK_INTERVAL_MS: number;
+  private readonly MAINTENANCE_INTERVAL_MS: number;
 
   private stats = {
     browsingSessions: 0,
@@ -40,6 +42,11 @@ export class Scheduler {
     private actionQueue: ActionQueueService,
     private kb: KnowledgeBasePostgres
   ) {
+    // Initialize intervals from environment variables with defaults
+    this.TICK_INTERVAL_MS = parseInt(process.env.AUTONOMOUS_TICK_INTERVAL_MS || '60000');
+    this.MAINTENANCE_INTERVAL_MS = parseInt(process.env.AUTONOMOUS_MAINTENANCE_INTERVAL_MS || '300000');
+    this.BATCH_FLUSH_INTERVAL = parseInt(process.env.AUTONOMOUS_BATCH_FLUSH_INTERVAL || '30');
+
     this.loadState();
   }
 
@@ -59,14 +66,14 @@ export class Scheduler {
     this.tick();
 
     // Set up periodic ticking
-    setInterval(() => this.tick(), 60 * 1000); // 1 minute
+    setInterval(() => this.tick(), this.TICK_INTERVAL_MS);
 
     // Set up periodic maintenance
     setInterval(() => {
       this.maintenance().catch(error => {
         console.error('❌ Maintenance error:', error);
       });
-    }, 5 * 60 * 1000); // 5 minutes
+    }, this.MAINTENANCE_INTERVAL_MS);
   }
 
   stop(): void {
@@ -90,7 +97,7 @@ export class Scheduler {
 
     this.tickCount++;
     this.stats.lastTick = new Date();
-    
+
     // Save stats periodically (every 5 ticks)
     if (this.tickCount % 5 === 0) this.saveState();
 
@@ -117,7 +124,7 @@ export class Scheduler {
         await this.accumulateNews(activeUsers);
       }
 
-      // 4. [NEW] Flush Batch every 5 minutes
+      // 4. [NEW] Flush Batch based on configured interval
       if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
           await this.flushNewsBatches();
       }
@@ -153,13 +160,13 @@ export class Scheduler {
 
       // 2. Find fresh content
       const relevantContent = await this.findFreshRelevantContent(userId);
-      
+
       if (relevantContent) {
           // Initialize set if not exists
           if (!this.pendingNewsBatch.has(userId)) {
               this.pendingNewsBatch.set(userId, new Set());
           }
-          
+
           // Add to pending batch
           const userBatch = this.pendingNewsBatch.get(userId)!;
           // Simple check to see if we already queued this exact string in this batch
@@ -181,13 +188,13 @@ export class Scheduler {
   private async flushNewsBatches(): Promise<void> {
       console.log('🔄 Flushing news batches...');
       let changed = false;
-      
+
       for (const [userId, contentSet] of this.pendingNewsBatch.entries()) {
           if (contentSet.size === 0) continue;
 
           // Convert Set to Array
           const rawItems = Array.from(contentSet);
-          
+
           // Clear the batch immediately to prevent double sending if processing takes time
           this.pendingNewsBatch.delete(userId);
           changed = true;
@@ -234,13 +241,13 @@ export class Scheduler {
 
   private async maintenance(): Promise<void> {
     console.log('🧹 Running maintenance tasks');
-    
+
     // Clean up expired contexts (now async with summarization)
     const expiredCount = await this.contextMgr.cleanupExpiredContexts();
-    
+
     // Clean up old knowledge
     const oldKnowledgeCount = await this.kb.cleanupOldKnowledge(30); // 30 days
-    
+
     if (expiredCount > 0 || oldKnowledgeCount > 0) {
       console.log(`📊 Maintenance: ${expiredCount} expired contexts, ${oldKnowledgeCount} old knowledge documents`);
     }
@@ -264,7 +271,12 @@ export class Scheduler {
       isRunning: this.isRunning,
       tickCount: this.tickCount,
       stats: this.stats,
-      lastTick: this.stats.lastTick
+      lastTick: this.stats.lastTick,
+      intervals: {
+        tickIntervalMs: this.TICK_INTERVAL_MS,
+        maintenanceIntervalMs: this.MAINTENANCE_INTERVAL_MS,
+        batchFlushInterval: this.BATCH_FLUSH_INTERVAL
+      }
     };
   }
 
@@ -301,7 +313,7 @@ export class Scheduler {
 
               if (state.stats) this.stats = state.stats;
               if (state.tickCount) this.tickCount = state.tickCount;
-              
+
               if (Array.isArray(state.pendingNewsBatch)) {
                   // Convert back to Map<string, Set<string>>
                   this.pendingNewsBatch = new Map(

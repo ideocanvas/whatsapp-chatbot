@@ -113,6 +113,11 @@ HOST=localhost  # or 0.0.0.0 for network access
 CHATBOT_NAME=Lucy  # Customize bot name
 DEV_MODE=true      # Development mode (logs to console)
 
+# Timing Configuration (values in milliseconds unless noted)
+AUTONOMOUS_TICK_INTERVAL_MS=60000       # Main heartbeat interval (default: 60000 = 1 minute)
+AUTONOMOUS_MAINTENANCE_INTERVAL_MS=3600000 # Maintenance task interval (default: 3600000 = 1 hour)
+AUTONOMOUS_BATCH_FLUSH_INTERVAL=180     # News digest flush interval in ticks (default: 180 ticks = 3 hours)
+
 # Database Configuration (Optional)
 DATABASE_URL=postgresql://user:pass@localhost:5432/whatsapp_agent
 

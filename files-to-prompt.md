@@ -881,6 +881,7 @@ import { NewsScrapeService, createNewsScrapeService } from './services/newsScrap
 import { NewsProcessorService } from './services/newsProcessorService';
 import { DatabaseConfig } from './config/databaseConfig';
 import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
+import * as fs from 'fs'; // Added for reading generated audio files
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
@@ -1073,8 +1074,31 @@ class AutonomousWhatsAppAgent {
     console.log(`📱 Incoming message from ${userId}: ${message.substring(0, 50)}...`);
 
     try {
+      // LOG USER MESSAGE TO HISTORY
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: message,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'text',
+          metadata: { messageId }
+        });
+      }
+
       // Process through the agent
       const response = await this.agent.handleUserMessage(userId, message);
+
+      // LOG AGENT RESPONSE TO HISTORY
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
 
       // Send response via WhatsApp (or log in dev mode)
       if (process.env.DEV_MODE === 'true') {
@@ -1119,6 +1143,26 @@ class AutonomousWhatsAppAgent {
       console.log(`👁️ Analyzing image: ${mediaInfo.filename}`);
       const analysis = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
       
+      // LOG USER MESSAGE (IMAGE) TO HISTORY
+      // We store the analysis in the message text so it's searchable via Recall tool
+      if (this.historyStore) {
+        const storedMessage = caption ? `${caption} [Image Analysis: ${analysis}]` : `[Image Analysis: ${analysis}]`;
+        await this.historyStore.storeMessage({
+          userId,
+          message: storedMessage,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'image',
+          metadata: {
+              imageId,
+              mimeType,
+              filepath: mediaInfo.filepath,
+              analysis,
+              caption
+          }
+        });
+      }
+
       // 3. Construct Augmented Message for Agent
       // We present the image analysis as system context or augmented user message
       const augmentedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${caption ? `User Caption: "${caption}"` : 'No caption provided.'}`;
@@ -1127,6 +1171,17 @@ class AutonomousWhatsAppAgent {
       
       // 4. Pass to standard agent handler
       const response = await this.agent.handleUserMessage(userId, augmentedMessage);
+
+      // LOG AGENT RESPONSE
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: response,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
 
       if (process.env.DEV_MODE === 'true') {
         console.log(`💬 Response to ${userId}: ${response}`);
@@ -1146,9 +1201,119 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
-   * Handle web interface messages (returns response instead of sending)
+   * NEW: Handle incoming Audio messages
+   * Workflow: Download -> Transcribe -> AI Response -> Synthesize (TTS) -> Send Audio
    */
-  async handleWebMessage(userId: string, message: string): Promise<string> {
+  async handleAudioMessage(userId: string, audioId: string, mimeType: string, sha256: string): Promise<void> {
+    if (!this.isInitialized || !this.agent || !this.whatsapp || !this.mediaService) {
+      throw new Error('Agent not initialized');
+    }
+
+    // 1. Interrupt background tasks
+    if (this.scheduler) this.scheduler.interrupt();
+
+    console.log(`🎤 Incoming AUDIO from ${userId}`);
+
+    try {
+      // 2. Download Audio
+      const mediaInfo = await this.mediaService.downloadAndSaveMedia(audioId, mimeType, sha256, 'audio');
+      
+      // 3. Convert audio to WAV format for better transcription (fixes OGG/Opus issues)
+      console.log(`🔄 Converting audio to WAV format: ${mediaInfo.filename}`);
+      const convertedAudioPath = await this.mediaService.convertAudioToWav(mediaInfo.filepath);
+      
+      // 4. Transcribe (Speech-to-Text)
+      console.log(`👂 Transcribing audio: ${convertedAudioPath}`);
+      // Assuming 'en' or auto-detect. You can change 'en' to undefined to auto-detect if supported.
+      const transcription = await this.mediaService.transcribeAudio(convertedAudioPath);
+      console.log(`📝 User said: "${transcription}"`);
+
+      // LOG USER MESSAGE (AUDIO) TO HISTORY
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: transcription || '[Unintelligible Audio]',
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: 'audio',
+          metadata: {
+              audioId,
+              mimeType,
+              filepath: mediaInfo.filepath
+          }
+        });
+      }
+
+      // 4. Get Agent Text Response
+      // We pass the transcription as if the user typed it
+      const textResponse = await this.agent.handleUserMessage(userId, transcription);
+
+      // LOG AGENT RESPONSE
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: textResponse,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
+
+      // 5. Synthesize Response (Text-to-Speech)
+      console.log(`🗣️ Synthesizing voice response...`);
+      const audioResponse = await this.mediaService.synthesizeAudio(textResponse, {
+        voice: 'af_heart', // You can change the voice here
+        speed: 1.0
+      });
+
+      // 6. Convert WAV to WhatsApp-compatible format (OGG)
+      console.log(`🔄 Converting audio to WhatsApp-compatible format...`);
+      const convertedAudio = await this.mediaService.convertAudioToWhatsAppFormat(audioResponse.filepath, 'ogg');
+
+      // 7. Upload Converted Audio to WhatsApp
+      const uploadedMediaId = await this.whatsapp.uploadMedia(convertedAudio.filepath, convertedAudio.mimeType);
+
+      if (uploadedMediaId) {
+        // 8. Send Audio Message
+        await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
+        
+        // 9. Check for URLs and send them as text if present
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const links = textResponse.match(urlRegex);
+
+        if (links && links.length > 0) {
+            // Deduplicate links
+            const uniqueLinks = [...new Set(links)];
+            const linkMessage = `🔗 *Links mentioned:*\n${uniqueLinks.join('\n')}`;
+            
+            console.log(`🔗 Link(s) detected, sending text fallback to ${userId}`);
+            
+            // Short delay to ensure audio arrives first on client
+            await new Promise(resolve => setTimeout(resolve, 800));
+            await this.whatsapp.sendMessage(userId, linkMessage);
+        }
+      } else {
+        // Fallback to text if upload fails
+        await this.whatsapp.sendMessage(userId, textResponse);
+      }
+
+      console.log(`✅ Voice interaction completed for ${userId}`);
+
+    } catch (error) {
+      console.error(`❌ Error processing audio from ${userId}:`, error);
+      const fallback = "I heard you, but had trouble processing the audio. Please type your message instead.";
+      if (process.env.DEV_MODE !== 'true') {
+        await this.whatsapp.sendMessage(userId, fallback);
+      }
+    }
+  }
+
+  /**
+   * Handle web interface messages (returns response instead of sending)
+   * Supports optional attachment (simulated upload)
+   * Returns object with text and optional audio (base64)
+   */
+  async handleWebMessage(userId: string, message: string, attachment?: { type: 'image' | 'audio', filePath: string }): Promise<{ text: string, audio?: string }> {
     if (!this.isInitialized || !this.agent) {
       throw new Error('Agent not initialized');
     }
@@ -1158,16 +1323,96 @@ class AutonomousWhatsAppAgent {
         this.scheduler.interrupt();
     }
 
-    console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}...`);
+    console.log(`🌐 Web message from ${userId}: ${message.substring(0, 50)}... ${attachment ? `[With ${attachment.type}]` : ''}`);
 
     try {
+      let processedMessage = message;
+      let analysisResult = '';
+
+      // Handle Attachment logic simulating real media processing
+      if (attachment && this.mediaService) {
+        if (attachment.type === 'image') {
+          console.log(`👁️ Analyzing web image attachment: ${attachment.filePath}`);
+          const analysis = await this.mediaService.analyzeImageWithOpenAI(attachment.filePath);
+          processedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${message ? `User Caption: "${message}"` : ''}`;
+          analysisResult = analysis;
+        } else if (attachment.type === 'audio') {
+          console.log(`🎤 Transcribing web audio attachment: ${attachment.filePath}`);
+          // Convert audio to WAV format for better transcription
+          const convertedAudioPath = await this.mediaService.convertAudioToWav(attachment.filePath);
+          const transcription = await this.mediaService.transcribeAudio(convertedAudioPath);
+          console.log(`📝 Transcription: "${transcription}"`);
+          processedMessage = transcription;
+          if (message) processedMessage += `\n\n(User Note: ${message})`;
+        }
+      }
+
+      // LOG USER MESSAGE
+      if (this.historyStore) {
+        // Calculate what to store. If it's an image, include analysis for searchability.
+        let storeMsg = message;
+        let msgType: 'text'|'image'|'audio' = 'text';
+
+        if (attachment) {
+            msgType = attachment.type;
+            if (attachment.type === 'image') {
+                storeMsg = message ? `${message} [Image Analysis: ${analysisResult}]` : `[Image Analysis: ${analysisResult}]`;
+            } else if (attachment.type === 'audio') {
+                storeMsg = processedMessage; // The transcription
+            }
+        }
+
+        await this.historyStore.storeMessage({
+          userId,
+          message: storeMsg,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          messageType: msgType,
+          metadata: attachment ? { filePath: attachment.filePath } : undefined
+        });
+      }
+
       // Process through the agent but don't send via WhatsApp
-      const response = await this.agent.handleUserMessage(userId, message);
+      // Note: For image attachments, we pass the 'processedMessage' (augmented with analysis) to the agent
+      // For audio, we pass the transcription
+      // For text, just the text
+      const inputToAgent = attachment ? processedMessage : message;
+      const responseText = await this.agent.handleUserMessage(userId, inputToAgent);
+      
+      // LOG AGENT RESPONSE
+      if (this.historyStore) {
+        await this.historyStore.storeMessage({
+          userId,
+          message: responseText,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        });
+      }
+
+      let audioData: string | undefined;
+
+      // Generate TTS Audio response if input was audio
+      if (attachment && attachment.type === 'audio' && this.mediaService) {
+          try {
+              console.log(`🗣️ Generating audio response for Web UI...`);
+              const audioInfo = await this.mediaService.synthesizeAudio(responseText);
+              
+              if (fs.existsSync(audioInfo.filepath)) {
+                  const buffer = fs.readFileSync(audioInfo.filepath);
+                  // Convert to base64 Data URI
+                  audioData = `data:${audioInfo.mimeType};base64,${buffer.toString('base64')}`;
+              }
+          } catch (e) {
+              console.error('Failed to synthesize audio for web response:', e);
+          }
+      }
+
       console.log(`✅ Web message processed for ${userId}`);
-      return response;
+      return { text: responseText, audio: audioData };
     } catch (error) {
       console.error(`❌ Error processing web message from ${userId}:`, error);
-      return "Sorry, I encountered an issue processing your message. Please try again.";
+      return { text: "Sorry, I encountered an issue processing your message. Please try again." };
     }
   }
 
@@ -1872,6 +2117,7 @@ Your decision:`;
 3. **Personality**: Be warm, use emojis naturally 🌟, avoid robotic phrases.
 4. **Tool Usage**: Use available tools when you need current information or specific actions.
 5. **Context Awareness**: Reference recent conversation naturally when relevant.
+6. **Language Matching**: ALWAYS reply in the SAME LANGUAGE as the user's input. If the user speaks Chinese, reply in Chinese. If English, reply in English.
 
 **TOOL SELECTION PRIORITY:**
 1. Check 'recall_history' first if the user refers to the past.
@@ -1966,6 +2212,61 @@ Your decision:`;
   }
 
   /**
+   * [NEW] Batch Process News: Deduplicates and Summarizes
+   * Takes a list of raw content, groups duplicates, and returns a single digest message.
+   */
+  async generateNewsDigest(userId: string, rawNewsItems: string[]): Promise<string | null> {
+    if (!rawNewsItems || rawNewsItems.length === 0) return null;
+
+    const userInterests = this.contextMgr.getUserInterests(userId);
+    
+    // If no interests are defined, we strictly do not generate a digest (as requested)
+    if (userInterests.length === 0) {
+        console.log(`🔕 skipping digest for ${userId}: No user interests defined.`);
+        return null;
+    }
+
+    const prompt = `
+You are a smart news editor for WhatsApp.
+I have a list of raw news snippets found by a web scraper. There are likely duplicates (same story from different sources).
+
+**User Interests:** ${userInterests.join(', ')}
+
+**Raw News Items:**
+${rawNewsItems.map((item, i) => `[${i+1}] ${item.substring(0, 300)}...`).join('\n')}
+
+**Task:**
+1. Group duplicates (stories about the same event).
+2. Select the top 3 most distinct stories that STRICTLY match the User Interests.
+3. If a story does not match the interests, discard it.
+4. Summarize each selected story into exactly ONE sentence.
+
+**Output Format:**
+Return ONLY the final message to send to the user. Use emojis.
+Example:
+"Here is your news update 📰:
+• [One sentence summary of story 1]
+• [One sentence summary of story 2]
+"
+
+If NO stories match the user's interests, respond exactly with: "NO_MATCHES"
+`;
+
+    try {
+      const response = await this.openai.generateTextResponse(prompt);
+      
+      if (response.includes('NO_MATCHES')) {
+        return null;
+      }
+
+      return this.optimizeForMobile(response);
+    } catch (error) {
+      console.error('Error generating news digest:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get agent statistics
    */
   getStats() {
@@ -2018,6 +2319,8 @@ import { WhatsAppService } from '../services/whatsappService';
 import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * The Heartbeat of the autonomous agent system.
@@ -2026,6 +2329,12 @@ import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 export class Scheduler {
   private isRunning: boolean = false;
   private tickCount: number = 0;
+  
+  // [NEW] Batching storage
+  // Map<UserId, Set<ContentString>> to automatically handle exact string duplicates
+  private pendingNewsBatch: Map<string, Set<string>> = new Map();
+  private readonly BATCH_FLUSH_INTERVAL = 30; // Flush every 30 ticks (minutes)
+
   private stats = {
     browsingSessions: 0,
     proactiveChecks: 0,
@@ -2034,6 +2343,10 @@ export class Scheduler {
     lastTick: new Date()
   };
 
+  // Persistence settings
+  private readonly DATA_DIR = path.join(process.cwd(), 'data');
+  private readonly STATE_FILE = path.join(this.DATA_DIR, 'scheduler_state.json');
+
   constructor(
     private browser: BrowserService,
     private contextMgr: ContextManager,
@@ -2041,7 +2354,9 @@ export class Scheduler {
     private agent: Agent,
     private actionQueue: ActionQueueService,
     private kb: KnowledgeBasePostgres
-  ) {}
+  ) {
+    this.loadState();
+  }
 
   /**
    * Start the scheduler with 1-minute ticks
@@ -2069,17 +2384,12 @@ export class Scheduler {
     }, 5 * 60 * 1000); // 5 minutes
   }
 
-  /**
-   * Stop the scheduler
-   */
   stop(): void {
     this.isRunning = false;
     console.log('🛑 Autonomous Agent Scheduler Stopped');
+    this.saveState(); // Save on stop
   }
 
-  /**
-   * Interrupt current background tasks (Browsing)
-   */
   interrupt(): void {
     if (this.isRunning) {
       console.log('🚦 Scheduler interrupting background tasks...');
@@ -2095,30 +2405,36 @@ export class Scheduler {
 
     this.tickCount++;
     this.stats.lastTick = new Date();
+    
+    // Save stats periodically (every 5 ticks)
+    if (this.tickCount % 5 === 0) this.saveState();
 
     try {
       // 1. Get STRICTLY active users (last contact < 1 hour)
       const activeUsers = this.contextMgr.getActiveUsers();
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // 2. IDLE MODE: Browse if not too busy or just random
+      // 2. IDLE MODE: Browse
       if (this.shouldBrowse(activeUsers.length)) {
-          // Pass a user interest as intent if a user is active!
           let browseIntent = undefined;
           if (activeUsers.length > 0) {
               const randomUser = activeUsers[Math.floor(Math.random() * activeUsers.length)];
               const interests = this.contextMgr.getUserInterests(randomUser);
               if (interests.length > 0) {
                   browseIntent = interests[Math.floor(Math.random() * interests.length)];
-                  console.log(`🎯 Browsing targeted for active user ${randomUser}: ${browseIntent}`);
               }
           }
           await this.idleMode(browseIntent);
       }
 
-      // 3. PROACTIVE MODE: Only for Active Users
+      // 3. PROACTIVE MODE: Accumulate News
       if (activeUsers.length > 0) {
-        await this.proactiveMode(activeUsers);
+        await this.accumulateNews(activeUsers);
+      }
+
+      // 4. [NEW] Flush Batch every 5 minutes
+      if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
+          await this.flushNewsBatches();
       }
 
       this.logTickStats();
@@ -2131,80 +2447,106 @@ export class Scheduler {
   private async idleMode(intent?: string): Promise<void> {
     console.log('🌐 Entering Idle Mode: Autonomous Browsing');
     this.stats.browsingSessions++;
-    
-    // Surf with intent if provided, otherwise generic
     const result = await this.browser.surf(intent);
     this.stats.knowledgeLearned += result.knowledgeGained;
   }
 
-  private async proactiveMode(activeUsers: string[]): Promise<void> {
-    console.log(`💬 Proactive Mode: Checking ${activeUsers.length} active users`);
+  /**
+   * [UPDATED] Accumulate News (Instead of Proactive Mode)
+   * Finds fresh content and adds it to the user's pending batch.
+   */
+  private async accumulateNews(activeUsers: string[]): Promise<void> {
+    console.log(`📥 Accumulating news for ${activeUsers.length} active users`);
+    let changed = false;
 
     for (const userId of activeUsers) {
-      // Check strict cooldown (e.g., don't message twice in 15 mins)
-      if (!this.actionQueue.canSendProactiveMessage(userId)) continue;
+      // 1. Strict Interest Filter: If user has no interests, skip immediately
+      const interests = this.contextMgr.getUserInterests(userId);
+      if (interests.length === 0) {
+          continue;
+      }
 
-      // Find knowledge specifically learned RECENTLY (last 1 hour) that matches interests
+      // 2. Find fresh content
       const relevantContent = await this.findFreshRelevantContent(userId);
       
       if (relevantContent) {
-          const message = await this.agent.generateProactiveMessage(userId, relevantContent);
-          if (message) {
-              this.actionQueue.queueMessage(userId, message, { isProactive: true, priority: 8 });
-              this.stats.messagesSent++;
+          // Initialize set if not exists
+          if (!this.pendingNewsBatch.has(userId)) {
+              this.pendingNewsBatch.set(userId, new Set());
+          }
+          
+          // Add to pending batch
+          const userBatch = this.pendingNewsBatch.get(userId)!;
+          // Simple check to see if we already queued this exact string in this batch
+          if (!userBatch.has(relevantContent)) {
+              userBatch.add(relevantContent);
+              console.log(`📦 Added news item to queue for ${userId} (Queue size: ${userBatch.size})`);
+              changed = true;
           }
       }
     }
+
+    if (changed) this.saveState();
   }
 
-
   /**
-   * Find content learned in the last hour that matches user interests
+   * [NEW] Flush News Batches
+   * Processes accumulated news, deduplicates, and sends digests.
    */
+  private async flushNewsBatches(): Promise<void> {
+      console.log('🔄 Flushing news batches...');
+      let changed = false;
+      
+      for (const [userId, contentSet] of this.pendingNewsBatch.entries()) {
+          if (contentSet.size === 0) continue;
+
+          // Convert Set to Array
+          const rawItems = Array.from(contentSet);
+          
+          // Clear the batch immediately to prevent double sending if processing takes time
+          this.pendingNewsBatch.delete(userId);
+          changed = true;
+
+          // Ask Agent to deduplicate and summarize
+          console.log(`🤖 Generating digest for ${userId} from ${rawItems.length} items...`);
+          const digest = await this.agent.generateNewsDigest(userId, rawItems);
+
+          if (digest) {
+              // Send via ActionQueue
+              this.actionQueue.queueMessage(userId, digest, {
+                  isProactive: true,
+                  priority: 8
+              });
+              this.stats.messagesSent++;
+              console.log(`✅ Digest sent to ${userId}`);
+          } else {
+              console.log(`🚫 No digest generated for ${userId} (Content filtered or deduplicated to zero)`);
+          }
+      }
+
+      if (changed) this.saveState();
+  }
+
   private async findFreshRelevantContent(userId: string): Promise<string | null> {
       const interests = this.contextMgr.getUserInterests(userId);
       if (interests.length === 0) return null;
 
-      // We need a way to search specifically for *recent* docs in KB matching tags
-      // This uses a specific search logic on the KB
+      // Look for fresh content matching interests
       for (const interest of interests) {
-          // This relies on the KnowledgeBase having a method to find *fresh* content by tag/query
-          // We can use the existing search but filter the string results or add a new method to KB
-          // For now, using standard search but looking for the "🆕" indicator added by KB
-          const knowledge = await this.kb.search(interest, 1);
+          // We search for recent items (last 1 hour implied by KB search logic + recent tags)
+          // Note: In a real prod environment, we would pass a 'since' timestamp to the KB
+          const knowledge = await this.kb.search(interest, 2);
           if (knowledge && knowledge.includes('🆕')) {
-              return knowledge; // Found something fresh
+              return knowledge;
           }
       }
       return null;
   }
 
-  /**
-   * Map user interest to knowledge base category
-   */
-  private mapInterestToCategory(interest: string): string {
-    const lowerInterest = interest.toLowerCase();
-    
-    if (lowerInterest.includes('tech') || lowerInterest.includes('programming')) return 'tech';
-    if (lowerInterest.includes('business') || lowerInterest.includes('finance')) return 'business';
-    if (lowerInterest.includes('sports') || lowerInterest.includes('game')) return 'sports';
-    if (lowerInterest.includes('news') || lowerInterest.includes('current')) return 'news';
-    
-    return 'general';
-  }
-
-
   private shouldBrowse(activeUserCount: number): boolean {
-    return true; // Always try to browse if browser limit allows
+    return true;
   }
 
-  private shouldCheckProactive(activeUserCount: number): boolean {
-    return activeUserCount > 0;
-  }
-
-  /**
-   * Periodic maintenance tasks
-   */
   private async maintenance(): Promise<void> {
     console.log('🧹 Running maintenance tasks');
     
@@ -2219,26 +2561,19 @@ export class Scheduler {
     }
   }
 
-  /**
-   * Log tick statistics
-   */
   private logTickStats(): void {
-    if (this.tickCount % 10 === 0) { // Every 10 ticks
+    if (this.tickCount % 10 === 0) {
       console.log('📊 Scheduler Statistics:', {
         ticks: this.tickCount,
         browsingSessions: this.stats.browsingSessions,
-        proactiveChecks: this.stats.proactiveChecks,
         messagesSent: this.stats.messagesSent,
         knowledgeLearned: this.stats.knowledgeLearned,
         queueStats: this.actionQueue.getQueueStats(),
-        browserStats: this.browser.getStats()
+        pendingBatches: this.pendingNewsBatch.size
       });
     }
   }
 
-  /**
-   * Get scheduler status
-   */
   getStatus() {
     return {
       isRunning: this.isRunning,
@@ -2247,6 +2582,54 @@ export class Scheduler {
       lastTick: this.stats.lastTick
     };
   }
+
+  // --- Persistence Methods ---
+
+  private saveState() {
+      try {
+          if (!fs.existsSync(this.DATA_DIR)) {
+              fs.mkdirSync(this.DATA_DIR, { recursive: true });
+          }
+
+          // Convert Map<string, Set<string>> to friendly JSON format: [string, string[]][]
+          const serializedBatch = Array.from(this.pendingNewsBatch.entries()).map(([userId, set]) => {
+              return [userId, Array.from(set)];
+          });
+
+          const state = {
+              stats: this.stats,
+              tickCount: this.tickCount,
+              pendingNewsBatch: serializedBatch
+          };
+
+          fs.writeFileSync(this.STATE_FILE, JSON.stringify(state, null, 2));
+      } catch (error) {
+          console.error('❌ Failed to save scheduler state:', error);
+      }
+  }
+
+  private loadState() {
+      try {
+          if (fs.existsSync(this.STATE_FILE)) {
+              const raw = fs.readFileSync(this.STATE_FILE, 'utf-8');
+              const state = JSON.parse(raw);
+
+              if (state.stats) this.stats = state.stats;
+              if (state.tickCount) this.tickCount = state.tickCount;
+              
+              if (Array.isArray(state.pendingNewsBatch)) {
+                  // Convert back to Map<string, Set<string>>
+                  this.pendingNewsBatch = new Map(
+                      state.pendingNewsBatch.map(([userId, items]: [string, string[]]) => [userId, new Set(items)])
+                  );
+              }
+              console.log(`📦 Loaded scheduler state: ${this.pendingNewsBatch.size} pending batches`);
+          }
+      } catch (error) {
+          console.error('❌ Failed to load scheduler state:', error);
+      }
+  }
+
 }
 
 ---
@@ -2341,69 +2724,79 @@ export class ToolRegistry {
 ---
 ./src/memory/ContextManager.ts
 ---
-/**
- * Short-term memory manager with 1-hour TTL for active conversations.
- * Stores the last hour of conversation verbatim for immediate context.
- * Implements rolling summarization to archive expired conversations.
- */
+import { SummaryStore } from './SummaryStore';
+import * as fs from 'fs';
+import * as path from 'path';
+
 interface ConversationContext {
   userId: string;
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: number }>;
   lastInteraction: number;
-  userInterests?: string[]; // Auto-discovered user interests for proactive messaging
+  userInterests: string[];
+  messageCountSinceAnalysis: number; // New counter for periodic LLM analysis
 }
 
 export class ContextManager {
   private activeContexts: Map<string, ConversationContext> = new Map();
   private readonly TTL_MS = 60 * 60 * 1000; // 1 Hour
-  private summaryStore?: any; // SummaryStore instance
-  private openai?: any; // OpenAIService instance
+  private readonly ANALYSIS_INTERVAL = 5; // Analyze interests every 5 messages
+  private summaryStore?: SummaryStore;
+  private openai?: any;
 
-  /**
-   * Set dependencies for summarization functionality
-   */
+  // Persistence settings
+  private readonly DATA_DIR = path.join(process.cwd(), 'data');
+  private readonly STATE_FILE = path.join(this.DATA_DIR, 'context_state.json');
+
+  constructor() {
+    this.loadState();
+  }
+
   setDependencies(summaryStore: any, openai: any) {
     this.summaryStore = summaryStore;
     this.openai = openai;
   }
 
-  /**
-   * Get conversation history for a user (filtered by TTL)
-   */
   getHistory(userId: string): any[] {
     const ctx = this.activeContexts.get(userId);
     if (!ctx) return [];
     
-    // Filter out expired messages
     const now = Date.now();
     ctx.messages = ctx.messages.filter(m => (now - m.timestamp) < this.TTL_MS);
     
     return ctx.messages.map(({ role, content }) => ({ role, content }));
   }
 
-  /**
-   * Add a message to the conversation context
-   */
   addMessage(userId: string, role: 'user' | 'assistant', content: string) {
     if (!this.activeContexts.has(userId)) {
-      this.activeContexts.set(userId, { 
-        userId, 
-        messages: [], 
+      this.activeContexts.set(userId, {
+        userId,
+        messages: [],
         lastInteraction: Date.now(),
-        userInterests: []
+        userInterests: [],
+        messageCountSinceAnalysis: 0
       });
     }
     const ctx = this.activeContexts.get(userId)!;
     ctx.messages.push({ role, content, timestamp: Date.now() });
     ctx.lastInteraction = Date.now();
     
-    // Auto-discover user interests from message content
-    this.updateUserInterests(userId, content);
+    // Only analyze user messages for interests
+    if (role === 'user') {
+        ctx.messageCountSinceAnalysis++;
+        
+        // 1. Immediate: Quick Regex Check (Strict Mode)
+        this.updateUserInterestsRegex(userId, content);
+
+        // 2. Periodic: Deep LLM Analysis
+        if (ctx.messageCountSinceAnalysis >= this.ANALYSIS_INTERVAL) {
+            this.analyzeInterestsWithLLM(userId, ctx.messages);
+            ctx.messageCountSinceAnalysis = 0;
+        }
+    }
+
+    this.saveState(); // Persist changes
   }
 
-  /**
-   * Get active users (those with interactions within the TTL window)
-   */
   getActiveUsers(): string[] {
     const now = Date.now();
     return Array.from(this.activeContexts.values())
@@ -2411,174 +2804,182 @@ export class ContextManager {
       .map(ctx => ctx.userId);
   }
 
-  /**
-   * Get user interests for proactive messaging
-   */
   getUserInterests(userId: string): string[] {
     const ctx = this.activeContexts.get(userId);
     return ctx?.userInterests || [];
   }
 
   /**
-   * Update user interests based on message content
+   * [UPDATED] Strict Regex: Only matches clear intent patterns
+   * Prevents "I hate news" from triggering the "news" tag.
    */
-  private updateUserInterests(userId: string, content: string) {
+  private updateUserInterestsRegex(userId: string, content: string) {
     const ctx = this.activeContexts.get(userId);
     if (!ctx) return;
 
-    // Extract potential interests from message content
-    const interests = this.extractInterests(content);
-    
-    // Add new interests, avoiding duplicates
-    interests.forEach(interest => {
-      if (!ctx.userInterests!.includes(interest)) {
-        ctx.userInterests!.push(interest);
-      }
-    });
-
-    // Keep only the most recent 10 interests
-    if (ctx.userInterests!.length > 10) {
-      ctx.userInterests = ctx.userInterests!.slice(-10);
-    }
-  }
-
-  /**
-   * Extract potential interests from message content
-   */
-  private extractInterests(content: string): string[] {
-    const interests: string[] = [];
     const lowerContent = content.toLowerCase();
+    const interests: string[] = [];
+    let changed = false;
 
-    // Common interest patterns
-    const interestPatterns = [
-      /(tech|technology|programming|coding|ai|artificial intelligence|machine learning)/gi,
-      /(business|finance|stock|market|economy|investment)/gi,
-      /(sports|football|basketball|tennis|soccer|game)/gi,
-      /(news|current events|headlines|breaking)/gi,
-      /(travel|vacation|holiday|destination)/gi,
-      /(food|cooking|recipe|restaurant|cuisine)/gi,
-      /(music|song|artist|album|concert)/gi,
-      /(movie|film|cinema|actor|director)/gi,
-      /(gaming|video game|console|pc gaming)/gi,
-      /(health|fitness|exercise|wellness|diet)/gi
+    // Pattern: "I like/love/want/interested in X"
+    const intentPrefixes = [
+        "i like", "i love", "interested in", "tell me about", "news about", "updates on", "looking for"
     ];
 
-    interestPatterns.forEach(pattern => {
-      const matches = lowerContent.match(pattern);
-      if (matches) {
-        matches.forEach(match => {
-          const interest = match.toLowerCase();
-          if (!interests.includes(interest)) {
-            interests.push(interest);
-          }
-        });
+    // Check if message starts with or contains affirmative intent
+    const hasIntent = intentPrefixes.some(prefix => lowerContent.includes(prefix));
+
+    if (!hasIntent) return; // Skip regex extraction if no clear intent word
+
+    // Category Keywords
+    const categories = {
+        'tech': ['tech', 'technology', 'programming', 'coding', 'ai', 'software'],
+        'finance': ['business', 'finance', 'stock', 'market', 'economy', 'crypto'],
+        'sports': ['sports', 'football', 'basketball', 'soccer', 'game'],
+        'news': ['news', 'headlines', 'events', 'world'], // "General News"
+        'science': ['science', 'space', 'biology', 'physics']
+    };
+
+    for (const [category, keywords] of Object.entries(categories)) {
+        if (keywords.some(k => lowerContent.includes(k))) {
+            interests.push(category);
+        }
+    }
+
+    // Add unique interests
+    interests.forEach(interest => {
+      if (!ctx.userInterests.includes(interest)) {
+        ctx.userInterests.push(interest);
+        console.log(`🎯 Discovered interest via Regex for ${userId}: ${interest}`);
+        changed = true;
       }
     });
 
-    return interests;
+    if (changed) this.saveState();
   }
 
   /**
-   * Check if a user is interested in a specific topic
+   * [NEW] Deep Analysis: Uses LLM to refine interest list based on conversation context.
+   * This removes incorrect tags and adds subtle ones.
    */
-  isUserInterestedIn(userId: string, topic: string): boolean {
-    const interests = this.getUserInterests(userId);
-    const lowerTopic = topic.toLowerCase();
-    
-    return interests.some(interest => 
-      interest.toLowerCase().includes(lowerTopic) || 
-      lowerTopic.includes(interest.toLowerCase())
-    );
+  private async analyzeInterestsWithLLM(userId: string, messages: any[]): Promise<void> {
+      if (!this.openai) return;
+
+      const ctx = this.activeContexts.get(userId);
+      if (!ctx) return;
+
+      // Take last 10 messages for context
+      const recentHistory = messages.slice(-10).map(m => `${m.role}: ${m.content}`).join('\n');
+      const currentInterests = ctx.userInterests.join(', ');
+
+      const prompt = `
+Analyze the user's interests based on this conversation history.
+Current Tags: [${currentInterests}]
+
+Conversation:
+${recentHistory}
+
+Task:
+1. Identify clear topics the user is interested in.
+2. Remove tags that are incorrect (e.g., user said "I hate sports" but has "sports" tag).
+3. Return ONLY a JSON array of strings (lowercase).
+
+Example output: ["tech", "ai", "startups"]
+`;
+
+      try {
+          const response = await this.openai.generateTextResponse(prompt);
+          const jsonMatch = response.match(/\[.*\]/s);
+          
+          if (jsonMatch) {
+              const newInterests = JSON.parse(jsonMatch[0]);
+              if (Array.isArray(newInterests)) {
+                  ctx.userInterests = newInterests; // Overwrite with high-quality LLM list
+                  console.log(`🧠 LLM refined interests for ${userId}: ${ctx.userInterests.join(', ')}`);
+                  this.saveState(); // Persist changes
+              }
+          }
+      } catch (e) {
+          console.error('Failed to analyze interests with LLM', e);
+      }
   }
 
-  /**
-   * Clean up expired contexts (run periodically)
-   * Now includes summarization of expired conversations
-   */
   async cleanupExpiredContexts(): Promise<number> {
     const now = Date.now();
     let removedCount = 0;
 
     for (const [userId, ctx] of this.activeContexts.entries()) {
       if (now - ctx.lastInteraction >= this.TTL_MS) {
-        // Summarize and archive the conversation before deleting
         await this.summarizeAndArchive(userId, ctx.messages);
         this.activeContexts.delete(userId);
         removedCount++;
       }
     }
-
-    if (removedCount > 0) {
-      console.log(`🧹 Cleaned up ${removedCount} expired contexts`);
-    }
-
+    
+    if (removedCount > 0) this.saveState();
     return removedCount;
   }
 
-  /**
-   * Summarize and archive a conversation when it expires
-   */
   private async summarizeAndArchive(userId: string, messages: any[]): Promise<void> {
-    if (!this.summaryStore || !this.openai) {
-      console.log('⚠️ Summarization dependencies not set, skipping archive');
-      return;
-    }
-
-    // Only summarize conversations with enough content
-    if (messages.length < 5) {
-      console.log(`📝 Skipping summary for ${userId}: only ${messages.length} messages`);
-      return;
-    }
+    if (!this.summaryStore || !this.openai) return;
+    if (messages.length < 3) return;
 
     try {
-      const prompt = `Summarize this conversation in 3 bullet points, focusing on user preferences, key facts, and important context. Keep it concise but informative:
+      // We also do a final interest extraction here to save for long-term if needed
+      await this.analyzeInterestsWithLLM(userId, messages);
 
-${JSON.stringify(messages, null, 2)}
-
-Summary:`;
-
+      const prompt = `Summarize this conversation in 3 bullet points:\n${JSON.stringify(messages)}`;
       const summary = await this.openai.generateTextResponse(prompt);
-      
-      // Store the summary in long-term memory
       await this.summaryStore.storeSummary(userId, summary, messages);
-      
-      console.log(`📝 Archived conversation for ${userId}: ${summary.substring(0, 100)}...`);
     } catch (error) {
-      console.error('❌ Failed to summarize and archive conversation:', error);
+      console.error('❌ Failed to summarize:', error);
     }
   }
-
-  /**
-   * Get long-term conversation summaries for a user
-   */
+  
   async getLongTermSummaries(userId: string): Promise<string[]> {
-    if (!this.summaryStore) {
-      console.log('⚠️ SummaryStore not available, returning empty summaries');
-      return [];
-    }
-
+    if (!this.summaryStore) return [];
     try {
       return await this.summaryStore.getRecentSummaries(userId, 3);
     } catch (error) {
-      console.error('❌ Failed to get long-term summaries:', error);
       return [];
     }
   }
 
-  /**
-   * Get statistics about active contexts
-   */
-  getStats(): { activeUsers: number; totalMessages: number } {
+  getStats() {
     let totalMessages = 0;
-    
-    this.activeContexts.forEach(ctx => {
-      totalMessages += ctx.messages.length;
-    });
+    this.activeContexts.forEach(ctx => totalMessages += ctx.messages.length);
+    return { activeUsers: this.activeContexts.size, totalMessages };
+  }
 
-    return {
-      activeUsers: this.activeContexts.size,
-      totalMessages
-    };
+  // --- Persistence Methods ---
+
+  private saveState() {
+    try {
+        if (!fs.existsSync(this.DATA_DIR)) {
+            fs.mkdirSync(this.DATA_DIR, { recursive: true });
+        }
+        
+        // Convert Map to Array for JSON serialization
+        const state = Array.from(this.activeContexts.entries());
+        fs.writeFileSync(this.STATE_FILE, JSON.stringify(state, null, 2));
+    } catch (error) {
+        console.error('❌ Failed to save context state:', error);
+    }
+  }
+
+  private loadState() {
+    try {
+        if (fs.existsSync(this.STATE_FILE)) {
+            const raw = fs.readFileSync(this.STATE_FILE, 'utf-8');
+            const state = JSON.parse(raw);
+            this.activeContexts = new Map(state);
+            console.log(`🧠 Loaded ${this.activeContexts.size} active conversation contexts from disk`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to load context state:', error);
+        // Fallback to empty map
+        this.activeContexts = new Map();
+    }
   }
 }
 
@@ -4709,9 +5110,13 @@ export function createGoogleSearchServiceFromEnv(): GoogleSearchService {
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import FormData from 'form-data';
 import { WhatsAppAPIConfig } from '../types/whatsapp';
 import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+
+const execAsync = promisify(exec);
 
 export interface MediaInfo {
   filename: string;
@@ -4722,9 +5127,31 @@ export interface MediaInfo {
   type: 'image' | 'audio';
 }
 
+// --- NEW: Options for TTS ---
+export interface TTSOptions {
+  voice?: string;      // e.g., 'af_heart'
+  speed?: number;      // e.g., 1.0
+  lang_code?: string;  // 'a' (US English), 'b' (UK English), 'z' (Chinese), etc.
+  model_repo?: string; // e.g., 'prince-canuma/Kokoro-82M' or 'mlx-community/Spark-TTS...'
+}
+
 export class MediaService {
   private config: WhatsAppAPIConfig;
   private openaiService: OpenAIService | null;
+
+  // Known Whisper Hallucinations (Common phrases generated on silence/noise)
+  private readonly HALLUCINATIONS = [
+    "subtitle by amara.org",
+    "subtitles by amara.org",
+    "thank you for watching",
+    "thanks for watching",
+    "you",
+    "bye",
+    "copyright",
+    "all rights reserved",
+    "audio",
+    "silence"
+  ];
 
   constructor(config: WhatsAppAPIConfig) {
     this.config = config;
@@ -4823,7 +5250,9 @@ export class MediaService {
       'video/quicktime': 'mov'
     };
 
-    return mimeToExt[mimeType] || 'bin';
+    // Fix: Handle formats with codecs like "audio/ogg; codecs=opus"
+    const cleanMime = mimeType.split(';')[0].trim();
+    return mimeToExt[cleanMime] || 'bin';
   }
 
   getMediaInfoResponse(mediaInfo: MediaInfo): string {
@@ -4878,28 +5307,283 @@ export class MediaService {
       }
 
       // Make API request to audio service
+      console.log(`📡 Sending audio to transcription service: ${fileName} (${audioBuffer.length} bytes)`);
       const response = await axios.post(`${apiUrl}transcribe`, form, {
         headers: {
           'X-API-Key': apiKey,
           ...form.getHeaders(),
         },
       });
-      console.log('response', response);
-      // Handle different response formats from audio service
+      
+      let rawText = "";
       if (response.data.text) {
-        // Direct text response format: { text: "transcribed text" }
-        return response.data.text;
+        rawText = response.data.text;
       } else if (response.data.success && response.data.text) {
-        // Success-based response format: { success: true, text: "transcribed text" }
-        return response.data.text;
+        rawText = response.data.text;
       } else {
         throw new Error(response.data.error || response.data.detail || 'Transcription failed');
       }
+
+      // Filter hallucinations
+      const cleanText = this.filterHallucinations(rawText);
+      console.log(`📝 Transcription result: "${cleanText}" (Raw: "${rawText}")`);
+      
+      return cleanText || "[Audio contains no speech or was unintelligible]";
 
     } catch (error) {
       console.error('Error transcribing audio:', error);
       const errorMessage = error instanceof Error ? error.message : `${error}`;
       throw new Error(`Failed to transcribe audio: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Helper to clean up Whisper hallucinations
+   */
+  private filterHallucinations(text: string): string {
+    const lower = text.trim().toLowerCase();
+    
+    // Check if the entire text is a known hallucination
+    if (this.HALLUCINATIONS.some(h => lower === h || lower.startsWith(h))) {
+        return "";
+    }
+    
+    // Remove "Subtitle by..." if it appears at the end
+    return text.replace(/Subtitles? by .*$/i, "").trim();
+  }
+
+  /**
+   * NEW: Force convert any audio to standard WAV (16kHz, mono) for best transcription results
+   * This fixes issues with WhatsApp OGG/Opus files
+   */
+  async convertAudioToWav(inputFilePath: string): Promise<string> {
+    try {
+      // Check if FFmpeg is available
+      try {
+        await execAsync('ffmpeg -version');
+      } catch (error) {
+        console.warn('⚠️ FFmpeg not found. Skipping conversion. Transcription may fail for OGG files.');
+        return inputFilePath;
+      }
+
+      const timestamp = Date.now();
+      const outputFilename = `converted_${timestamp}.wav`;
+      const outputFilePath = path.join('data', 'media', outputFilename);
+
+      // 16kHz sample rate (-ar 16000), mono (-ac 1), 16-bit PCM (default for wav)
+      // This is the "Gold Standard" format for Whisper and most STT engines
+      const ffmpegCommand = `ffmpeg -i "${inputFilePath}" -ar 16000 -ac 1 -y "${outputFilePath}"`;
+      
+      console.log(`🔄 Normalizing audio for transcription: ${inputFilePath} -> ${outputFilePath}`);
+      const { stderr } = await execAsync(ffmpegCommand);
+      
+      if (stderr && !fs.existsSync(outputFilePath)) {
+          console.warn(`⚠️ FFmpeg warning: ${stderr}`);
+      }
+
+      return outputFilePath;
+    } catch (error) {
+      console.error('Error converting audio to WAV:', error);
+      return inputFilePath; // Fallback to original file
+    }
+  }
+
+  // ==========================================
+  //  🆕 NEW METHOD: Synthesize Audio (TTS)
+  // ==========================================
+  async synthesizeAudio(text: string, options: TTSOptions = {}): Promise<MediaInfo> {
+    try {
+      const apiUrl = process.env.AUDIO_SERVICE_API_URL;
+      const apiKey = process.env.AUDIO_SERVICE_API_KEY;
+
+      if (!apiUrl || !apiKey) {
+        throw new Error('Audio service not configured');
+      }
+
+      if (!text) {
+        throw new Error('Text is required for synthesis');
+      }
+
+      // 1. Clean the text to remove emojis and Markdown before synthesis
+      const cleanedText = this.cleanTextForTTS(text);
+      console.log(`🗣️ Cleaned TTS Text: "${cleanedText.substring(0, 50)}..."`);
+
+      if (!cleanedText) {
+          // If message was only emojis/formatting, fallback to simple text
+          console.warn("Text contained only emojis/formatting. Using default response.");
+          return this.synthesizeAudio("I sent you a text response.", options);
+      }
+
+      // 2. Auto-detect Language for Kokoro
+      // Check for Chinese characters (CJK Unified Ideographs)
+      const hasChinese = /[\u4e00-\u9fa5]/.test(cleanedText);
+      let langCode = options.lang_code || 'a'; // Default US English
+
+      // If Chinese detected and no override provided, switch to 'z'
+      if (hasChinese && !options.lang_code) {
+          console.log("🇨🇳 Chinese characters detected, switching TTS lang_code to 'z'");
+          langCode = 'z';
+      }
+
+      // Default Configuration
+      const payload = {
+        text: cleanedText,
+        model_repo: options.model_repo || 'prince-canuma/Kokoro-82M', // Default to Kokoro
+        voice: options.voice || 'af_heart',
+        speed: options.speed || 1.0,
+        lang_code: langCode
+      };
+
+      console.log(`Synthesizing audio: "${cleanedText.substring(0, 50)}..." with model ${payload.model_repo} (lang: ${payload.lang_code})`);
+
+      // NOTE: Synthesize endpoint expects JSON, not FormData
+      const response = await axios.post(`${apiUrl}synthesize`, payload, {
+        responseType: 'arraybuffer', // Critical: We expect a binary WAV file back
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      // Prepare file path
+      const timestamp = Date.now();
+      const filename = `tts_${timestamp}.wav`;
+      const filepath = path.join('data', 'media', filename);
+
+      // Ensure directory exists
+      const dir = path.dirname(filepath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Save the buffer to disk
+      fs.writeFileSync(filepath, response.data);
+      const stats = fs.statSync(filepath);
+
+      return {
+        filename,
+        filepath,
+        mimeType: 'audio/wav',
+        size: stats.size,
+        sha256: '', // Not strictly needed for generated content, or calculate if needed
+        type: 'audio'
+      };
+
+    } catch (error) {
+      console.error('Error synthesizing audio:', error);
+      
+      // Handle axios error response specially to read the text error from arraybuffer
+      if (axios.isAxiosError(error) && error.response && error.response.data) {
+        const errorBuffer = error.response.data as Buffer;
+        const errorText = errorBuffer.toString('utf8');
+        throw new Error(`TTS Failed: ${errorText}`);
+      }
+
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
+      throw new Error(`Failed to synthesize audio: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Helper function to remove Emojis, Markdown, and URLs for cleaner speech
+   */
+  private cleanTextForTTS(text: string): string {
+    return text
+      // Remove URLs
+      .replace(/https?:\/\/[^\s]+/g, ' a link ')
+      // Remove Emojis and Pictographs (Unicode property escapes)
+      .replace(/\p{Emoji_Presentation}/gu, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      // Remove Markdown bold/italic (* or _) and code (`)
+      .replace(/(\*|_|`)/g, '')
+      // Collapse multiple spaces into one
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Convert audio file from WAV to WhatsApp-compatible format (OGG with Opus codec)
+   * WhatsApp supports: audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg
+   */
+  async convertAudioToWhatsAppFormat(inputFilePath: string, outputFormat: 'ogg' | 'mp3' = 'ogg'): Promise<MediaInfo> {
+    try {
+      if (!fs.existsSync(inputFilePath)) {
+        throw new Error(`Input file not found: ${inputFilePath}`);
+      }
+
+      // Check if FFmpeg is available
+      try {
+        await execAsync('ffmpeg -version');
+      } catch (error) {
+        throw new Error('FFmpeg is not installed or not available in PATH');
+      }
+
+      const inputExt = path.extname(inputFilePath).toLowerCase();
+      if (inputExt !== '.wav') {
+        console.warn(`Warning: Input file is ${inputExt}, expected .wav. Conversion may still work.`);
+      }
+
+      // Create output file path
+      const timestamp = Date.now();
+      const outputFilename = `converted_${timestamp}.${outputFormat}`;
+      const outputFilePath = path.join('data', 'media', outputFilename);
+
+      // Ensure directory exists
+      const dir = path.dirname(outputFilePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Build FFmpeg command based on output format
+      let ffmpegCommand: string;
+      let mimeType: string;
+
+      if (outputFormat === 'ogg') {
+        // Convert to OGG with Opus codec (WhatsApp's preferred format)
+        ffmpegCommand = `ffmpeg -i "${inputFilePath}" -c:a libopus -b:a 64k -ac 1 -vn -y "${outputFilePath}"`;
+        mimeType = 'audio/ogg';
+      } else {
+        // Convert to MP3
+        ffmpegCommand = `ffmpeg -i "${inputFilePath}" -c:a libmp3lame -b:a 128k -ac 1 -vn -y "${outputFilePath}"`;
+        mimeType = 'audio/mpeg';
+      }
+
+      console.log(`Converting audio: ${inputFilePath} -> ${outputFilePath}`);
+      console.log(`FFmpeg command: ${ffmpegCommand}`);
+
+      // Execute FFmpeg conversion
+      const { stdout, stderr } = await execAsync(ffmpegCommand);
+
+      if (stderr) {
+        console.warn('FFmpeg stderr:', stderr);
+      }
+
+      // Verify output file was created
+      if (!fs.existsSync(outputFilePath)) {
+        throw new Error('FFmpeg conversion failed - output file not created');
+      }
+
+      const stats = fs.statSync(outputFilePath);
+      
+      if (stats.size === 0) {
+        throw new Error('FFmpeg conversion failed - output file is empty');
+      }
+
+      console.log(`✅ Audio conversion successful: ${stats.size} bytes`);
+
+      return {
+        filename: outputFilename,
+        filepath: outputFilePath,
+        mimeType,
+        size: stats.size,
+        sha256: '', // Not needed for generated content
+        type: 'audio'
+      };
+
+    } catch (error) {
+      console.error('Error converting audio:', error);
+      const errorMessage = error instanceof Error ? error.message : `${error}`;
+      throw new Error(`Failed to convert audio: ${errorMessage}`);
     }
   }
 
@@ -6235,6 +6919,8 @@ export function createWebScrapeService(): WebScrapeService {
 ./src/services/whatsappService.ts
 ---
 import axios from 'axios';
+import * as fs from 'fs';
+import FormData from 'form-data';
 import { WhatsAppResponse, WhatsAppAPIConfig } from '../types/whatsapp';
 
 export class WhatsAppService {
@@ -6304,6 +6990,71 @@ export class WhatsAppService {
       return true;
     } catch (error) {
       console.error('Error marking message as read:', error);
+      return false;
+    }
+  }
+
+  /**
+   * NEW: Upload media file to WhatsApp Cloud API
+   */
+  async uploadMedia(filePath: string, mimeType: string): Promise<string | null> {
+    if (this.devMode) return 'dev-media-id';
+
+    try {
+      const data = new FormData();
+      data.append('messaging_product', 'whatsapp');
+      data.append('file', fs.createReadStream(filePath));
+      data.append('type', mimeType);
+
+      const url = `https://graph.facebook.com/${this.config.apiVersion}/${this.config.phoneNumberId}/media`;
+
+      const response = await axios.post(url, data, {
+        headers: {
+          'Authorization': `Bearer ${this.config.accessToken}`,
+          ...data.getHeaders()
+        }
+      });
+
+      return response.data.id;
+    } catch (error) {
+      console.error('❌ Error uploading media to WhatsApp:', error);
+      return null;
+    }
+  }
+
+  /**
+   * NEW: Send an audio message via WhatsApp
+   */
+  async sendAudioMessage(to: string, mediaId: string): Promise<boolean> {
+    if (this.devMode) {
+      console.log(`📱 [DEV MODE] Audio sent to ${to} (Media ID: ${mediaId})`);
+      return true;
+    }
+
+    try {
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'audio',
+        audio: {
+          id: mediaId
+        }
+      };
+
+      const url = `https://graph.facebook.com/${this.config.apiVersion}/${this.config.phoneNumberId}/messages`;
+
+      await axios.post(url, payload, {
+        headers: {
+          'Authorization': `Bearer ${this.config.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log(`🎤 Audio message sent to ${to}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Error sending audio message:', error);
       return false;
     }
   }
@@ -6846,7 +7597,8 @@ export class TextChunker {
 import { Router, Request, Response } from 'express';
 import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
-import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * Dashboard API routes for the web interface
@@ -7052,44 +7804,73 @@ export class DashboardRoutes {
     // Chat endpoint for testing the bot
     this.router.post('/api/chat', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { message } = req.body;
+        const { message, image, audio } = req.body; // Expect base64 strings if image/audio provided
         const webUiUserId = process.env.WEB_UI_USER_ID || 'web-ui-user';
         
-        if (!message) {
-          return res.status(400).json({ error: 'Message is required' });
+        if (!message && !image && !audio) {
+          return res.status(400).json({ error: 'Message or attachment is required' });
         }
 
         const agent = getAutonomousAgent();
-        const historyStore = new HistoryStorePostgres();
         
-        // Log the chat activity
-        this.logActivity(`Web UI chat message from ${webUiUserId}: ${message.substring(0, 50)}...`);
+        let attachment: { type: 'image' | 'audio', filePath: string } | undefined;
+        let messageType: 'text' | 'image' | 'audio' = 'text';
+
+        // Handle File Upload (Base64 -> Temporary File)
+        if (image || audio) {
+            try {
+                const base64Str = image || audio;
+                // Extract clean base64 string (remove data:image/xyz;base64, prefix)
+                const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                
+                if (matches && matches.length === 3) {
+                    const mimeType = matches[1];
+                    const dataBuffer = Buffer.from(matches[2], 'base64');
+                    
+                    const type = image ? 'image' : 'audio';
+                    // Determine extension from mime
+                    let ext = 'bin';
+                    if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+                    else if (mimeType.includes('png')) ext = 'png';
+                    else if (mimeType.includes('webp')) ext = 'webp';
+                    else if (mimeType.includes('wav')) ext = 'wav';
+                    else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) ext = 'mp3';
+                    else if (mimeType.includes('ogg')) ext = 'ogg';
+
+                    const filename = `web_${type}_${Date.now()}.${ext}`;
+                    const uploadDir = path.join(process.cwd(), 'data', 'uploads');
+                    
+                    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+                    
+                    const filePath = path.join(uploadDir, filename);
+                    fs.writeFileSync(filePath, dataBuffer);
+                    
+                    attachment = { type, filePath };
+                    messageType = type;
+                }
+            } catch (e) {
+                console.error("Failed to process attachment:", e);
+                return res.status(400).json({ error: 'Invalid attachment data' });
+            }
+        }
+
+        // Log the chat activity (Dashboard view only)
+        this.logActivity(`Web UI chat from ${webUiUserId}: ${messageType} message`);
         
-        // Store user message in database like normal WhatsApp messages
-        await historyStore.storeMessage({
-          userId: webUiUserId,
-          message: message,
-          role: 'user',
-          timestamp: new Date().toISOString(),
-          messageType: 'text'
-        });
+        // NOTE: The agent.handleWebMessage method now handles both processing AND storage.
+        // No need for manual history storage here.
         
-        // Process the message through the autonomous agent using web interface method
-        const response = await agent.handleWebMessage(webUiUserId, message);
+        // Process the message through the autonomous agent
+        const result = await agent.handleWebMessage(webUiUserId, message || '', attachment);
         
-        // Store bot response in database
-        await historyStore.storeMessage({
-          userId: webUiUserId,
-          message: response,
-          role: 'assistant',
-          timestamp: new Date().toISOString(),
-          messageType: 'text'
-        });
+        // Extract text response (result could be string in old version, but we updated it to object)
+        const responseText = typeof result === 'string' ? result : result.text;
+        const responseAudio = typeof result === 'string' ? undefined : result.audio;
         
         // Log the response
-        this.logActivity(`Bot response to ${webUiUserId}: ${response.substring(0, 50)}...`);
+        this.logActivity(`Bot response to ${webUiUserId}: ${responseText.substring(0, 50)}...`);
         
-        res.json({ success: true, response });
+        res.json({ success: true, response: responseText, audio: responseAudio });
       } catch (error) {
         console.error('Chat API error:', error);
         this.logActivity(`Chat error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
@@ -7465,8 +8246,16 @@ export class WebhookRoutes {
                   ).catch(err => console.error('Agent image processing error:', err));
 
                 } else if (message.type === 'audio' && message.audio) {
-                  console.log(`🎤 Audio message from ${message.from} (ID: ${message.audio.id})`);
-                  console.log('⚠️ Audio processing not yet implemented in autonomous agent');
+                  // ✅ NEW: Handle Audio Messages
+                  console.log(`🎤 Processing audio message from ${message.from}`);
+                  
+                  agent.handleAudioMessage(
+                    message.from,
+                    message.audio.id,
+                    message.audio.mime_type,
+                    message.audio.sha256
+                  ).catch(err => console.error('Agent audio processing error:', err));
+                  
                 } else {
                   console.log(`Unsupported message type: ${message.type}`);
                 }
@@ -7507,7 +8296,8 @@ export class WebhookRoutes {
       } else {
         // Process text message using the autonomous agent
         const agent = getAutonomousAgent();
-        response = await agent.handleWebMessage(from, message);
+        const result = await agent.handleWebMessage(from, message);
+        response = typeof result === 'string' ? result : result.text;
       }
 
       console.log(`🤖 [DEV API] Response: "${response.substring(0, 100)}${response.length > 100 ? '...' : ''}"`);
@@ -8281,11 +9071,15 @@ export async function initializeTools(searchService: GoogleSearchService, mediaS
         const startTime = Date.now();
 
         try {
-          const result = await mediaService.transcribeAudio(args.audio_path, args.language);
+          // Convert audio to WAV format for better transcription (fixes OGG/Opus issues)
+          console.log(`🔄 Converting audio to WAV format: ${args.audio_path}`);
+          const convertedAudioPath = await mediaService.convertAudioToWav(args.audio_path);
+          
+          const result = await mediaService.transcribeAudio(convertedAudioPath, args.language);
           const executionTime = Date.now() - startTime;
 
           console.log('✅ Audio Transcription Completed:', {
-            audioPath: args.audio_path,
+            audioPath: convertedAudioPath,
             executionTime: `${executionTime}ms`,
             resultLength: result.length
           });
@@ -8932,5 +9726,731 @@ async function removeDuplicates() {
 }
 
 removeDuplicates();
+
+---
+./web/index.html
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Agent | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <!-- Google Fonts for better typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* WhatsApp-like Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+        
+        /* Chat Background Pattern */
+        .chat-bg {
+            background-color: #e5ddd5;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 10h10v10H10V10z' fill='%23d1d7db' fill-opacity='0.4'/%3E%3C/svg%3E");
+        }
+        
+        .message-in { 
+            background: #ffffff; 
+            border-radius: 0 12px 12px 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+        }
+        .message-out { 
+            background: #d9fdd3; 
+            border-radius: 12px 0 12px 12px;
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+        }
+
+        [x-cloak] { display: none !important; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        wa: {
+                            teal: '#00a884',
+                            dark: '#111b21',
+                            darker: '#202c33',
+                            panel: '#f0f2f5',
+                            accent: '#008069'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-100 h-screen overflow-hidden text-gray-800">
+
+    <div x-data="dashboard()" x-init="init()" class="flex h-full" x-cloak>
+        
+        <!-- Sidebar Navigation -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 transition-all duration-300" 
+               :class="mobileMenuOpen ? 'translate-x-0 absolute h-full' : '-translate-x-full md:translate-x-0 md:relative'">
+            
+            <!-- Bot Header -->
+            <div class="p-5 border-b border-gray-100 flex items-center space-x-3 bg-wa-panel">
+                <div class="w-10 h-10 rounded-full bg-wa-teal flex items-center justify-center text-white font-bold text-lg shadow-sm">
+                    🤖
+                </div>
+                <div>
+                    <h1 class="font-bold text-gray-800 tracking-tight">Auto Agent</h1>
+                    <div class="flex items-center space-x-1.5">
+                        <span class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></span>
+                        <span class="text-xs text-gray-500 font-medium" x-text="status.agent ? 'Online' : 'Offline'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Links -->
+            <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+                <template x-for="item in navItems">
+                    <button @click="activeTab = item.id; mobileMenuOpen = false"
+                            :class="activeTab === item.id ? 'bg-green-50 text-wa-teal font-semibold' : 'text-gray-600 hover:bg-gray-50'"
+                            class="w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group">
+                        <span x-text="item.icon" class="text-xl group-hover:scale-110 transition-transform"></span>
+                        <span x-text="item.label"></span>
+                    </button>
+                </template>
+            </nav>
+
+            <!-- Bottom Actions -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
+                <button @click="triggerBrowsing()" class="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm">
+                    <span>🌐</span> <span>Trigger Browse</span>
+                </button>
+                <button @click="logout()" class="w-full flex items-center justify-center space-x-2 text-red-500 hover:bg-red-50 py-2 rounded-md text-sm font-medium transition-colors">
+                    <span>🚪</span> <span>Logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col min-w-0 bg-wa-panel relative">
+            
+            <!-- Mobile Header -->
+            <header class="md:hidden bg-wa-teal text-white p-4 flex items-center justify-between shadow-md">
+                <div class="flex items-center space-x-3">
+                    <button @click="mobileMenuOpen = !mobileMenuOpen" class="focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    </button>
+                    <span class="font-bold" x-text="getTabTitle()"></span>
+                </div>
+                <div class="w-2 h-2 rounded-full" :class="status.agent ? 'bg-white' : 'bg-red-400'"></div>
+            </header>
+
+            <!-- Toast Notification -->
+            <div class="absolute top-4 right-4 z-50 transform transition-all duration-300"
+                 x-show="notification.show"
+                 x-transition:enter="translate-y-[-20px] opacity-0"
+                 x-transition:enter-end="translate-y-0 opacity-100"
+                 x-transition:leave="opacity-0">
+                <div :class="notification.type === 'error' ? 'bg-red-500' : 'bg-gray-800'" class="text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-3">
+                    <span x-text="notification.type === 'success' ? '✅' : '⚠️'"></span>
+                    <span x-text="notification.message" class="font-medium text-sm"></span>
+                </div>
+            </div>
+
+            <!-- TAB: OVERVIEW -->
+            <div x-show="activeTab === 'overview'" class="p-6 overflow-y-auto h-full space-y-6">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-2xl font-bold text-gray-800">System Overview</h2>
+                    <button @click="refreshAll()" class="p-2 hover:bg-white rounded-full transition-colors" title="Refresh">
+                        🔄
+                    </button>
+                </div>
+                
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Users</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.context?.activeUsers || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-blue-50 text-blue-500 rounded-lg">👥</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Learned Facts</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.memory?.knowledge?.totalDocuments || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-purple-50 text-purple-500 rounded-lg">🧠</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bot Cycles</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.scheduler?.tickCount || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-orange-50 text-orange-500 rounded-lg">⚡</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Pages Surfed</p>
+                                <h3 class="text-3xl font-bold text-gray-800 mt-1" x-text="status.browser?.totalPagesVisited || 0">0</h3>
+                            </div>
+                            <div class="p-2 bg-green-50 text-green-500 rounded-lg">🌍</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity Feed -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                        <h3 class="font-semibold text-gray-700">Live Activity Feed</h3>
+                        <div class="flex items-center space-x-2">
+                            <span class="relative flex h-3 w-3">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                            </span>
+                            <span class="text-xs text-gray-500">Live</span>
+                        </div>
+                    </div>
+                    <div class="max-h-96 overflow-y-auto font-mono text-sm bg-gray-900 text-gray-300 p-4 space-y-2">
+                        <template x-for="log in activities.slice(-20).reverse()" :key="log.timestamp">
+                            <div class="flex space-x-3 hover:bg-gray-800 p-1 rounded">
+                                <span class="text-gray-500 whitespace-nowrap" x-text="new Date(log.timestamp).toLocaleTimeString()"></span>
+                                <span :class="{
+                                    'text-blue-400': log.type === 'ai_response',
+                                    'text-yellow-400': log.type === 'tool_call',
+                                    'text-green-400': log.type === 'search',
+                                    'text-red-400': log.type === 'error'
+                                }">
+                                    <span x-text="getLogIcon(log.type)"></span>
+                                    <span x-text="log.message"></span>
+                                </span>
+                            </div>
+                        </template>
+                        <div x-show="activities.length === 0" class="text-gray-600 italic">Waiting for system activity...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: CHAT -->
+            <div x-show="activeTab === 'chat'" class="flex flex-col h-full bg-[#efeae2]">
+                <!-- Chat Area (WhatsApp Style) -->
+                <div class="flex-1 overflow-y-auto p-4 space-y-4 chat-bg" id="chat-container">
+                    <div class="text-center text-xs text-gray-500 my-4">
+                        <span class="bg-white/60 px-2 py-1 rounded shadow-sm">🔒 Messages are end-to-end encrypted (simulated)</span>
+                    </div>
+
+                    <template x-for="msg in chatMessages" :key="msg.id">
+                        <div class="flex w-full" :class="msg.sender === 'user' ? 'justify-end' : 'justify-start'">
+                            <div class="max-w-[80%] relative p-2 shadow-sm flex flex-col"
+                                 :class="msg.sender === 'user' ? 'message-out' : 'message-in'">
+                                
+                                <!-- Sender Name (for bot) -->
+                                <template x-if="msg.sender === 'bot'">
+                                    <span class="text-xs font-bold text-orange-500 mb-1" x-text="botInfo.name"></span>
+                                </template>
+
+                                <!-- Attachments Preview -->
+                                <template x-if="msg.attachment">
+                                    <div class="mb-2 rounded overflow-hidden">
+                                        <!-- Image Preview -->
+                                        <template x-if="msg.attachment.type === 'image'">
+                                            <img :src="msg.attachment.data" class="max-w-full h-auto rounded" style="max-height: 200px;">
+                                        </template>
+                                        <!-- Audio Preview -->
+                                        <template x-if="msg.attachment.type === 'audio'">
+                                            <div class="bg-gray-100 p-2 rounded flex items-center space-x-2">
+                                                <span class="text-xl">🎤</span>
+                                                <span class="text-xs text-gray-500">Audio Message</span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Audio Response (Bot) -->
+                                <template x-if="msg.audio">
+                                    <div class="mb-2">
+                                        <audio controls autoplay :src="msg.audio" class="w-full h-8 max-w-[200px]"></audio>
+                                    </div>
+                                </template>
+
+                                <span class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></span>
+                                
+                                <div class="flex justify-end items-center mt-1 space-x-1">
+                                    <span class="text-[10px] text-gray-500" x-text="msg.time"></span>
+                                    <template x-if="msg.sender === 'user'">
+                                        <svg class="w-3 h-3 text-blue-500" viewBox="0 0 16 15" width="16" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.283a.32.32 0 0 0 .484-.033l6.272-8.048a.366.366 0 0 0-.064-.512zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z" fill="currentColor"/></svg>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                    
+                    <div x-show="isTyping" class="flex justify-start">
+                        <div class="message-in p-3 flex items-center space-x-1">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                            <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Attachment Preview Bar -->
+                <div x-show="activeAttachment" class="bg-gray-100 px-4 py-2 flex items-center justify-between border-t border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <template x-if="activeAttachment?.type === 'image'">
+                            <div class="h-10 w-10 bg-gray-300 rounded overflow-hidden">
+                                <img :src="activeAttachment.data" class="h-full w-full object-cover">
+                            </div>
+                        </template>
+                        <template x-if="activeAttachment?.type === 'audio'">
+                            <div class="h-10 w-10 bg-blue-100 rounded flex items-center justify-center text-blue-600">
+                                🎤
+                            </div>
+                        </template>
+                        <div class="flex flex-col">
+                            <span class="text-xs font-semibold text-gray-700" x-text="activeAttachment?.type === 'image' ? 'Image Attached' : 'Audio Attached'"></span>
+                            <span class="text-[10px] text-gray-500" x-text="activeAttachment?.name"></span>
+                        </div>
+                    </div>
+                    <button @click="clearAttachment()" class="text-gray-500 hover:text-red-500">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <!-- Input Area -->
+                <div class="bg-wa-panel p-3 px-4 flex items-center space-x-2 border-t border-gray-200">
+                    <!-- File Input (Hidden) -->
+                    <input type="file" x-ref="fileInput" class="hidden" accept="image/*,audio/*" @change="handleFileSelect($event)">
+                    
+                    <button @click="$refs.fileInput.click()" class="text-gray-500 hover:text-gray-700 p-1" title="Attach Image or Audio">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                    </button>
+                    
+                    <input type="text" x-model="chatInput" @keydown.enter="sendMessage()"
+                           class="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
+                           placeholder="Type a message (press Enter to send)">
+                    <button @click="sendMessage()" class="p-2 bg-wa-teal text-white rounded-full hover:bg-wa-accent transition-colors shadow-sm">
+                        <svg class="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- TAB: MEMORY -->
+            <div x-show="activeTab === 'memory'" class="p-6 h-full flex flex-col">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">Memory Banks</h2>
+                    <div class="bg-white rounded-lg border p-1 flex">
+                        <button @click="memoryType = 'context'; loadMemoryData()" :class="memoryType === 'context' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Context</button>
+                        <button @click="memoryType = 'knowledge'; loadMemoryData()" :class="memoryType === 'knowledge' ? 'bg-wa-teal text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'" class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">Knowledge</button>
+                    </div>
+                </div>
+
+                <div x-show="memoryType === 'knowledge'" class="mb-4 flex gap-2">
+                    <input type="text" x-model="searchQuery" @keypress.enter="searchKnowledge()" placeholder="Search stored knowledge..." class="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-wa-teal focus:ring-wa-teal px-4 py-2">
+                    <button @click="searchKnowledge()" class="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700">Search</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-gray-100 p-0">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source/ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="item in memoryData" :key="item.id">
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm font-medium text-gray-900" x-text="truncate(item.title || item.source || item.id, 20)"></div>
+                                        <div class="text-xs text-wa-teal" x-text="item.category || 'General'"></div>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <div class="text-sm text-gray-500 max-h-20 overflow-y-auto" x-text="item.content || item.message"></div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                                        <div x-text="timeAgo(item.timestamp)"></div>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="memoryData.length === 0">
+                                <td colspan="3" class="px-6 py-10 text-center text-gray-500 italic">
+                                    No memory items found. Try a search or trigger browsing.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        function dashboard() {
+            return {
+                mobileMenuOpen: false,
+                activeTab: 'overview',
+                memoryType: 'context',
+                isTyping: false,
+                chatInput: '',
+                searchQuery: '',
+                activeAttachment: null, // { type, data, name }
+                notification: { show: false, message: '', type: 'success' },
+                
+                navItems: [
+                    { id: 'overview', label: 'Overview', icon: '📊' },
+                    { id: 'chat', label: 'Live Chat', icon: '💬' },
+                    { id: 'memory', label: 'Memory', icon: '🧠' },
+                    // { id: 'activity', label: 'Logs', icon: '📝' }
+                ],
+
+                botInfo: { name: 'Bot' },
+                status: {},
+                activities: [],
+                memoryData: [],
+                chatMessages: [
+                    { id: 1, sender: 'bot', text: 'Hello! I am online. Ask me to research something, or upload an image/audio!', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
+                ],
+
+                async init() {
+                    // Include credentials to fix the authentication issue
+                    const fetchOptions = { credentials: 'include' };
+                    
+                    try {
+                        const botRes = await fetch('/api/bot-info', fetchOptions);
+                        if (botRes.status === 401) window.location.href = '/login.html';
+                        this.botInfo = await botRes.json();
+                        
+                        await this.refreshAll();
+                        
+                        // Auto-refresh stats every 5s
+                        setInterval(() => {
+                            if (this.activeTab === 'overview') {
+                                this.loadStatus();
+                                this.loadActivities();
+                            }
+                        }, 5000);
+                    } catch (e) {
+                        console.error("Init failed", e);
+                    }
+                },
+
+                async refreshAll() {
+                    const fetchOptions = { credentials: 'include' };
+                    await Promise.all([
+                        fetch('/api/status', fetchOptions).then(r => r.json()).then(d => this.status = d),
+                        fetch('/api/activity', fetchOptions).then(r => r.json()).then(d => this.activities = d),
+                        this.loadMemoryData()
+                    ]);
+                },
+
+                async loadStatus() {
+                    this.status = await fetch('/api/status', { credentials: 'include' }).then(r => r.json());
+                },
+                
+                async loadActivities() {
+                    this.activities = await fetch('/api/activity', { credentials: 'include' }).then(r => r.json());
+                },
+
+                async loadMemoryData() {
+                    try {
+                        const data = await fetch(`/api/memory/${this.memoryType}`, { credentials: 'include' }).then(r => r.json());
+                        this.memoryData = Array.isArray(data) ? data : [];
+                    } catch (e) { this.memoryData = []; }
+                },
+
+                handleFileSelect(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const type = file.type.startsWith('image/') ? 'image' : 'audio';
+                        this.activeAttachment = {
+                            type: type,
+                            data: e.target.result, // Base64 string
+                            name: file.name
+                        };
+                        this.showToast(`${type === 'image' ? 'Image' : 'Audio'} attached`, 'success');
+                    };
+                    reader.readAsDataURL(file);
+                    
+                    // Reset input so same file can be selected again if needed
+                    event.target.value = '';
+                },
+
+                clearAttachment() {
+                    this.activeAttachment = null;
+                },
+
+                async sendMessage() {
+                    if (!this.chatInput.trim() && !this.activeAttachment) return;
+                    
+                    const text = this.chatInput;
+                    const attachment = this.activeAttachment; // Capture current attachment
+                    
+                    // Clear inputs immediately
+                    this.chatInput = '';
+                    this.clearAttachment();
+                    
+                    // Optimistic update
+                    this.chatMessages.push({
+                        id: Date.now(),
+                        sender: 'user',
+                        text: text,
+                        attachment: attachment,
+                        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                    });
+                    
+                    this.scrollToBottom();
+                    this.isTyping = true;
+
+                    try {
+                        const payload = { message: text };
+                        if (attachment) {
+                            if (attachment.type === 'image') payload.image = attachment.data;
+                            if (attachment.type === 'audio') payload.audio = attachment.data;
+                        }
+
+                        const res = await fetch('/api/chat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload),
+                            credentials: 'include'
+                        });
+                        const data = await res.json();
+                        
+                        this.isTyping = false;
+                        this.chatMessages.push({
+                            id: Date.now(),
+                            sender: 'bot',
+                            text: data.response,
+                            audio: data.audio, // Add audio data to message object
+                            time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                        });
+                        this.scrollToBottom();
+                        this.loadActivities();
+                    } catch (e) {
+                        this.isTyping = false;
+                        this.showToast('Failed to send message', 'error');
+                    }
+                },
+
+                async searchKnowledge() {
+                    if (!this.searchQuery) return;
+                    try {
+                        const res = await fetch('/api/search/knowledge', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ query: this.searchQuery }),
+                            credentials: 'include'
+                        });
+                        this.memoryData = await res.json();
+                    } catch(e) { this.showToast('Search failed', 'error'); }
+                },
+
+                async triggerBrowsing() {
+                    this.showToast('Browsing initiated...', 'success');
+                    fetch('/api/browse/now', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ intent: 'general' }),
+                        credentials: 'include' 
+                    });
+                },
+
+                async logout() {
+                    await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+                    window.location.href = '/login.html';
+                },
+
+                scrollToBottom() {
+                    this.$nextTick(() => {
+                        const container = document.getElementById('chat-container');
+                        container.scrollTop = container.scrollHeight;
+                    });
+                },
+
+                showToast(msg, type = 'success') {
+                    this.notification = { show: true, message: msg, type };
+                    setTimeout(() => this.notification.show = false, 3000);
+                },
+
+                getTabTitle() {
+                    return this.navItems.find(i => i.id === this.activeTab)?.label || 'Dashboard';
+                },
+
+                getLogIcon(type) {
+                    const map = { 'ai_response': '🤖', 'tool_call': '🛠️', 'search': '🔍', 'error': '❌' };
+                    return map[type] || '📝';
+                },
+
+                truncate(str, n) {
+                    return (str && str.length > n) ? str.substr(0, n-1) + '...' : str;
+                },
+
+                timeAgo(dateString) {
+                    const date = new Date(dateString);
+                    const seconds = Math.floor((new Date() - date) / 1000);
+                    if (seconds < 60) return seconds + "s ago";
+                    const minutes = Math.floor(seconds / 60);
+                    if (minutes < 60) return minutes + "m ago";
+                    const hours = Math.floor(minutes / 60);
+                    if (hours < 24) return hours + "h ago";
+                    return date.toLocaleDateString();
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+
+---
+./web/login.html
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Autonomous WhatsApp Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .login-card {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen flex items-center justify-center p-4">
+    <div x-data="{ password: '', isLoading: false, error: '' }" class="w-full max-w-md">
+        <div class="login-card rounded-2xl shadow-2xl p-8">
+            <!-- Header -->
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-800 mb-2">Autonomous WhatsApp Agent</h1>
+                <p class="text-gray-600">Enter your password to access the dashboard</p>
+            </div>
+
+            <!-- Login Form -->
+            <form @submit.prevent="
+                isLoading = true;
+                error = '';
+                fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: password }),
+                    credentials: 'include' // <--- CRITICAL FIX: Ensures cookies are handled
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // Force reload to ensure cookie is picked up by server middleware
+                        window.location.href = '/';
+                    } else {
+                        error = data.error || 'Login failed';
+                    }
+                })
+                .catch(err => {
+                    error = 'Connection error. Please try again.';
+                })
+                .finally(() => {
+                    isLoading = false;
+                })
+            ">
+                <!-- Password Input -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                    <input 
+                        x-model="password"
+                        type="password" 
+                        required
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200"
+                        placeholder="Enter dashboard password"
+                        :disabled="isLoading"
+                    >
+                </div>
+
+                <!-- Error Message -->
+                <div x-show="error" x-transition class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p class="text-red-700 text-sm" x-text="error"></p>
+                </div>
+
+                <!-- Submit Button -->
+                <button 
+                    type="submit"
+                    class="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    :disabled="isLoading || !password"
+                >
+                    <span x-show="!isLoading">Login</span>
+                    <span x-show="isLoading" class="flex items-center justify-center">
+                        <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Logging in...
+                    </span>
+                </button>
+            </form>
+
+            <!-- Footer Info -->
+            <div class="mt-6 text-center text-sm text-gray-500">
+                <p>Default password: <code class="bg-gray-100 px-2 py-1 rounded">admin</code></p>
+                <p class="mt-2">Set <code class="bg-gray-100 px-2 py-1 rounded">DASHBOARD_PASSWORD</code> in .env to customize</p>
+            </div>
+        </div>
+
+        <!-- Status Indicator -->
+        <div class="mt-4 text-center">
+            <div x-data="{ status: 'checking' }" 
+                 x-init="
+                    fetch('/api/auth/status')
+                    .then(r => r.json())
+                    .then(data => status = data.authenticated ? 'authenticated' : 'not-authenticated')
+                    .catch(() => status = 'error')
+                 "
+                 class="inline-flex items-center px-3 py-1 rounded-full text-sm"
+                 :class="{
+                    'bg-green-100 text-green-800': status === 'authenticated',
+                    'bg-yellow-100 text-yellow-800': status === 'not-authenticated',
+                    'bg-red-100 text-red-800': status === 'error',
+                    'bg-gray-100 text-gray-800': status === 'checking'
+                 }">
+                <span x-show="status === 'checking'">🔍 Checking authentication...</span>
+                <span x-show="status === 'authenticated'">✅ Already authenticated</span>
+                <span x-show="status === 'not-authenticated'">🔐 Login required</span>
+                <span x-show="status === 'error'">❌ Connection error</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-focus password input on page load
+        document.addEventListener('alpine:init', () => {
+            setTimeout(() => {
+                const input = document.querySelector('input[type="password"]');
+                if (input) input.focus();
+            }, 100);
+        });
+    </script>
+</body>
+</html>
 
 ---
