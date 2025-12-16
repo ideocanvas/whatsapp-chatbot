@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autonomous Agent | Dashboard</title>
+    <!-- Google Fonts for better typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+      /* WhatsApp-like Scrollbar */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+
+      /* Chat Background Pattern */
+      .chat-bg {
+        background-color: #e5ddd5;
+        background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 10h10v10H10V10z' fill='%23d1d7db' fill-opacity='0.4'/%3E%3C/svg%3E");
+      }
+
+      .message-in {
+        background: #ffffff;
+        border-radius: 0 12px 12px 12px;
+        box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+      }
+      .message-out {
+        background: #d9fdd3;
+        border-radius: 12px 0 12px 12px;
+        box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 h-screen overflow-hidden text-gray-800">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
