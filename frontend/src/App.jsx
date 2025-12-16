@@ -99,7 +99,7 @@ function App() {
   // Show loading while checking authentication
   if (isAuthenticated === null) {
     return (
-      <div className="flex h-full items-center justify-center bg-gray-100">
+      <div className="flex h-screen items-center justify-center bg-gray-100">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-wa-teal mx-auto"></div>
           <p className="mt-4 text-gray-600">Checking authentication...</p>

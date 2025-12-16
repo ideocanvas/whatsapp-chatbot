@@ -17,7 +17,7 @@ const LoginScreen = ({ onLogin, showToast }) => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 gradient-bg">
+    <div className="min-h-screen flex items-center justify-center p-4 gradient-bg h-screen">
       <div className="w-full max-w-md">
         <div className="login-card rounded-2xl shadow-2xl p-8">
           {/* Header */}

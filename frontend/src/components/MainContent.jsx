@@ -15,7 +15,7 @@ const MainContent = ({
   getTabTitle
 }) => {
   return (
-    <main className="flex-1 flex flex-col min-w-0 bg-wa-panel relative">
+    <main className="flex-1 flex flex-col min-w-0 bg-wa-panel relative h-full">
       {/* Mobile Header */}
       <header className="md:hidden bg-wa-teal text-white p-4 flex items-center justify-between shadow-md">
         <div className="flex items-center space-x-3">

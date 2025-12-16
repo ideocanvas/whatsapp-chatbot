@@ -40,8 +40,8 @@ const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, s
 
   return (
     <aside
-      className={`w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 transition-all duration-300 ${
-        mobileMenuOpen ? 'translate-x-0 absolute h-full' : '-translate-x-full md:translate-x-0 md:relative'
+      className={`w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm z-10 transition-all duration-300 h-full ${
+        mobileMenuOpen ? 'translate-x-0 absolute' : '-translate-x-full md:translate-x-0 md:relative'
       }`}
     >
       {/* Bot Header */}
