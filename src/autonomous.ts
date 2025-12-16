@@ -17,6 +17,8 @@ import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
 import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
 import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
 import { NewsProcessorService } from './services/newsProcessorService';
+import { GoogleNewsService, createGoogleNewsService } from './services/googleNewsService';
+import { BlogGenerationService, createBlogGenerationService } from './services/blogGenerationService';
 import { DatabaseConfig } from './config/databaseConfig';
 import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
 import * as fs from 'fs'; // Added for reading generated audio files
@@ -43,6 +45,8 @@ class AutonomousWhatsAppAgent {
   private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
   private summaryStore?: SummaryStore;
   private userProfileService?: UserProfileService;
+  private googleNewsService?: GoogleNewsService;
+  private blogGenerationService?: BlogGenerationService;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -95,7 +99,13 @@ class AutonomousWhatsAppAgent {
       // Mock GoogleSearchService for processor if not available, or initialize properly
       const searchService = createGoogleSearchServiceFromEnv();
       const newsProcessor = new NewsProcessorService(this.openai, searchService, this.vectorStore);
-      const newsService = createNewsScrapeService(scraper, newsProcessor);
+      const newsService = createNewsScrapeService(scraper, newsProcessor, this.googleNewsService);
+
+      // Initialize Google News Service
+      this.googleNewsService = createGoogleNewsService(scraper, this.openai);
+      
+      // Initialize Blog Generation Service
+      this.blogGenerationService = createBlogGenerationService(this.openai);
 
       // 3. Initialize Tool Registry
       this.tools = new ToolRegistry();
@@ -124,7 +134,9 @@ class AutonomousWhatsAppAgent {
         this.whatsapp,
         this.agent,
         this.actionQueue,
-        this.kb
+        this.kb,
+        this.googleNewsService,
+        this.blogGenerationService
       );
 
       this.isInitialized = true;

@@ -4,6 +4,8 @@ import { WhatsAppService } from '../services/whatsappService';
 import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
+import { GoogleNewsService } from '../services/googleNewsService';
+import { BlogGenerationService } from '../services/blogGenerationService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -40,7 +42,9 @@ export class Scheduler {
     private whatsapp: WhatsAppService,
     private agent: Agent,
     private actionQueue: ActionQueueService,
-    private kb: KnowledgeBasePostgres
+    private kb: KnowledgeBasePostgres,
+    private googleNewsService?: GoogleNewsService,
+    private blogGenerationService?: BlogGenerationService
   ) {
     // Initialize intervals from environment variables with defaults
     this.TICK_INTERVAL_MS = parseInt(process.env.AUTONOMOUS_TICK_INTERVAL_MS || '60000');
@@ -106,7 +110,17 @@ export class Scheduler {
       const activeUsers = this.contextMgr.getActiveUsers();
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // 2. IDLE MODE: Browse
+      // 2. Check for deep news browsing (daily at 6:00 AM)
+      if (this.shouldPerformDeepNewsBrowsing()) {
+        await this.performDeepNewsBrowsing();
+      }
+
+      // 3. Check for quick news checks (every 3 hours)
+      if (this.shouldPerformQuickNewsCheck()) {
+        await this.performQuickNewsCheck();
+      }
+
+      // 4. IDLE MODE: Browse (legacy browsing)
       if (this.shouldBrowse(activeUsers.length)) {
           let browseIntent = undefined;
           if (activeUsers.length > 0) {
@@ -119,12 +133,12 @@ export class Scheduler {
           await this.idleMode(browseIntent);
       }
 
-      // 3. PROACTIVE MODE: Accumulate News
+      // 5. PROACTIVE MODE: Accumulate News
       if (activeUsers.length > 0) {
         await this.accumulateNews(activeUsers);
       }
 
-      // 4. [NEW] Flush Batch based on configured interval
+      // 6. [NEW] Flush Batch based on configured interval
       if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
           await this.flushNewsBatches();
       }
@@ -237,6 +251,84 @@ export class Scheduler {
 
   private shouldBrowse(activeUserCount: number): boolean {
     return true;
+  }
+
+  /**
+   * Check if it's time for deep news browsing (6:00 AM daily)
+   */
+  private shouldPerformDeepNewsBrowsing(): boolean {
+    if (!this.googleNewsService) return false;
+    
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    
+    // Check if it's approximately 6:00 AM
+    return currentHour === 6 && currentMinute < 10;
+  }
+
+  /**
+   * Check if it's time for quick news check (every 3 hours)
+   */
+  private shouldPerformQuickNewsCheck(): boolean {
+    if (!this.googleNewsService) return false;
+    
+    const now = new Date();
+    const currentHour = now.getHours();
+    
+    // Check if current hour is divisible by 3 (0, 3, 6, 9, 12, 15, 18, 21)
+    return currentHour % 3 === 0 && now.getMinutes() < 10;
+  }
+
+  /**
+   * Perform deep news browsing and blog generation
+   */
+  private async performDeepNewsBrowsing(): Promise<void> {
+    if (!this.googleNewsService || !this.blogGenerationService) {
+      console.log('⚠️ Google News or Blog Generation service not available');
+      return;
+    }
+
+    console.log('🌅 Starting deep news browsing (6:00 AM)');
+    
+    try {
+      // 1. Perform deep news browsing
+      const articles = await this.googleNewsService.performDeepNewsBrowsing();
+      
+      // 2. Generate blog posts from articles
+      if (articles.length > 0) {
+        const blogPosts = await this.blogGenerationService.generateBlogPosts(articles);
+        console.log(`📝 Generated ${blogPosts.length} blog posts`);
+        
+        // 3. Generate daily digest
+        const today = new Date();
+        await this.blogGenerationService.generateDailyDigest(today);
+        console.log('📅 Generated daily digest');
+      }
+      
+      console.log('✅ Deep news browsing completed');
+    } catch (error) {
+      console.error('❌ Error during deep news browsing:', error);
+    }
+  }
+
+  /**
+   * Perform quick news check
+   */
+  private async performQuickNewsCheck(): Promise<void> {
+    if (!this.googleNewsService) {
+      console.log('⚠️ Google News service not available');
+      return;
+    }
+
+    console.log('⚡ Performing quick news check');
+    
+    try {
+      const articles = await this.googleNewsService.performQuickNewsCheck();
+      console.log(`📰 Quick check: ${articles.length} articles processed`);
+    } catch (error) {
+      console.error('❌ Error during quick news check:', error);
+    }
   }
 
   private async maintenance(): Promise<void> {

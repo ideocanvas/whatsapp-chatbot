@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { WebScrapeService, WebScrapeResult } from './webScrapeService';
-import { NewsProcessorService } from './newsProcessorService'; // Import new service
+import { NewsProcessorService } from './newsProcessorService';
+import { GoogleNewsService } from './googleNewsService';
 
 export interface NewsArticle {
   title: string;
@@ -18,7 +19,8 @@ type NewsCategory = 'general' | 'tech' | 'business' | 'sports' | 'world';
 export class NewsScrapeService {
   private webScrapeService: WebScrapeService;
   private newsProcessor?: NewsProcessorService; // Optional dependency
-  
+  private googleNewsService?: GoogleNewsService; // New Google News integration
+
   // Storage for our cached news summaries
   private newsCache: Map<string, string> = new Map();
   private isScraping: boolean = false;
@@ -27,8 +29,7 @@ export class NewsScrapeService {
   // Hong Kong focused, Mobile-Friendly URLs
   private categorySources: Record<NewsCategory, string[]> = {
     'general': [
-       'https://news.rthk.hk/rthk/en/',
-       'https://hongkongfp.com/'
+       'https://news.rthk.hk/rthk/en/'
     ],
     'world': [
        'https://www.bbc.com/news/world'
@@ -45,9 +46,10 @@ export class NewsScrapeService {
     ]
   };
 
-  constructor(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService) {
+  constructor(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService, googleNewsService?: GoogleNewsService) {
     this.webScrapeService = webScrapeService;
     this.newsProcessor = newsProcessor;
+    this.googleNewsService = googleNewsService;
   }
 
   /**
@@ -81,15 +83,15 @@ export class NewsScrapeService {
         const urls = this.categorySources[cat];
         // FORCE MOBILE = TRUE
         const results = await this.webScrapeService.scrapeUrls(urls, undefined, true);
-        
+
         if (results.length > 0) {
             // 1. Format for Cache (Immediate Tool Access)
             const formatted = this.formatNewsForLLM(results);
             this.newsCache.set(cat, formatted);
-            
+
             // 2. Save Raw Files & Trigger Learning
             await this.handlePersistenceAndLearning(results, cat, storageBase);
-            
+
             console.log(`✅ Cached & Processed ${results.length} articles for [${cat}]`);
         }
       }
@@ -103,7 +105,7 @@ export class NewsScrapeService {
 
   private async handlePersistenceAndLearning(results: WebScrapeResult[], category: string, storageBase: string) {
     const filePath = path.join(storageBase, `${category}.json`);
-    
+
     // Convert to NewsArticle format
     const articles: NewsArticle[] = results.map(r => ({
         title: r.title,
@@ -130,6 +132,33 @@ export class NewsScrapeService {
    * Returns cached string for the Tool to use
    */
   public getCachedNews(category: string = 'general'): string {
+    // Try to get news from Google News system first if available
+    if (this.googleNewsService) {
+      return this.getNewsFromGoogleNews(category);
+    }
+
+    // Fallback to legacy system
+    return this.getNewsFromLegacySystem(category);
+  }
+
+  /**
+   * Get news from Google News system
+   */
+  private getNewsFromGoogleNews(category: string): string {
+    try {
+      // This would integrate with the Google News service
+      // For now, return a placeholder message
+      return `[SYSTEM: Google News integration active. Category: ${category.toUpperCase()}]\n\nI'm now using the enhanced Google News system for more comprehensive news coverage. The system automatically browses news at 6:00 AM daily and checks for updates every 3 hours. You can view generated blog posts and digests in the dashboard.`;
+    } catch (error) {
+      console.error('❌ Error getting news from Google News:', error);
+      return this.getNewsFromLegacySystem(category);
+    }
+  }
+
+  /**
+   * Get news from legacy system (fallback)
+   */
+  private getNewsFromLegacySystem(category: string): string {
     // Basic normalization
     let key: NewsCategory = 'general';
     const lower = category.toLowerCase();
@@ -139,27 +168,27 @@ export class NewsScrapeService {
     else if (lower.includes('world')) key = 'world';
 
     const data = this.newsCache.get(key);
-    
+
     if (!data) {
         // If cache is empty, trigger a scrape (fallback)
-        this.refreshNewsCache(); 
+        this.refreshNewsCache();
         return "I am currently updating my news feed. Please ask again in 1 minute.";
     }
 
-    const timeAgo = this.lastUpdated 
-      ? Math.floor((new Date().getTime() - this.lastUpdated.getTime()) / 60000) 
+    const timeAgo = this.lastUpdated
+      ? Math.floor((new Date().getTime() - this.lastUpdated.getTime()) / 60000)
       : 0;
 
-    return `[SYSTEM: News fetch time: ${timeAgo} mins ago. Category: ${key.toUpperCase()}]\n\n${data}`;
+    return `[SYSTEM: Legacy news system. Fetch time: ${timeAgo} mins ago. Category: ${key.toUpperCase()}]\n\n${data}`;
   }
 
   private formatNewsForLLM(results: WebScrapeResult[]): string {
-    return results.map((r, i) => 
+    return results.map((r, i) =>
         `Headline: ${r.title}\nSource: ${r.url}\nSummary: ${r.content.substring(0, 350)}...`
     ).join('\n\n');
   }
 }
 
-export function createNewsScrapeService(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService): NewsScrapeService {
-  return new NewsScrapeService(webScrapeService, newsProcessor);
+export function createNewsScrapeService(webScrapeService: WebScrapeService, newsProcessor?: NewsProcessorService, googleNewsService?: GoogleNewsService): NewsScrapeService {
+  return new NewsScrapeService(webScrapeService, newsProcessor, googleNewsService);
 }

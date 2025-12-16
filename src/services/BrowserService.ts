@@ -29,10 +29,10 @@ interface SearchChecklistItem {
 export class BrowserService {
   private favorites: FavoriteSite[] = [];
   private linkTracker: Map<string, LinkTrackingEntry> = new Map();
-  
+
   private googleSearch?: GoogleSearchService;
   private openai?: OpenAIService;
-  
+
   // Persistence Paths
   private readonly DATA_DIR = path.join(process.cwd(), 'data');
   private readonly FAVORITES_PATH = path.join(process.cwd(), 'data', 'favorites.json');
@@ -41,7 +41,7 @@ export class BrowserService {
   // Limits
   private readonly MAX_PAGES_PER_HOUR = 20;
   private readonly LINK_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-  
+
   private pagesVisitedThisHour = 0;
 
   // New control flags
@@ -52,8 +52,7 @@ export class BrowserService {
   private readonly DEFAULT_FAVORITES: FavoriteSite[] = [
     { url: 'https://news.ycombinator.com', category: 'tech', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' },
     { url: 'https://techcrunch.com', category: 'tech', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' },
-    { url: 'https://www.bbc.com/news/world', category: 'world', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' },
-    { url: 'https://hongkongfp.com', category: 'news', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' }
+    { url: 'https://www.bbc.com/news/world', category: 'world', lastVisited: 0, visitCount: 0, addedAt: Date.now(), source: 'default' }
   ];
 
   constructor(
@@ -66,13 +65,13 @@ export class BrowserService {
   private async initialize() {
     this.loadFavorites();
     this.loadLinkTracker();
-    
+
     try { this.openai = await createOpenAIServiceFromConfig(); } catch (e) { console.error('Browser: OpenAI init failed'); }
     try { this.googleSearch = createGoogleSearchServiceFromEnv(); } catch (e) { console.warn('Browser: Google Search not configured'); }
 
     // Hourly Reset
-    setInterval(() => { 
-        this.pagesVisitedThisHour = 0; 
+    setInterval(() => {
+        this.pagesVisitedThisHour = 0;
         console.log('🔄 Browser hourly limit reset');
         this.saveLinkTracker(); // Periodic save
     }, 3600 * 1000);
@@ -117,7 +116,7 @@ export class BrowserService {
         if (this.stopSignal) { this.isSurfing = false; return results; }
 
         console.log(`🌐 Browsing Hub: ${hub.url}`);
-        
+
         // 2. Extract Article Candidates
         const candidates = await this.scraper.extractArticleLinks(hub.url);
         this.pagesVisitedThisHour++;
@@ -141,7 +140,7 @@ export class BrowserService {
             // 4. Check Stale/Tracker Status
             const trackInfo = this.linkTracker.get(article.url);
             const isStale = trackInfo && (Date.now() - trackInfo.lastScraped > this.LINK_STALE_THRESHOLD_MS);
-            
+
             // Skip if visited recently (unless stale)
             if (trackInfo && !isStale) continue;
 
@@ -222,7 +221,7 @@ export class BrowserService {
         this.isSurfing = false;
         this.stopSignal = false;
     }
-    
+
     this.saveLinkTracker();
     return results;
   }
@@ -233,7 +232,7 @@ export class BrowserService {
    */
   async performDeepResearch(query: string): Promise<string> {
     console.log(`🕵️ Starting Deep Research for: "${query}"`);
-    
+
     if (!this.googleSearch || !this.openai) {
         return "Deep research unavailable (Missing Google Search or OpenAI configuration).";
     }
@@ -244,10 +243,10 @@ export class BrowserService {
 
     for (let i = 0; i < maxIterations; i++) {
         console.log(`🕵️ Deep Research Iteration ${i + 1}/${maxIterations}: Searching for "${currentQuery}"`);
-        
+
         // 1. Google Search
         const searchResults = await this.googleSearch.search(currentQuery, 3);
-        
+
         if (searchResults.length === 0) break;
 
         // 2. Scrape Top Results (Bypassing hourly limit logic by not incrementing pagesVisitedThisHour)
@@ -275,7 +274,7 @@ export class BrowserService {
         // 3. Analyze & Synthesize
         const researchPrompt = `
         User Question: "${query}"
-        
+
         I have gathered information from the following sources:
         ${scrapedContents.join('\n\n---\n\n')}
 
@@ -290,11 +289,11 @@ export class BrowserService {
         // Check if the response seems to answer the question (contains relevant information)
         const lowerResponse = response.toLowerCase();
         const lowerQuery = query.toLowerCase();
-        
+
         // Simple heuristic: if response contains key terms from query and is substantial
         const queryWords = lowerQuery.split(/\s+/).filter(word => word.length > 3);
         const matchingWords = queryWords.filter(word => lowerResponse.includes(word));
-        
+
         if (matchingWords.length >= queryWords.length * 0.5 && response.length > 50) {
             // Save this new knowledge to the DB for future speed
             await this.kb.learnDocument({
@@ -304,7 +303,7 @@ export class BrowserService {
                 tags: ["deep_research", "user_query"],
                 timestamp: new Date()
             });
-            
+
             return response.trim();
         } else {
             // Update query for next iteration if needed

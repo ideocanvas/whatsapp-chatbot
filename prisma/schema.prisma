@@ -110,3 +110,109 @@ model UserProfile {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+// Blog posts generated from news content
+model BlogPost {
+  id          String   @id @default(uuid())
+  title       String
+  content     String   // Markdown formatted content
+  excerpt     String?
+  sourceUrl   String?  // Original article URL
+  sourceTitle String?  // Original article title
+  featuredImage String?
+  imageAlt    String?
+  imageCaption String?
+  tags        String[] // Array of tags
+  category    String?
+  author      String?  @default("AI Assistant")
+  status      BlogPostStatus @default(draft)
+  publishedAt DateTime?
+  dailyDigestId String? // Reference to daily digest
+  dailyDigest DailyDigest? @relation(fields: [dailyDigestId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([createdAt])
+  @@index([dailyDigestId])
+}
+
+// Daily digests containing multiple blog posts
+model DailyDigest {
+  id          String   @id @default(uuid())
+  date        DateTime @unique // Date of the digest (YYYY-MM-DD)
+  title       String
+  content     String   // Markdown formatted digest
+  blogPosts   BlogPost[] // Posts included in this digest
+  weeklyDigestId String? // Reference to weekly digest
+  weeklyDigest WeeklyDigest? @relation(fields: [weeklyDigestId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+  @@index([weeklyDigestId])
+}
+
+// Weekly digests containing daily digests
+model WeeklyDigest {
+  id          String   @id @default(uuid())
+  startDate   DateTime // Start of the week (Sunday)
+  endDate     DateTime // End of the week (Saturday)
+  title       String
+  content     String   // Markdown formatted digest
+  dailyDigests DailyDigest[] // Daily digests included
+  createdAt   DateTime @default(now())
+
+  @@index([startDate])
+  @@index([endDate])
+}
+
+// News sources configuration
+model NewsSource {
+  id          String   @id @default(uuid())
+  url         String   @unique // Google News URL or direct news site
+  name        String?  // Human-readable name
+  region      String?  // Region code (e.g., HK, US)
+  language    String?  // Language code (e.g., en, zh-Hant)
+  priority    Int      @default(0) // Priority for processing (0-10)
+  isActive    Boolean  @default(true)
+  sourceType  NewsSourceType @default(google_news)
+  lastScraped DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([region])
+  @@index([language])
+  @@index([priority])
+  @@index([isActive])
+}
+
+// Keyword tracking for news focus
+model NewsKeyword {
+  id          String   @id @default(uuid())
+  keyword     String
+  relevance   Float    @default(0.0) // 0.0-1.0 relevance score
+  category    String?
+  lastUsed    DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([keyword])
+  @@index([relevance])
+  @@index([category])
+}
+
+// Blog post status enum
+enum BlogPostStatus {
+  draft
+  published
+  archived
+}
+
+// News source type enum
+enum NewsSourceType {
+  google_news
+  direct_site
+  user_favorite
+  discovered
+}

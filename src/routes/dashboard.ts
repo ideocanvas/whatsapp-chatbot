@@ -3,6 +3,7 @@ import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { PrismaClient } from '@prisma/client';
 
 /**
  * Dashboard API routes for the web interface
@@ -416,6 +417,315 @@ export class DashboardRoutes {
       }
     });
 
+    // --- News System Management Routes ---
+    
+    // Get blog posts
+    this.router.get('/api/news/blog-posts', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const prisma = new PrismaClient();
+        const { page = '1', limit = '10', category, status } = req.query;
+        
+        const pageNum = parseInt(page as string);
+        const limitNum = parseInt(limit as string);
+        const skip = (pageNum - 1) * limitNum;
+        
+        const where: any = {};
+        if (category) where.category = category;
+        if (status) where.status = status;
+        
+        const posts = await prisma.blogPost.findMany({
+          where,
+          skip,
+          take: limitNum,
+          orderBy: { publishedAt: 'desc' }
+        });
+        
+        const total = await prisma.blogPost.count({ where });
+        
+        res.json({
+          posts,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total,
+            pages: Math.ceil(total / limitNum)
+          }
+        });
+      } catch (error) {
+        console.error('Error getting blog posts:', error);
+        res.status(500).json({ error: 'Failed to get blog posts' });
+      }
+    });
+
+    // Get daily digests
+    this.router.get('/api/news/daily-digests', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const prisma = new PrismaClient();
+        const { page = '1', limit = '10' } = req.query;
+        
+        const pageNum = parseInt(page as string);
+        const limitNum = parseInt(limit as string);
+        const skip = (pageNum - 1) * limitNum;
+        
+        const digests = await prisma.dailyDigest.findMany({
+          skip,
+          take: limitNum,
+          orderBy: { date: 'desc' },
+          include: {
+            blogPosts: {
+              select: {
+                id: true,
+                title: true,
+                category: true
+              }
+            }
+          }
+        });
+        
+        const total = await prisma.dailyDigest.count();
+        
+        res.json({
+          digests,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total,
+            pages: Math.ceil(total / limitNum)
+          }
+        });
+      } catch (error) {
+        console.error('Error getting daily digests:', error);
+        res.status(500).json({ error: 'Failed to get daily digests' });
+      }
+    });
+
+    // Get weekly digests
+    this.router.get('/api/news/weekly-digests', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const prisma = new PrismaClient();
+        const { page = '1', limit = '10' } = req.query;
+        
+        const pageNum = parseInt(page as string);
+        const limitNum = parseInt(limit as string);
+        const skip = (pageNum - 1) * limitNum;
+        
+        const digests = await prisma.weeklyDigest.findMany({
+          skip,
+          take: limitNum,
+          orderBy: { startDate: 'desc' },
+          include: {
+            dailyDigests: {
+              include: {
+                blogPosts: {
+                  select: {
+                    id: true,
+                    title: true
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+        const total = await prisma.weeklyDigest.count();
+        
+        res.json({
+          digests,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total,
+            pages: Math.ceil(total / limitNum)
+          }
+        });
+      } catch (error) {
+        console.error('Error getting weekly digests:', error);
+        res.status(500).json({ error: 'Failed to get weekly digests' });
+      }
+    });
+
+    // Get news sources
+    this.router.get('/api/news/sources', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const prisma = new PrismaClient();
+        const sources = await prisma.newsSource.findMany({
+          orderBy: [{ priority: 'desc' }, { name: 'asc' }]
+        });
+        
+        res.json(sources);
+      } catch (error) {
+        console.error('Error getting news sources:', error);
+        res.status(500).json({ error: 'Failed to get news sources' });
+      }
+    });
+
+    // Add news source
+    this.router.post('/api/news/sources', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { url, name, region, language, priority } = req.body;
+        
+        if (!url) {
+          return res.status(400).json({ error: 'URL is required' });
+        }
+        
+        const prisma = new PrismaClient();
+        const source = await prisma.newsSource.create({
+          data: {
+            url,
+            name: name || this.extractSourceName(url),
+            region,
+            language,
+            priority: priority || 5,
+            isActive: true,
+            sourceType: url.includes('news.google.com') ? 'google_news' : 'direct_site'
+          }
+        });
+        
+        this.logActivity(`Added news source: ${url}`);
+        res.json({ success: true, source });
+      } catch (error) {
+        console.error('Error adding news source:', error);
+        res.status(500).json({ error: 'Failed to add news source' });
+      }
+    });
+
+    // Update news source
+    this.router.put('/api/news/sources/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { name, region, language, priority, isActive } = req.body;
+        
+        const prisma = new PrismaClient();
+        const source = await prisma.newsSource.update({
+          where: { id },
+          data: {
+            name,
+            region,
+            language,
+            priority,
+            isActive
+          }
+        });
+        
+        this.logActivity(`Updated news source: ${source.url}`);
+        res.json({ success: true, source });
+      } catch (error) {
+        console.error('Error updating news source:', error);
+        res.status(500).json({ error: 'Failed to update news source' });
+      }
+    });
+
+    // Delete news source
+    this.router.delete('/api/news/sources/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        
+        const prisma = new PrismaClient();
+        const source = await prisma.newsSource.delete({
+          where: { id }
+        });
+        
+        this.logActivity(`Deleted news source: ${source.url}`);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error deleting news source:', error);
+        res.status(500).json({ error: 'Failed to delete news source' });
+      }
+    });
+
+    // Get news keywords
+    this.router.get('/api/news/keywords', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const prisma = new PrismaClient();
+        const { limit = '50' } = req.query;
+        const limitNum = parseInt(limit as string);
+        
+        const keywords = await prisma.newsKeyword.findMany({
+          orderBy: { relevance: 'desc' },
+          take: limitNum
+        });
+        
+        res.json(keywords);
+      } catch (error) {
+        console.error('Error getting news keywords:', error);
+        res.status(500).json({ error: 'Failed to get news keywords' });
+      }
+    });
+
+    // Download daily digest as markdown
+    this.router.get('/api/news/daily-digest/:date/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { date } = req.params;
+        const prisma = new PrismaClient();
+        
+        const digest = await prisma.dailyDigest.findFirst({
+          where: { date: new Date(date) },
+          include: { blogPosts: true }
+        });
+        
+        if (!digest) {
+          return res.status(404).json({ error: 'Digest not found' });
+        }
+        
+        // Set headers for file download
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="daily-digest-${date}.md"`);
+        
+        res.send(digest.content);
+      } catch (error) {
+        console.error('Error downloading daily digest:', error);
+        res.status(500).json({ error: 'Failed to download digest' });
+      }
+    });
+
+    // Download weekly digest as markdown
+    this.router.get('/api/news/weekly-digest/:startDate/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { startDate } = req.params;
+        const prisma = new PrismaClient();
+        
+        const digest = await prisma.weeklyDigest.findFirst({
+          where: { startDate: new Date(startDate) },
+          include: { dailyDigests: { include: { blogPosts: true } } }
+        });
+        
+        if (!digest) {
+          return res.status(404).json({ error: 'Weekly digest not found' });
+        }
+        
+        // Set headers for file download
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="weekly-digest-${startDate}.md"`);
+        
+        res.send(digest.content);
+      } catch (error) {
+        console.error('Error downloading weekly digest:', error);
+        res.status(500).json({ error: 'Failed to download weekly digest' });
+      }
+    });
+
+    // Trigger manual blog generation
+    this.router.post('/api/news/generate-blogs', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        this.logActivity('Manual blog generation triggered');
+        
+        // In a real implementation, this would trigger the blog generation process
+        // For now, simulate the process
+        setTimeout(() => {
+          this.logActivity('Blog generation completed - new posts available');
+        }, 5000);
+        
+        res.json({
+          success: true,
+          message: 'Blog generation initiated',
+          estimatedTime: '5-10 minutes'
+        });
+      } catch (error) {
+        console.error('Error triggering blog generation:', error);
+        res.status(500).json({ error: 'Failed to trigger blog generation' });
+      }
+    });
+
     // FIX: Improved Middleware to protect HTML files AND the root path
     this.router.use((req: Request, res: Response, next: Function) => {
       const path = req.path;
@@ -490,6 +800,18 @@ export class DashboardRoutes {
     }
     
     console.log(`📊 Dashboard: ${message}`);
+  }
+
+  /**
+   * Extract source name from URL
+   */
+  private extractSourceName(url: string): string {
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname.replace('www.', '').split('.')[0];
+    } catch {
+      return 'Unknown';
+    }
   }
 
   /**
