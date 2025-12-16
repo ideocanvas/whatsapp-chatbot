@@ -5,6 +5,7 @@ const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, s
     { id: 'overview', label: 'Overview', icon: '📊' },
     { id: 'chat', label: 'Live Chat', icon: '💬' },
     { id: 'memory', label: 'Memory', icon: '🧠' },
+    { id: 'news', label: 'News System', icon: '📰' },
   ]
 
   const triggerBrowsing = async () => {

@@ -50,7 +50,8 @@ function App() {
     const navItems = [
       { id: 'overview', label: 'Overview' },
       { id: 'chat', label: 'Live Chat' },
-      { id: 'memory', label: 'Memory' }
+      { id: 'memory', label: 'Memory' },
+      { id: 'news', label: 'News System' }
     ]
     return navItems.find(item => item.id === activeTab)?.label || 'Dashboard'
   }

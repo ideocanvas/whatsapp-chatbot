@@ -55,10 +55,10 @@ export class GoogleNewsService {
   async scrapeGoogleNewsFrontPage(url: string): Promise<GoogleNewsArticle[]> {
     try {
       console.log(`🌐 Scraping Google News: ${url}`);
-      
+
       // Use mobile view for better content extraction
       const result = await this.webScrapeService.scrapeUrl(url, undefined, true);
-      
+
       if (!result.content) {
         console.warn(`⚠️ No content found for ${url}`);
         return [];
@@ -67,7 +67,7 @@ export class GoogleNewsService {
       // Extract article links from Google News HTML
       const articles = this.extractArticlesFromGoogleNews(result.content, url);
       console.log(`📰 Found ${articles.length} articles on Google News front page`);
-      
+
       return articles;
     } catch (error) {
       console.error(`❌ Error scraping Google News ${url}:`, error);
@@ -80,23 +80,23 @@ export class GoogleNewsService {
    */
   private extractArticlesFromGoogleNews(html: string, baseUrl: string): GoogleNewsArticle[] {
     const articles: GoogleNewsArticle[] = [];
-    
+
     // Google News article pattern - look for article elements
     const articlePattern = /<article[^>]*>([\s\S]*?)<\/article>/gi;
     const articleMatches = html.match(articlePattern) || [];
-    
+
     for (const articleHtml of articleMatches) {
       try {
         // Extract title
         const titleMatch = articleHtml.match(/<a[^>]*aria-label="([^"]*)"[^>]*>/i);
         const title = titleMatch ? titleMatch[1].trim() : '';
-        
+
         if (!title || title.length < 10) continue;
-        
+
         // Extract URL (Google News uses relative URLs that need to be resolved)
         const urlMatch = articleHtml.match(/<a[^>]*href="([^"]*)"[^>]*>/i);
         if (!urlMatch) continue;
-        
+
         let articleUrl = urlMatch[1];
         if (articleUrl.startsWith('./')) {
           articleUrl = `https://news.google.com${articleUrl.substring(1)}`;
@@ -105,19 +105,19 @@ export class GoogleNewsService {
         } else if (!articleUrl.startsWith('http')) {
           articleUrl = `https://news.google.com/${articleUrl}`;
         }
-        
+
         // Extract source
         const sourceMatch = articleHtml.match(/<span[^>]*>([^<]*)<\/span>/i);
         const source = sourceMatch ? sourceMatch[1].trim() : 'Unknown';
-        
+
         // Extract time (approximate)
         const timeMatch = articleHtml.match(/(\d+)\s*(minute|hour|day)s?\s*ago/i);
         const publishedAt = timeMatch ? this.calculatePublishedTime(timeMatch[1], timeMatch[2]) : new Date().toISOString();
-        
+
         // Extract description/snippet
         const descMatch = articleHtml.match(/<div[^>]*>([^<]{50,300})<\/div>/i);
         const description = descMatch ? descMatch[1].trim() : '';
-        
+
         articles.push({
           title,
           url: articleUrl,
@@ -130,7 +130,7 @@ export class GoogleNewsService {
         console.warn('⚠️ Error parsing article HTML:', error);
       }
     }
-    
+
     return articles;
   }
 
@@ -140,7 +140,7 @@ export class GoogleNewsService {
   private calculatePublishedTime(amount: string, unit: string): string {
     const now = new Date();
     const num = parseInt(amount);
-    
+
     switch (unit.toLowerCase()) {
       case 'minute':
         now.setMinutes(now.getMinutes() - num);
@@ -152,7 +152,7 @@ export class GoogleNewsService {
         now.setDate(now.getDate() - num);
         break;
     }
-    
+
     return now.toISOString();
   }
 
@@ -162,20 +162,20 @@ export class GoogleNewsService {
   async extractFullArticleContent(article: GoogleNewsArticle): Promise<GoogleNewsArticle> {
     try {
       console.log(`📖 Reading full article: ${article.title}`);
-      
+
       const result = await this.webScrapeService.scrapeUrl(article.url, undefined, true);
-      
+
       if (result.content && result.content.length > 300) {
         article.fullContent = result.content;
-        
+
         // Extract keywords from content
         article.keywords = await this.extractKeywords(article.title, result.content);
-        
+
         console.log(`✅ Extracted ${article.keywords.length} keywords from article`);
       } else {
         console.warn(`⚠️ Article content too short: ${article.url}`);
       }
-      
+
       return article;
     } catch (error) {
       console.error(`❌ Error extracting full article content:`, error);
@@ -192,15 +192,15 @@ export class GoogleNewsService {
         Extract 5-10 key topics, entities, or keywords from this news article.
         Focus on proper nouns, technical terms, and important concepts.
         Return as a JSON array of strings.
-        
+
         Title: ${title}
         Content: ${content.substring(0, 2000)}
-        
+
         Return only the JSON array, no other text.
       `;
-      
+
       const response = await this.openaiService.generateTextResponse(prompt);
-      
+
       try {
         const keywords = JSON.parse(response);
         return Array.isArray(keywords) ? keywords.slice(0, 10) : [];
@@ -220,13 +220,13 @@ export class GoogleNewsService {
   private fallbackKeywordExtraction(text: string): string[] {
     // Remove common words and extract capitalized words, numbers, and technical terms
     const commonWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']);
-    
+
     const words = text
       .toLowerCase()
       .split(/\s+/)
       .filter(word => word.length > 3 && !commonWords.has(word))
       .slice(0, 10);
-    
+
     return [...new Set(words)]; // Remove duplicates
   }
 
@@ -236,34 +236,34 @@ export class GoogleNewsService {
   async performDeepNewsBrowsing(): Promise<GoogleNewsArticle[]> {
     console.log('🌅 Starting deep news browsing...');
     const allArticles: GoogleNewsArticle[] = [];
-    
+
     for (const url of this.config.urls) {
       try {
         const articles = await this.scrapeGoogleNewsFrontPage(url);
         const articlesWithContent: GoogleNewsArticle[] = [];
-        
+
         // Process a limited number of articles
         for (const article of articles.slice(0, this.config.maxArticlesPerDeepBrowse)) {
           const fullArticle = await this.extractFullArticleContent(article);
           if (fullArticle.fullContent) {
             articlesWithContent.push(fullArticle);
           }
-          
+
           // Small delay to be respectful
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
-        
+
         allArticles.push(...articlesWithContent);
         console.log(`✅ Processed ${articlesWithContent.length} articles from ${url}`);
-        
+
       } catch (error) {
         console.error(`❌ Error processing Google News URL ${url}:`, error);
       }
     }
-    
+
     // Update keyword database
     await this.updateKeywordDatabase(allArticles);
-    
+
     console.log(`🎯 Deep browsing completed: ${allArticles.length} articles processed`);
     return allArticles;
   }
@@ -273,15 +273,15 @@ export class GoogleNewsService {
    */
   async performQuickNewsCheck(): Promise<GoogleNewsArticle[]> {
     console.log('⚡ Performing quick news check...');
-    
+
     // Get recent keywords to focus on
     const recentKeywords = await this.getRecentKeywords();
     const allArticles: GoogleNewsArticle[] = [];
-    
+
     for (const url of this.config.urls) {
       try {
         const articles = await this.scrapeGoogleNewsFrontPage(url);
-        
+
         // Filter articles by recent keywords
         const relevantArticles = articles.filter(article =>
           recentKeywords.some(keyword =>
@@ -289,7 +289,7 @@ export class GoogleNewsService {
             article.description.toLowerCase().includes(keyword.toLowerCase())
           )
         );
-        
+
         // Process relevant articles
         const articlesWithContent: GoogleNewsArticle[] = [];
         for (const article of relevantArticles.slice(0, this.config.maxArticlesPerQuickCheck)) {
@@ -298,18 +298,18 @@ export class GoogleNewsService {
             articlesWithContent.push(fullArticle);
           }
         }
-        
+
         allArticles.push(...articlesWithContent);
         console.log(`✅ Quick check: ${articlesWithContent.length} relevant articles from ${url}`);
-        
+
       } catch (error) {
         console.error(`❌ Error in quick check for ${url}:`, error);
       }
     }
-    
+
     // Update keywords with new content
     await this.updateKeywordDatabase(allArticles);
-    
+
     return allArticles;
   }
 
@@ -324,7 +324,7 @@ export class GoogleNewsService {
           const existing = await this.prisma.newsKeyword.findFirst({
             where: { keyword }
           });
-          
+
           if (existing) {
             // Update relevance and last used
             await this.prisma.newsKeyword.update({
@@ -347,7 +347,7 @@ export class GoogleNewsService {
           }
         }
       }
-      
+
       console.log(`📊 Updated keyword database with ${articles.length} articles`);
     } catch (error) {
       console.error('❌ Error updating keyword database:', error);
@@ -370,7 +370,7 @@ export class GoogleNewsService {
         },
         take: 10
       });
-      
+
       return keywords.map(k => k.keyword);
     } catch (error) {
       console.error('❌ Error getting recent keywords:', error);
@@ -386,7 +386,7 @@ export class GoogleNewsService {
       // This will be used by the blog generation system
       // For now, we'll store them in a temporary location
       console.log(`💾 Saving ${articles.length} articles for blog generation`);
-      
+
       // In a real implementation, this would store articles in a queue or database
       // for the blog generation system to process
     } catch (error) {
@@ -425,7 +425,7 @@ export class GoogleNewsService {
           sourceType: url.includes('news.google.com') ? 'google_news' : 'direct_site'
         }
       });
-      
+
       console.log(`✅ Added news source: ${url}`);
     } catch (error) {
       console.error('❌ Error adding news source:', error);
@@ -446,6 +446,110 @@ export class GoogleNewsService {
   }
 
   /**
+   * Discover new news sources from article URLs
+   */
+  async discoverNewsSources(articles: GoogleNewsArticle[]): Promise<string[]> {
+    try {
+      const discoveredDomains = new Set<string>();
+
+      for (const article of articles) {
+        try {
+          const urlObj = new URL(article.url);
+          const domain = urlObj.hostname;
+
+          // Skip Google News domains and common aggregators
+          if (domain.includes('google.com') ||
+              domain.includes('news.google') ||
+              domain.includes('aggregator')) {
+            continue;
+          }
+
+          // Validate if domain is a legitimate news source
+          if (await this.validateNewsSource(domain, article)) {
+            discoveredDomains.add(domain);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error processing URL ${article.url}:`, error);
+        }
+      }
+
+      console.log(`🔍 Discovered ${discoveredDomains.size} potential news sources`);
+      return Array.from(discoveredDomains);
+    } catch (error) {
+      console.error('❌ Error discovering news sources:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Validate if a domain is a legitimate news source
+   */
+  private async validateNewsSource(domain: string, article: GoogleNewsArticle): Promise<boolean> {
+    try {
+      // Basic validation criteria
+      const hasNewsKeywords = this.hasNewsKeywords(article.title, article.description);
+      const hasDateElements = this.hasDateElements(article.publishedAt);
+      const hasArticleStructure = article.title.length > 20 && article.description.length > 50;
+
+      // AI validation for content analysis
+      const aiValidation = await this.validateWithAI(domain, article);
+
+      return hasNewsKeywords && hasDateElements && hasArticleStructure && aiValidation;
+    } catch (error) {
+      console.warn(`⚠️ Error validating news source ${domain}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Check for news-related keywords in content
+   */
+  private hasNewsKeywords(title: string, description: string): boolean {
+    const newsKeywords = ['news', 'report', 'update', 'breaking', 'latest', 'headline', 'coverage'];
+    const text = (title + ' ' + description).toLowerCase();
+
+    return newsKeywords.some(keyword => text.includes(keyword));
+  }
+
+  /**
+   * Check for date elements indicating timely content
+   */
+  private hasDateElements(publishedAt: string): boolean {
+    // Check if publishedAt is a valid date string
+    const date = new Date(publishedAt);
+    return !isNaN(date.getTime());
+  }
+
+  /**
+   * AI validation for content analysis
+   */
+  private async validateWithAI(domain: string, article: GoogleNewsArticle): Promise<boolean> {
+    try {
+      const prompt = `
+        Analyze if this domain appears to be a legitimate news source.
+        Consider factors like:
+        - Content quality and structure
+        - Professional presentation
+        - News-related terminology
+        - Authoritative tone
+
+        Domain: ${domain}
+        Article Title: ${article.title}
+        Article Description: ${article.description}
+
+        Return only "true" if it appears legitimate, "false" otherwise.
+      `;
+
+      const response = await this.openaiService.generateTextResponse(prompt);
+      return response.trim().toLowerCase() === 'true';
+    } catch (error) {
+      console.warn('⚠️ AI validation failed, using fallback');
+      // Fallback: assume valid if basic criteria pass
+      return true;
+    }
+  }
+
+  /**
    * Get service statistics
    */
   async getStats(): Promise<any> {
@@ -453,7 +557,7 @@ export class GoogleNewsService {
       const articleCount = await this.prisma.blogPost.count();
       const keywordCount = await this.prisma.newsKeyword.count();
       const sourceCount = await this.prisma.newsSource.count();
-      
+
       return {
         articlesProcessed: articleCount,
         keywordsTracked: keywordCount,

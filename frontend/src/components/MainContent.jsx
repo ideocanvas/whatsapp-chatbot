@@ -2,6 +2,7 @@ import React from 'react'
 import OverviewTab from './tabs/OverviewTab'
 import ChatTab from './tabs/ChatTab'
 import MemoryTab from './tabs/MemoryTab'
+import NewsTab from './tabs/NewsTab'
 
 const MainContent = ({
   mobileMenuOpen,
@@ -55,6 +56,10 @@ const MainContent = ({
 
       {activeTab === 'memory' && (
         <MemoryTab showToast={showToast} />
+      )}
+
+      {activeTab === 'news' && (
+        <NewsTab showToast={showToast} />
       )}
     </main>
   )

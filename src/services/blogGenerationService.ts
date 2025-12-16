@@ -47,18 +47,18 @@ export class BlogGenerationService {
    */
   async generateBlogPosts(articles: GoogleNewsArticle[]): Promise<BlogPost[]> {
     console.log(`📝 Generating blog posts from ${articles.length} articles`);
-    
+
     // Filter and score articles
     const scoredArticles = await this.scoreAndFilterArticles(articles);
     console.log(`📊 ${scoredArticles.length} articles passed quality threshold`);
-    
+
     // Select top articles for blog generation
     const selectedArticles = scoredArticles
       .sort((a, b) => b.score - a.score)
       .slice(0, this.config.postsPerDay);
-    
+
     const blogPosts: BlogPost[] = [];
-    
+
     for (const article of selectedArticles) {
       try {
         const blogPost = await this.generateBlogPostFromArticle(article.article);
@@ -69,14 +69,14 @@ export class BlogGenerationService {
       } catch (error) {
         console.error(`❌ Error generating blog post from article:`, error);
       }
-      
+
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    
+
     // Save blog posts to database
     await this.saveBlogPosts(blogPosts);
-    
+
     console.log(`🎯 Blog generation completed: ${blogPosts.length} posts created`);
     return blogPosts;
   }
@@ -86,15 +86,15 @@ export class BlogGenerationService {
    */
   private async scoreAndFilterArticles(articles: GoogleNewsArticle[]): Promise<{ article: GoogleNewsArticle; score: number }[]> {
     const scoredArticles: { article: GoogleNewsArticle; score: number }[] = [];
-    
+
     for (const article of articles) {
       const score = await this.calculateArticleScore(article);
-      
+
       if (score >= this.config.qualityThreshold) {
         scoredArticles.push({ article, score });
       }
     }
-    
+
     return scoredArticles;
   }
 
@@ -103,30 +103,35 @@ export class BlogGenerationService {
    */
   private async calculateArticleScore(article: GoogleNewsArticle): Promise<number> {
     let score = 0.0;
-    
+
     // 1. Content length score
     const contentLength = article.fullContent?.length || 0;
     if (contentLength >= this.config.minArticleLength) {
       score += 0.3;
     }
-    
+
     // 2. Title quality score
     const titleLength = article.title.length;
     if (titleLength >= this.config.minTitleLength) {
       score += 0.2;
     }
-    
+
     // 3. Keyword richness score
     const keywordScore = Math.min(article.keywords.length / 10, 0.3);
     score += keywordScore;
-    
+
     // 4. Source credibility score (simple heuristic)
     const credibleSources = ['bbc', 'reuters', 'associated press', 'cnn', 'the guardian'];
-    const sourceCredibility = credibleSources.some(source => 
+    const sourceCredibility = credibleSources.some(source =>
       article.source.toLowerCase().includes(source)
     ) ? 0.2 : 0.1;
     score += sourceCredibility;
-    
+
+    // 5. Image presence score (if image generation is enabled)
+    if (this.config.imageGenerationEnabled) {
+      score += 0.1; // Bonus for potential image content
+    }
+
     return Math.min(score, 1.0);
   }
 
@@ -137,11 +142,52 @@ export class BlogGenerationService {
     try {
       const prompt = this.createBlogGenerationPrompt(article);
       const response = await this.openaiService.generateTextResponse(prompt);
-      
-      return this.parseBlogPostResponse(response, article);
+
+      const blogPost = this.parseBlogPostResponse(response, article);
+
+      // Generate featured image if enabled
+      if (this.config.imageGenerationEnabled) {
+        await this.generateFeaturedImage(blogPost, article);
+      }
+
+      return blogPost;
     } catch (error) {
       console.error('❌ Error generating blog post with AI:', error);
       return null;
+    }
+  }
+
+  /**
+   * Generate featured image for blog post
+   */
+  private async generateFeaturedImage(blogPost: BlogPost, article: GoogleNewsArticle): Promise<void> {
+    try {
+      if (!this.config.imageGenerationEnabled) return;
+
+      // Use AI to generate image description based on article content
+      const imagePrompt = `
+        Create a descriptive prompt for generating a featured image for this blog post.
+        Focus on the main theme or key visual elements from the article.
+
+        Article Title: ${article.title}
+        Blog Post Title: ${blogPost.title}
+        Key Topics: ${blogPost.tags.slice(0, 3).join(', ')}
+
+        Return a concise image generation prompt (max 100 words).
+      `;
+
+      const imageDescription = await this.openaiService.generateTextResponse(imagePrompt);
+
+      // In a real implementation, this would call an image generation API
+      // For now, we'll simulate the image generation
+      blogPost.featuredImage = `https://via.placeholder.com/800x400/4F46E5/FFFFFF?text=${encodeURIComponent(blogPost.title.substring(0, 30))}`;
+      blogPost.imageAlt = `Featured image for: ${blogPost.title}`;
+      blogPost.imageCaption = `Image representing: ${imageDescription.substring(0, 100)}`;
+
+      console.log(`🖼️ Generated featured image for: ${blogPost.title}`);
+    } catch (error) {
+      console.warn('⚠️ Error generating featured image:', error);
+      // Continue without image if generation fails
     }
   }
 
@@ -151,7 +197,7 @@ export class BlogGenerationService {
   private createBlogGenerationPrompt(article: GoogleNewsArticle): string {
     return `
       You are a professional blog writer. Create a high-quality blog post based on the following news article.
-      
+
       REQUIREMENTS:
       - Write in engaging, professional tone
       - Use proper Markdown formatting (headings, lists, bold, italics)
@@ -160,32 +206,32 @@ export class BlogGenerationService {
       - Include a "Key Takeaways" section with bullet points
       - Include a conclusion section
       - Keep it accessible but informative
-      
+
       BLOG POST STRUCTURE:
       # [Engaging Title]
-      
+
       [Introduction paragraph that hooks the reader]
-      
+
       ## [First Subheading]
       [Content section]
-      
-      ## [Second Subheading] 
+
+      ## [Second Subheading]
       [Content section]
-      
+
       ## Key Takeaways
       - [Bullet point 1]
       - [Bullet point 2]
       - [Bullet point 3]
-      
+
       ## Conclusion
       [Summary and forward-looking statement]
-      
+
       SOURCE ARTICLE:
       Title: ${article.title}
       Source: ${article.source}
       Published: ${article.publishedAt}
       Content: ${article.fullContent?.substring(0, 3000) || article.description}
-      
+
       Return ONLY the complete blog post in Markdown format. Do not include any explanatory text before or after the blog post.
     `;
   }
@@ -197,16 +243,16 @@ export class BlogGenerationService {
     // Extract title from first heading
     const titleMatch = response.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : sourceArticle.title;
-    
+
     // Generate excerpt from first paragraph
     const excerpt = this.generateExcerpt(response);
-    
+
     // Extract tags from content and source keywords
     const tags = this.extractTags(response, sourceArticle);
-    
+
     // Determine category
     const category = this.determineCategory(sourceArticle, tags);
-    
+
     return {
       title,
       content: response,
@@ -226,13 +272,13 @@ export class BlogGenerationService {
     // Remove markdown headers and get first meaningful paragraph
     const cleanContent = content.replace(/^#+.+$/gm, '').trim();
     const paragraphs = cleanContent.split('\n\n');
-    
+
     for (const paragraph of paragraphs) {
       if (paragraph.length > 50 && paragraph.length < 200) {
         return paragraph.substring(0, 150) + '...';
       }
     }
-    
+
     // Fallback: first 150 characters of content
     return cleanContent.substring(0, 150) + '...';
   }
@@ -242,20 +288,20 @@ export class BlogGenerationService {
    */
   private extractTags(content: string, sourceArticle: GoogleNewsArticle): string[] {
     const tags = new Set<string>();
-    
+
     // Add source keywords
     sourceArticle.keywords.forEach(keyword => tags.add(keyword));
-    
+
     // Extract proper nouns and important terms from content
     const words = content.split(/\s+/);
-    const potentialTags = words.filter(word => 
-      word.length > 3 && 
+    const potentialTags = words.filter(word =>
+      word.length > 3 &&
       /[A-Z]/.test(word[0]) && // Starts with capital letter
       !word.match(/^[#*\-_]/) // Not markdown symbols
     );
-    
+
     potentialTags.slice(0, 5).forEach(tag => tags.add(tag));
-    
+
     return Array.from(tags).slice(0, 10); // Limit to 10 tags
   }
 
@@ -271,16 +317,16 @@ export class BlogGenerationService {
       'health': ['health', 'medical', 'medicine', 'hospital', 'disease'],
       'sports': ['sports', 'game', 'team', 'player', 'championship']
     };
-    
+
     const allText = article.title + ' ' + article.description + ' ' + tags.join(' ');
     const lowerText = allText.toLowerCase();
-    
+
     for (const [category, keywords] of Object.entries(categoryKeywords)) {
       if (keywords.some(keyword => lowerText.includes(keyword))) {
         return category;
       }
     }
-    
+
     return 'general';
   }
 
@@ -308,7 +354,7 @@ export class BlogGenerationService {
           }
         });
       }
-      
+
       console.log(`💾 Saved ${blogPosts.length} blog posts to database`);
     } catch (error) {
       console.error('❌ Error saving blog posts:', error);
@@ -322,10 +368,10 @@ export class BlogGenerationService {
     try {
       const startOfDay = new Date(date);
       startOfDay.setHours(0, 0, 0, 0);
-      
+
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
-      
+
       const posts = await this.prisma.blogPost.findMany({
         where: {
           publishedAt: {
@@ -336,13 +382,13 @@ export class BlogGenerationService {
         },
         orderBy: { publishedAt: 'desc' }
       });
-      
+
       if (posts.length === 0) {
         return ''; // No posts for this day
       }
-      
+
       const digestContent = this.formatDailyDigest(posts, date);
-      
+
       // Save daily digest
       await this.prisma.dailyDigest.create({
         data: {
@@ -351,7 +397,7 @@ export class BlogGenerationService {
           content: digestContent
         }
       });
-      
+
       console.log(`📅 Generated daily digest for ${date.toISOString().split('T')[0]} with ${posts.length} posts`);
       return digestContent;
     } catch (error) {
@@ -366,7 +412,7 @@ export class BlogGenerationService {
   private formatDailyDigest(posts: any[], date: Date): string {
     let content = `# Daily News Digest - ${date.toISOString().split('T')[0]}\n\n`;
     content += `*${posts.length} articles summarized for your convenience*\n\n`;
-    
+
     for (const post of posts) {
       content += `## ${post.title}\n\n`;
       content += `*Source: ${post.sourceTitle}*\n\n`;
@@ -374,7 +420,7 @@ export class BlogGenerationService {
       content += `[Read Full Article](${post.sourceUrl})\n\n`;
       content += `---\n\n`;
     }
-    
+
     return content;
   }
 
@@ -385,7 +431,7 @@ export class BlogGenerationService {
     try {
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 6); // End of week (Saturday)
-      
+
       const dailyDigests = await this.prisma.dailyDigest.findMany({
         where: {
           date: {
@@ -398,13 +444,13 @@ export class BlogGenerationService {
         },
         orderBy: { date: 'asc' }
       });
-      
+
       if (dailyDigests.length === 0) {
         return ''; // No digests for this week
       }
-      
+
       const weeklyContent = this.formatWeeklyDigest(dailyDigests, startDate, endDate);
-      
+
       // Save weekly digest
       await this.prisma.weeklyDigest.create({
         data: {
@@ -414,7 +460,7 @@ export class BlogGenerationService {
           content: weeklyContent
         }
       });
-      
+
       console.log(`📊 Generated weekly digest with ${dailyDigests.length} daily digests`);
       return weeklyContent;
     } catch (error) {
@@ -429,15 +475,15 @@ export class BlogGenerationService {
   private formatWeeklyDigest(dailyDigests: any[], startDate: Date, endDate: Date): string {
     let content = `# Weekly News Digest\n\n`;
     content += `*${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}*\n\n`;
-    
+
     let totalPosts = 0;
-    
+
     for (const digest of dailyDigests) {
       const postCount = digest.blogPosts.length;
       totalPosts += postCount;
-      
+
       content += `## ${digest.date.toISOString().split('T')[0]} (${postCount} articles)\n\n`;
-      
+
       if (postCount > 0) {
         // Show top 3 posts from each day
         const topPosts = digest.blogPosts.slice(0, 3);
@@ -445,20 +491,20 @@ export class BlogGenerationService {
           content += `### ${post.title}\n\n`;
           content += `${post.excerpt}\n\n`;
         }
-        
+
         if (postCount > 3) {
           content += `*... and ${postCount - 3} more articles*\n\n`;
         }
       } else {
         content += `*No articles published this day*\n\n`;
       }
-      
+
       content += `---\n\n`;
     }
-    
+
     content += `## Weekly Summary\n\n`;
     content += `This week featured **${totalPosts} articles** across **${dailyDigests.length} days**.\n\n`;
-    
+
     return content;
   }
 
@@ -471,7 +517,7 @@ export class BlogGenerationService {
       const publishedPosts = await this.prisma.blogPost.count({ where: { status: 'published' } });
       const dailyDigests = await this.prisma.dailyDigest.count();
       const weeklyDigests = await this.prisma.weeklyDigest.count();
-      
+
       return {
         totalPosts,
         publishedPosts,
