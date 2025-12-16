@@ -1,6 +1,6 @@
 import React from 'react'
 
-const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, status, showToast }) => {
+const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, status, showToast, onLogout }) => {
   const navItems = [
     { id: 'overview', label: 'Overview', icon: '📊' },
     { id: 'chat', label: 'Live Chat', icon: '💬' },
@@ -25,12 +25,17 @@ const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, s
   }
 
   const logout = () => {
-    fetch('/api/logout', {
-      method: 'POST',
-      credentials: 'include',
-    }).then(() => {
-      window.location.href = '/login.html'
-    })
+    if (onLogout) {
+      onLogout()
+    } else {
+      // Fallback for backward compatibility
+      fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'include',
+      }).then(() => {
+        window.location.reload()
+      })
+    }
   }
 
   return (

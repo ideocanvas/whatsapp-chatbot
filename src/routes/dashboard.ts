@@ -18,7 +18,7 @@ export class DashboardRoutes {
     this.router = Router();
     this.dashboardPassword = process.env.DASHBOARD_PASSWORD || 'admin';
     this.setupRoutes();
-    
+
     // Initialize with startup message
     this.logActivity('System started - Dashboard API initialized');
   }
@@ -45,7 +45,7 @@ export class DashboardRoutes {
     // Login endpoint
     this.router.post('/api/login', (req: Request, res: Response) => {
       const { password } = req.body;
-      
+
       if (password === this.dashboardPassword) {
         // FIX: Relaxed cookie settings for reliable local/prod development
         res.cookie('dashboardAuth', this.dashboardPassword, {
@@ -56,7 +56,7 @@ export class DashboardRoutes {
           secure: process.env.NODE_ENV === 'production' && req.secure,
           sameSite: 'lax' // 'strict' can block cookies on some redirects
         });
-        
+
         this.logActivity('User logged in to dashboard');
         res.json({ success: true });
       } else {
@@ -108,10 +108,10 @@ export class DashboardRoutes {
       try {
         const agent = getAutonomousAgent();
         const status = await agent.getStatus();
-        
+
         // Use real context data from ContextManager stats
         const contextStats = status.memory?.context || { activeUsers: 0, totalMessages: 0 };
-        
+
         // Format the data based on real stats
         const contextData = [{
           id: 'ctx-stats',
@@ -121,7 +121,7 @@ export class DashboardRoutes {
           activeUsers: contextStats.activeUsers,
           totalMessages: contextStats.totalMessages
         }];
-        
+
         // Add web interface user for testing
         contextData.push({
           id: 'ctx-web',
@@ -131,7 +131,7 @@ export class DashboardRoutes {
           activeUsers: 0,
           totalMessages: 0
         });
-        
+
         res.json(contextData);
       } catch (error) {
         res.status(500).json({ error: 'Failed to get context data' });
@@ -141,10 +141,10 @@ export class DashboardRoutes {
     this.router.get('/api/memory/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
-        
+
         // Get actual knowledge content from the autonomous agent
         const knowledgeContent = await agent.getKnowledgeContent(20); // Get up to 20 recent documents
-        
+
         // If we have real content, show it
         if (knowledgeContent.length > 0) {
           const knowledgeData = knowledgeContent.map((doc: any) => ({
@@ -155,7 +155,7 @@ export class DashboardRoutes {
             source: doc.source,
             category: doc.category
           }));
-          
+
           res.json(knowledgeData);
         } else {
           // If no real content yet, show what the agent is ready to learn
@@ -169,7 +169,7 @@ export class DashboardRoutes {
             'Internet of Things',
             'Blockchain Technology'
           ];
-          
+
           const knowledgeData = exampleTopics.map((topic, i) => ({
             id: `knowledge-ready-${i + 1}`,
             title: `${topic} (Ready to Learn)`,
@@ -178,7 +178,7 @@ export class DashboardRoutes {
             source: 'Autonomous Browsing',
             category: topic
           }));
-          
+
           res.json(knowledgeData);
         }
       } catch (error) {
@@ -190,7 +190,7 @@ export class DashboardRoutes {
       try {
         const agent = getAutonomousAgent();
         const status = await agent.getStatus();
-        
+
         // Use activity log as real history data
         const historyData = this.activityLog.slice(-20).map((log, index) => ({
           id: `hist-${index + 1}`,
@@ -199,7 +199,7 @@ export class DashboardRoutes {
           message: log.message,
           type: log.type || 'info'
         }));
-        
+
         res.json(historyData);
       } catch (error) {
         res.status(500).json({ error: 'Failed to get history data' });
@@ -211,13 +211,13 @@ export class DashboardRoutes {
       try {
         const { message, image, audio } = req.body; // Expect base64 strings if image/audio provided
         const webUiUserId = process.env.WEB_UI_USER_ID || 'web-ui-user';
-        
+
         if (!message && !image && !audio) {
           return res.status(400).json({ error: 'Message or attachment is required' });
         }
 
         const agent = getAutonomousAgent();
-        
+
         let attachment: { type: 'image' | 'audio', filePath: string } | undefined;
         let messageType: 'text' | 'image' | 'audio' = 'text';
 
@@ -227,11 +227,11 @@ export class DashboardRoutes {
                 const base64Str = image || audio;
                 // Extract clean base64 string (remove data:image/xyz;base64, prefix)
                 const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-                
+
                 if (matches && matches.length === 3) {
                     const mimeType = matches[1];
                     const dataBuffer = Buffer.from(matches[2], 'base64');
-                    
+
                     const type = image ? 'image' : 'audio';
                     // Determine extension from mime
                     let ext = 'bin';
@@ -244,12 +244,12 @@ export class DashboardRoutes {
 
                     const filename = `web_${type}_${Date.now()}.${ext}`;
                     const uploadDir = path.join(process.cwd(), 'data', 'uploads');
-                    
+
                     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-                    
+
                     const filePath = path.join(uploadDir, filename);
                     fs.writeFileSync(filePath, dataBuffer);
-                    
+
                     attachment = { type, filePath };
                     messageType = type;
                 }
@@ -261,20 +261,20 @@ export class DashboardRoutes {
 
         // Log the chat activity (Dashboard view only)
         this.logActivity(`Web UI chat from ${webUiUserId}: ${messageType} message`);
-        
+
         // NOTE: The agent.handleWebMessage method now handles both processing AND storage.
         // No need for manual history storage here.
-        
+
         // Process the message through the autonomous agent
         const result = await agent.handleWebMessage(webUiUserId, message || '', attachment);
-        
+
         // Extract text response (result could be string in old version, but we updated it to object)
         const responseText = typeof result === 'string' ? result : result.text;
         const responseAudio = typeof result === 'string' ? undefined : result.audio;
-        
+
         // Log the response
         this.logActivity(`Bot response to ${webUiUserId}: ${responseText.substring(0, 50)}...`);
-        
+
         res.json({ success: true, response: responseText, audio: responseAudio });
       } catch (error) {
         console.error('Chat API error:', error);
@@ -288,15 +288,15 @@ export class DashboardRoutes {
       try {
         const { intent } = req.body;
         const agent = getAutonomousAgent();
-        
+
         this.logActivity(`Simulating browsing session with intent: ${intent || 'general'}`);
-        
+
         // In a real implementation, this would trigger actual browsing
         // For now, we'll simulate the activity
         setTimeout(() => {
           this.logActivity(`Browsing session completed - learned 3 new facts about ${intent || 'technology'}`);
         }, 2000);
-        
+
         res.json({ success: true, message: 'Browsing session started' });
       } catch (error) {
         res.status(500).json({ error: 'Failed to simulate browsing' });
@@ -307,14 +307,14 @@ export class DashboardRoutes {
       try {
         const { userId = 'web-user', content } = req.body;
         const agent = getAutonomousAgent();
-        
+
         this.logActivity(`Simulating proactive message to ${userId}`);
-        
+
         // Simulate proactive messaging logic
         setTimeout(() => {
           this.logActivity(`Proactive message sent to ${userId}: "Check out this interesting content!"`);
         }, 1000);
-        
+
         res.json({ success: true, message: 'Proactive message simulation started' });
       } catch (error) {
         res.status(500).json({ error: 'Failed to simulate proactive message' });
@@ -325,19 +325,19 @@ export class DashboardRoutes {
     this.router.post('/api/search/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { query } = req.body;
-        
+
         if (!query) {
           return res.status(400).json({ error: 'Search query is required' });
         }
 
         const agent = getAutonomousAgent();
-        
+
         // Log the search activity
         this.logActivity(`Knowledge search: "${query}"`);
-        
+
         // Search actual knowledge content
         const searchResults = await agent.searchKnowledgeContent(query, 10);
-        
+
         // Format results with relevance scoring
         const formattedResults = searchResults.map((doc: any, index: number) => ({
           id: doc.id,
@@ -348,7 +348,7 @@ export class DashboardRoutes {
           source: doc.source,
           category: doc.category
         }));
-        
+
         // If no real results, provide informative message
         if (formattedResults.length === 0) {
           formattedResults.push({
@@ -374,16 +374,16 @@ export class DashboardRoutes {
       try {
         const { intent } = req.body;
         const agent = getAutonomousAgent();
-        
+
         // Get browser service from agent (this would need to be exposed)
         // For now, we'll simulate triggering a browsing session
         this.logActivity(`Manual browsing triggered with intent: ${intent || 'general'}`);
-        
+
         // Simulate browsing session
         setTimeout(() => {
           this.logActivity(`Manual browsing completed - learned fresh content about ${intent || 'technology'}`);
         }, 3000);
-        
+
         res.json({
           success: true,
           message: `Browsing session started${intent ? ` with intent: ${intent}` : ''}`,
@@ -398,15 +398,15 @@ export class DashboardRoutes {
     this.router.post('/api/knowledge/refresh', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const agent = getAutonomousAgent();
-        
+
         this.logActivity('Manual knowledge refresh triggered');
-        
+
         // This would force the agent to browse and update knowledge
         // For now, simulate the process
         setTimeout(() => {
           this.logActivity('Knowledge refresh completed - fresh content available');
         }, 2000);
-        
+
         res.json({
           success: true,
           message: 'Knowledge refresh initiated',
@@ -418,30 +418,30 @@ export class DashboardRoutes {
     });
 
     // --- News System Management Routes ---
-    
+
     // Get blog posts
     this.router.get('/api/news/blog-posts', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const prisma = new PrismaClient();
         const { page = '1', limit = '10', category, status } = req.query;
-        
+
         const pageNum = parseInt(page as string);
         const limitNum = parseInt(limit as string);
         const skip = (pageNum - 1) * limitNum;
-        
+
         const where: any = {};
         if (category) where.category = category;
         if (status) where.status = status;
-        
+
         const posts = await prisma.blogPost.findMany({
           where,
           skip,
           take: limitNum,
           orderBy: { publishedAt: 'desc' }
         });
-        
+
         const total = await prisma.blogPost.count({ where });
-        
+
         res.json({
           posts,
           pagination: {
@@ -462,11 +462,11 @@ export class DashboardRoutes {
       try {
         const prisma = new PrismaClient();
         const { page = '1', limit = '10' } = req.query;
-        
+
         const pageNum = parseInt(page as string);
         const limitNum = parseInt(limit as string);
         const skip = (pageNum - 1) * limitNum;
-        
+
         const digests = await prisma.dailyDigest.findMany({
           skip,
           take: limitNum,
@@ -481,9 +481,9 @@ export class DashboardRoutes {
             }
           }
         });
-        
+
         const total = await prisma.dailyDigest.count();
-        
+
         res.json({
           digests,
           pagination: {
@@ -504,11 +504,11 @@ export class DashboardRoutes {
       try {
         const prisma = new PrismaClient();
         const { page = '1', limit = '10' } = req.query;
-        
+
         const pageNum = parseInt(page as string);
         const limitNum = parseInt(limit as string);
         const skip = (pageNum - 1) * limitNum;
-        
+
         const digests = await prisma.weeklyDigest.findMany({
           skip,
           take: limitNum,
@@ -526,9 +526,9 @@ export class DashboardRoutes {
             }
           }
         });
-        
+
         const total = await prisma.weeklyDigest.count();
-        
+
         res.json({
           digests,
           pagination: {
@@ -551,7 +551,7 @@ export class DashboardRoutes {
         const sources = await prisma.newsSource.findMany({
           orderBy: [{ priority: 'desc' }, { name: 'asc' }]
         });
-        
+
         res.json(sources);
       } catch (error) {
         console.error('Error getting news sources:', error);
@@ -563,11 +563,11 @@ export class DashboardRoutes {
     this.router.post('/api/news/sources', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { url, name, region, language, priority } = req.body;
-        
+
         if (!url) {
           return res.status(400).json({ error: 'URL is required' });
         }
-        
+
         const prisma = new PrismaClient();
         const source = await prisma.newsSource.create({
           data: {
@@ -580,7 +580,7 @@ export class DashboardRoutes {
             sourceType: url.includes('news.google.com') ? 'google_news' : 'direct_site'
           }
         });
-        
+
         this.logActivity(`Added news source: ${url}`);
         res.json({ success: true, source });
       } catch (error) {
@@ -594,7 +594,7 @@ export class DashboardRoutes {
       try {
         const { id } = req.params;
         const { name, region, language, priority, isActive } = req.body;
-        
+
         const prisma = new PrismaClient();
         const source = await prisma.newsSource.update({
           where: { id },
@@ -606,7 +606,7 @@ export class DashboardRoutes {
             isActive
           }
         });
-        
+
         this.logActivity(`Updated news source: ${source.url}`);
         res.json({ success: true, source });
       } catch (error) {
@@ -619,12 +619,12 @@ export class DashboardRoutes {
     this.router.delete('/api/news/sources/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
-        
+
         const prisma = new PrismaClient();
         const source = await prisma.newsSource.delete({
           where: { id }
         });
-        
+
         this.logActivity(`Deleted news source: ${source.url}`);
         res.json({ success: true });
       } catch (error) {
@@ -639,12 +639,12 @@ export class DashboardRoutes {
         const prisma = new PrismaClient();
         const { limit = '50' } = req.query;
         const limitNum = parseInt(limit as string);
-        
+
         const keywords = await prisma.newsKeyword.findMany({
           orderBy: { relevance: 'desc' },
           take: limitNum
         });
-        
+
         res.json(keywords);
       } catch (error) {
         console.error('Error getting news keywords:', error);
@@ -657,20 +657,20 @@ export class DashboardRoutes {
       try {
         const { date } = req.params;
         const prisma = new PrismaClient();
-        
+
         const digest = await prisma.dailyDigest.findFirst({
           where: { date: new Date(date) },
           include: { blogPosts: true }
         });
-        
+
         if (!digest) {
           return res.status(404).json({ error: 'Digest not found' });
         }
-        
+
         // Set headers for file download
         res.setHeader('Content-Type', 'text/markdown');
         res.setHeader('Content-Disposition', `attachment; filename="daily-digest-${date}.md"`);
-        
+
         res.send(digest.content);
       } catch (error) {
         console.error('Error downloading daily digest:', error);
@@ -683,20 +683,20 @@ export class DashboardRoutes {
       try {
         const { startDate } = req.params;
         const prisma = new PrismaClient();
-        
+
         const digest = await prisma.weeklyDigest.findFirst({
           where: { startDate: new Date(startDate) },
           include: { dailyDigests: { include: { blogPosts: true } } }
         });
-        
+
         if (!digest) {
           return res.status(404).json({ error: 'Weekly digest not found' });
         }
-        
+
         // Set headers for file download
         res.setHeader('Content-Type', 'text/markdown');
         res.setHeader('Content-Disposition', `attachment; filename="weekly-digest-${startDate}.md"`);
-        
+
         res.send(digest.content);
       } catch (error) {
         console.error('Error downloading weekly digest:', error);
@@ -708,13 +708,13 @@ export class DashboardRoutes {
     this.router.post('/api/news/generate-blogs', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         this.logActivity('Manual blog generation triggered');
-        
+
         // In a real implementation, this would trigger the blog generation process
         // For now, simulate the process
         setTimeout(() => {
           this.logActivity('Blog generation completed - new posts available');
         }, 5000);
-        
+
         res.json({
           success: true,
           message: 'Blog generation initiated',
@@ -729,27 +729,28 @@ export class DashboardRoutes {
     // FIX: Improved Middleware to protect HTML files AND the root path
     this.router.use((req: Request, res: Response, next: Function) => {
       const path = req.path;
-      
-      // Always allow login page, static assets (css/js/images), and specific public API endpoints
+
+      // Always allow login API endpoints, health check, and static assets
       if (
-        path === '/login.html' ||
         path === '/api/login' ||
         path === '/api/auth/status' ||
         path === '/health' ||
         path === '/api' ||
-        path.match(/\.(js|css|png|jpg|ico|json)$/)
+        path.match(/\.(js|css|png|jpg|ico|json)$/) ||
+        path.startsWith('/assets/')
       ) {
         return next();
       }
-      
+
       // Check authentication
       if (this.isAuthenticated(req)) {
         return next();
       }
-      
-      // If accessing root or html files without auth, redirect to login
-      if (path === '/' || path.endsWith('.html')) {
-        return res.redirect('/login.html');
+
+      // If accessing root without auth, redirect to React app which will handle login
+      if (path === '/') {
+        // Send the React app which will handle authentication client-side
+        return res.sendFile('frontend/dist/index.html', { root: process.cwd() });
       }
 
       // For protected API endpoints, return 401 instead of redirect
@@ -760,25 +761,17 @@ export class DashboardRoutes {
       next();
     });
 
-    // Serve static files from web directory
-    this.router.use(express.static('web'));
+    // Serve static files from frontend/dist directory (React build)
+    this.router.use(express.static('frontend/dist'));
 
-    // Serve the web interface
+    // Serve the React app interface - React app will handle authentication
     this.router.get('/', (req: Request, res: Response) => {
-      // Redirect to login if not authenticated
-      if (!this.isAuthenticated(req)) {
-        return res.redirect('/login.html');
-      }
-      res.sendFile('web/index.html', { root: process.cwd() });
+      res.sendFile('frontend/dist/index.html', { root: process.cwd() });
     });
 
-    // Serve login page route
+    // Redirect /login to root - React app will handle login
     this.router.get('/login', (req: Request, res: Response) => {
-      // If already authenticated, redirect to dashboard
-      if (this.isAuthenticated(req)) {
-        return res.redirect('/');
-      }
-      res.redirect('/login.html');
+      res.redirect('/');
     });
   }
 
@@ -791,14 +784,14 @@ export class DashboardRoutes {
       message,
       type
     };
-    
+
     this.activityLog.push(logEntry);
-    
+
     // Keep only the last 1000 entries to prevent memory issues
     if (this.activityLog.length > 1000) {
       this.activityLog = this.activityLog.slice(-1000);
     }
-    
+
     console.log(`📊 Dashboard: ${message}`);
   }
 

@@ -1,38 +1,42 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 export function useApi(url, options = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        setError(null)
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
 
-        const response = await fetch(url, {
-          credentials: 'include',
-          ...options
-        })
+      const response = await fetch(url, {
+        credentials: 'include',
+        ...options
+      })
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`, { status: response.status })
-        }
-
-        const result = await response.json()
-        setData(result)
-      } catch (err) {
-        setError(err)
-      } finally {
-        setLoading(false)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`, { status: response.status })
       }
-    }
 
-    fetchData()
+      const result = await response.json()
+      setData(result)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setLoading(false)
+    }
   }, [url, JSON.stringify(options)])
 
-  return { data, loading, error }
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  const refetch = () => {
+    fetchData()
+  }
+
+  return { data, loading, error, refetch }
 }
 
 export function useApiMutation(url, method = 'POST') {
