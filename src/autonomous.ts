@@ -18,6 +18,7 @@ import { createWebScrapeService } from './services/webScrapeService';
 import { WhatsAppService } from './services/whatsappService';
 import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
+import { SetReminderTool } from './tools/SetReminderTool';
 import { WebSearchTool } from './tools/WebSearchTool';
 
 /**
@@ -113,6 +114,9 @@ class AutonomousWhatsAppAgent {
       if (this.browser) {
           this.tools.registerTool(new DeepResearchTool(this.browser));
       }
+
+      // Register Set Reminder Tool
+      this.tools.registerTool(new SetReminderTool());
 
       // 4. Initialize Agent (pass UserProfileService)
       this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue, this.userProfileService);

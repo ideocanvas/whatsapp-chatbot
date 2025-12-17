@@ -5,6 +5,7 @@ import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { UserProfileService } from '../services/UserProfileService';
 import { UpdateProfileTool } from '../tools/UpdateProfileTool';
+import { SetReminderTool } from '../tools/SetReminderTool';
 
 /**
  * The Brain of the autonomous agent system.
@@ -44,22 +45,29 @@ export class Agent {
       systemContext += `\n\n🧠 Relevant Knowledge:\n${relevantFacts}`;
     }
 
-    // 5. Add "UpdateProfileTool" specifically for this user context
+    // 5. Add context-aware tools specifically for this user
     const profileTool = new UpdateProfileTool(this.profileService, userId);
+    const reminderTool = new SetReminderTool();
+    reminderTool.setUserId(userId);
+    reminderTool.setActionQueue(this.actionQueue);
 
-    // Create a temporary registry for this request that includes the base tools + context-aware tool
-    const requestTools = [...this.tools.getOpenAITools(), profileTool.toOpenAISchema()];
+    // Create a temporary registry for this request that includes the base tools + context-aware tools
+    const requestTools = [
+      ...this.tools.getOpenAITools(),
+      profileTool.toOpenAISchema(),
+      reminderTool.toOpenAISchema()
+    ];
 
-    // We need a way to execute this tool since it's not in the global registry
-    // We can create a temporary registry wrapper or handle it inside generateResponse
+    // We need a way to execute these tools since they're not in the global registry
     const tempRegistry = new ToolRegistry();
     // Copy existing tools
     this.tools.getAvailableTools().forEach(name => {
         const t = this.tools.getTool(name);
         if(t) tempRegistry.registerTool(t);
     });
-    // Add our specific tool
+    // Add our specific tools
     tempRegistry.registerTool(profileTool);
+    tempRegistry.registerTool(reminderTool);
 
     // 6. Generate Response
     const history = this.contextMgr.getHistory(userId);
