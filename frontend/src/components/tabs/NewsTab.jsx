@@ -61,6 +61,29 @@ const NewsTab = ({ showToast }) => {
     }
   }
 
+  // Download individual blog post as markdown
+  const downloadBlogPost = async (postId, postTitle) => {
+    try {
+      const response = await fetch(`/api/news/blog-post/${postId}/download`, { credentials: 'include' })
+      if (response.ok) {
+        const blob = await response.blob()
+        const downloadUrl = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.download = `blog-post-${postTitle.replace(/[^a-zA-Z0-9]/g, '-')}.md`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(downloadUrl)
+        document.body.removeChild(a)
+        showToast('Blog post downloaded successfully', 'success')
+      } else {
+        showToast('Failed to download blog post', 'error')
+      }
+    } catch (error) {
+      showToast('Error downloading blog post', 'error')
+    }
+  }
+
   // Add new news source
   const addNewsSource = async () => {
     try {
@@ -155,7 +178,10 @@ const NewsTab = ({ showToast }) => {
                   >
                     View
                   </button>
-                  <button className="flex-1 bg-gray-50 text-gray-600 py-1 rounded text-sm hover:bg-gray-100 transition-colors">
+                  <button
+                    onClick={() => downloadBlogPost(post.id, post.title)}
+                    className="flex-1 bg-gray-50 text-gray-600 py-1 rounded text-sm hover:bg-gray-100 transition-colors"
+                  >
                     Download
                   </button>
                 </div>
@@ -293,7 +319,10 @@ const NewsTab = ({ showToast }) => {
             <div className="text-sm text-gray-600 text-center sm:text-left">
               Source: {selectedPost.sourceTitle} | Category: {selectedPost.category}
             </div>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors w-full sm:w-auto">
+            <button
+              onClick={() => downloadBlogPost(selectedPost.id, selectedPost.title)}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors w-full sm:w-auto"
+            >
               Download Post
             </button>
           </div>

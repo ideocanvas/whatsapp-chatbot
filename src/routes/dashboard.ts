@@ -738,6 +738,31 @@ export class DashboardRoutes {
       }
     });
 
+    // Download individual blog post as markdown
+    this.router.get('/api/news/blog-post/:id/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const prisma = new PrismaClient();
+
+        const post = await prisma.blogPost.findUnique({
+          where: { id: id }
+        });
+
+        if (!post) {
+          return res.status(404).json({ error: 'Blog post not found' });
+        }
+
+        // Set headers for file download
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="blog-post-${post.title.replace(/[^a-zA-Z0-9]/g, '-')}.md"`);
+
+        res.send(post.content);
+      } catch (error) {
+        console.error('Error downloading blog post:', error);
+        res.status(500).json({ error: 'Failed to download blog post' });
+      }
+    });
+
     // Discover new news sources
     this.router.post('/api/news/discover-sources', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
