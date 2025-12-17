@@ -261,7 +261,7 @@ whatsapp-chatbot/
 │   └── index.html         # Dashboard HTML/CSS/JS
 ├── config/                # Configuration Files
 │   └── ai/               # AI Model Configurations
-├── prisma/               # Database Schema
+├── prisma/               # Database Schema (see Database Tables section below)
 ├── test/                 # Test Files
 ├── package.json
 ├── tsconfig.json
@@ -377,6 +377,73 @@ npm run web:test            # Test autonomous system
 npx prisma generate          # Generate database client
 npx prisma db push          # Push schema to database
 npx prisma studio           # Open database GUI
+
+## 🗃️ Database Tables
+
+The system uses PostgreSQL with Prisma ORM to manage persistent storage. Here's a breakdown of each table's purpose:
+
+### Core Memory Tables
+
+**ConversationLog** - Stores all user and assistant conversations for long-term memory and recall
+- **Purpose**: Three-tier memory system (history/logs layer)
+- **Key Fields**: userId, message, role, timestamp, messageType, metadata
+- **Service**: [`HistoryStorePostgres`](src/memory/HistoryStorePostgres.ts)
+
+**Knowledge** - Stores facts learned from autonomous browsing using vector embeddings
+- **Purpose**: Three-tier memory system (long-term/cold storage)
+- **Key Fields**: content, vector (BYTEA embeddings), source, category, tags, relevanceScore
+- **Service**: [`KnowledgeBasePostgres`](src/memory/KnowledgeBasePostgres.ts)
+
+**Document** - Alternative vector storage implementation for document embeddings
+- **Purpose**: Vector-based document storage for RAG operations
+- **Key Fields**: content, vector (BYTEA), source, date, category, title
+- **Service**: [`VectorStoreServicePostgres`](src/services/VectorStoreServicePostgres.ts)
+
+**ConversationSummary** - Stores AI-generated summaries of conversations for efficient recall
+- **Purpose**: Compressed conversation memory with deduplication
+- **Key Fields**: userId, summary, contextHash (for deduplication), timestamp
+
+### User Management Tables
+
+**UserProfile** - Stores structured user information for personalized interactions
+- **Purpose**: User profiling and personalization
+- **Key Fields**: userId (primary key), name, location, language, facts (JSON), completeness score
+- **Service**: [`UserProfileService`](src/services/UserProfileService.ts)
+
+**ProcessedMessage** - Tracks processed WhatsApp messages to prevent duplicate handling
+- **Purpose**: Message deduplication and processing tracking
+- **Key Fields**: messageId (primary key), senderNumber, messageType, processedAt
+- **Service**: [`ProcessedMessageServicePostgres`](src/services/ProcessedMessageServicePostgres.ts)
+
+### Content Generation Tables
+
+**BlogPost** - Stores AI-generated blog posts from news content
+- **Purpose**: Content generation and publishing pipeline
+- **Key Fields**: title, content (Markdown), sourceUrl, tags, category, status, publishedAt
+- **Service**: [`BlogGenerationService`](src/services/blogGenerationService.ts)
+
+**DailyDigest** & **WeeklyDigest** - Organizes blog posts into daily and weekly digests
+- **Purpose**: Content organization and period-based aggregation
+- **Key Fields**: date (unique), title, content, blogPosts/dailyDigests relations
+
+### News System Tables
+
+**NewsSource** - Manages news sources for autonomous browsing and content acquisition
+- **Purpose**: News source management and prioritization
+- **Key Fields**: url (unique), name, region, language, priority, isActive, lastScraped
+
+**NewsKeyword** - Tracks keywords and their relevance for content filtering
+- **Purpose**: Keyword-based content prioritization
+- **Key Fields**: keyword, relevance score, category, lastUsed
+
+### Architecture Integration
+
+The database schema supports the **Three-Tier Memory System**:
+- **Short-term**: ContextManager (in-memory)
+- **Long-term**: Knowledge/Document tables (vector embeddings)
+- **History**: ConversationLog/ConversationSummary (SQL storage)
+
+Each table serves specific roles in the autonomous agent's learning, recall, and proactive messaging capabilities.
 ```
 
 ## 🔒 Security Features
