@@ -821,6 +821,147 @@ export class DashboardRoutes {
       }
     });
 
+    // --- Favorites Management Routes ---
+
+    // Get all favorites
+    this.router.get('/api/favorites', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const favoritesPath = path.join(process.cwd(), 'data', 'favorites.json');
+
+        if (!fs.existsSync(favoritesPath)) {
+          return res.json([]);
+        }
+
+        const favoritesData = fs.readFileSync(favoritesPath, 'utf8');
+        const favorites = JSON.parse(favoritesData);
+
+        res.json(favorites);
+      } catch (error) {
+        console.error('Error reading favorites:', error);
+        res.status(500).json({ error: 'Failed to get favorites' });
+      }
+    });
+
+    // Add a favorite
+    this.router.post('/api/favorites', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { url, title, category, source } = req.body;
+
+        if (!url) {
+          return res.status(400).json({ error: 'URL is required' });
+        }
+
+        const favoritesPath = path.join(process.cwd(), 'data', 'favorites.json');
+        let favorites = [];
+
+        if (fs.existsSync(favoritesPath)) {
+          const favoritesData = fs.readFileSync(favoritesPath, 'utf8');
+          favorites = JSON.parse(favoritesData);
+        }
+
+        // Check if already favorited
+        const existingFavorite = favorites.find((fav: any) => fav.url === url);
+        if (existingFavorite) {
+          return res.status(400).json({ error: 'Already in favorites' });
+        }
+
+        const newFavorite = {
+          url,
+          title: title || this.extractSourceName(url),
+          category: category || 'general',
+          source: source || 'dashboard',
+          lastVisited: Date.now(),
+          visitCount: 1,
+          addedAt: Date.now()
+        };
+
+        favorites.push(newFavorite);
+
+        // Ensure data directory exists
+        const dataDir = path.dirname(favoritesPath);
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+
+        fs.writeFileSync(favoritesPath, JSON.stringify(favorites, null, 2));
+
+        this.logActivity(`Added favorite: ${url}`);
+        res.json({ success: true, favorite: newFavorite });
+      } catch (error) {
+        console.error('Error adding favorite:', error);
+        res.status(500).json({ error: 'Failed to add favorite' });
+      }
+    });
+
+    // Remove a favorite
+    this.router.delete('/api/favorites', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { url } = req.body;
+
+        if (!url) {
+          return res.status(400).json({ error: 'URL is required' });
+        }
+
+        const favoritesPath = path.join(process.cwd(), 'data', 'favorites.json');
+
+        if (!fs.existsSync(favoritesPath)) {
+          return res.status(404).json({ error: 'No favorites found' });
+        }
+
+        const favoritesData = fs.readFileSync(favoritesPath, 'utf8');
+        const favorites = JSON.parse(favoritesData);
+
+        const filteredFavorites = favorites.filter((fav: any) => fav.url !== url);
+
+        if (filteredFavorites.length === favorites.length) {
+          return res.status(404).json({ error: 'Favorite not found' });
+        }
+
+        fs.writeFileSync(favoritesPath, JSON.stringify(filteredFavorites, null, 2));
+
+        this.logActivity(`Removed favorite: ${url}`);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error removing favorite:', error);
+        res.status(500).json({ error: 'Failed to remove favorite' });
+      }
+    });
+
+    // Update favorite visit count
+    this.router.put('/api/favorites/visit', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { url } = req.body;
+
+        if (!url) {
+          return res.status(400).json({ error: 'URL is required' });
+        }
+
+        const favoritesPath = path.join(process.cwd(), 'data', 'favorites.json');
+
+        if (!fs.existsSync(favoritesPath)) {
+          return res.status(404).json({ error: 'No favorites found' });
+        }
+
+        const favoritesData = fs.readFileSync(favoritesPath, 'utf8');
+        const favorites = JSON.parse(favoritesData);
+
+        const favoriteIndex = favorites.findIndex((fav: any) => fav.url === url);
+        if (favoriteIndex === -1) {
+          return res.status(404).json({ error: 'Favorite not found' });
+        }
+
+        favorites[favoriteIndex].lastVisited = Date.now();
+        favorites[favoriteIndex].visitCount = (favorites[favoriteIndex].visitCount || 0) + 1;
+
+        fs.writeFileSync(favoritesPath, JSON.stringify(favorites, null, 2));
+
+        res.json({ success: true, favorite: favorites[favoriteIndex] });
+      } catch (error) {
+        console.error('Error updating favorite visit:', error);
+        res.status(500).json({ error: 'Failed to update favorite' });
+      }
+    });
+
     // FIX: Improved Middleware to protect HTML files AND the root path
     this.router.use((req: Request, res: Response, next: Function) => {
       const path = req.path;

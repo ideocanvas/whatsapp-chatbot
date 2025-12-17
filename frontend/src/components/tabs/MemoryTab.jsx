@@ -117,6 +117,76 @@ const MemoryTab = ({ showToast }) => {
   const [searchResults, setSearchResults] = useState([])
   const [isSearching, setIsSearching] = useState(false)
   const [isLoadingFullContent, setIsLoadingFullContent] = useState(false)
+  const [favorites, setFavorites] = useState([])
+
+  // Load favorites on component mount
+  useEffect(() => {
+    const loadFavorites = async () => {
+      try {
+        const response = await fetch('/api/favorites', {
+          credentials: 'include'
+        })
+        if (response.ok) {
+          const data = await response.json()
+          setFavorites(data)
+        }
+      } catch (error) {
+        console.error('Error loading favorites:', error)
+      }
+    }
+    loadFavorites()
+  }, [])
+
+  const toggleFavorite = async (item) => {
+    try {
+      const isFavorited = favorites.some(fav => fav.url === (item.source || item.url || item.id))
+
+      if (isFavorited) {
+        // Remove from favorites
+        const response = await fetch('/api/favorites', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ url: item.source || item.url || item.id })
+        })
+
+        if (response.ok) {
+          setFavorites(favorites.filter(fav => fav.url !== (item.source || item.url || item.id)))
+          showToast('Removed from favorites', 'success')
+        } else {
+          showToast('Failed to remove favorite', 'error')
+        }
+      } else {
+        // Add to favorites
+        const response = await fetch('/api/favorites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            url: item.source || item.url || item.id,
+            title: item.title,
+            category: item.category || 'knowledge',
+            source: 'memory'
+          })
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setFavorites([...favorites, data.favorite])
+          showToast('Added to favorites', 'success')
+        } else {
+          const data = await response.json()
+          showToast(data.error || 'Failed to add favorite', 'error')
+        }
+      }
+    } catch (error) {
+      showToast('Error toggling favorite', 'error')
+    }
+  }
+
+  const isFavorited = (item) => {
+    return favorites.some(fav => fav.url === (item.source || item.url || item.id))
+  }
 
   const { data: memoryData, loading: memoryLoading, error: memoryError } = useApi(
     memoryType === 'knowledge' ? `/api/memory/search` : `/api/memory/${memoryType}`
@@ -281,12 +351,13 @@ const MemoryTab = ({ showToast }) => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source/ID</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {isSearching ? (
                 <tr>
-                  <td colSpan="3" className="px-6 py-10 text-center text-gray-500">
+                  <td colSpan="4" className="px-6 py-10 text-center text-gray-500">
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-wa-teal mr-3"></div>
                       Searching knowledge base...
@@ -325,6 +396,22 @@ const MemoryTab = ({ showToast }) => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                       <div>{timeAgo(item.timestamp)}</div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleFavorite(item)
+                        }}
+                        className={`p-2 rounded-full transition-colors ${
+                          isFavorited(item)
+                            ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                            : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                        }`}
+                        title={isFavorited(item) ? 'Remove from favorites' : 'Add to favorites'}
+                      >
+                        {isFavorited(item) ? '⭐' : '☆'}
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : memoryLoading ? (
@@ -356,11 +443,27 @@ const MemoryTab = ({ showToast }) => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                       <div>{timeAgo(item.timestamp)}</div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleFavorite(item)
+                        }}
+                        className={`p-2 rounded-full transition-colors ${
+                          isFavorited(item)
+                            ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                            : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                        }`}
+                        title={isFavorited(item) ? 'Remove from favorites' : 'Add to favorites'}
+                      >
+                        {isFavorited(item) ? '⭐' : '☆'}
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="3" className="px-6 py-10 text-center text-gray-500 italic">
+                  <td colSpan="4" className="px-6 py-10 text-center text-gray-500 italic">
                     No memory items found. Try a search or trigger browsing.
                   </td>
                 </tr>

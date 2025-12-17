@@ -3,6 +3,7 @@ import OverviewTab from './tabs/OverviewTab'
 import ChatTab from './tabs/ChatTab'
 import MemoryTab from './tabs/MemoryTab'
 import NewsTab from './tabs/NewsTab'
+import FavoritesTab from './tabs/FavoritesTab'
 
 const MainContent = ({
   mobileMenuOpen,
@@ -60,6 +61,10 @@ const MainContent = ({
 
       {activeTab === 'news' && (
         <NewsTab showToast={showToast} />
+      )}
+
+      {activeTab === 'favorites' && (
+        <FavoritesTab showToast={showToast} />
       )}
     </main>
   )

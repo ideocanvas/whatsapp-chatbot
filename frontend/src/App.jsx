@@ -51,7 +51,8 @@ function App() {
       { id: 'overview', label: 'Overview' },
       { id: 'chat', label: 'Live Chat' },
       { id: 'memory', label: 'Memory' },
-      { id: 'news', label: 'News System' }
+      { id: 'news', label: 'News System' },
+      { id: 'favorites', label: 'Favorites' }
     ]
     return navItems.find(item => item.id === activeTab)?.label || 'Dashboard'
   }

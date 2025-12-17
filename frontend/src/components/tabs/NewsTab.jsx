@@ -10,6 +10,76 @@ const NewsTab = ({ showToast }) => {
   const [isViewerOpen, setIsViewerOpen] = useState(false)
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
   const [newSource, setNewSource] = useState({ url: '', name: '', region: '', language: '', priority: 5 })
+  const [favorites, setFavorites] = useState([])
+
+  // Load favorites on component mount
+  useEffect(() => {
+    const loadFavorites = async () => {
+      try {
+        const response = await fetch('/api/favorites', {
+          credentials: 'include'
+        })
+        if (response.ok) {
+          const data = await response.json()
+          setFavorites(data)
+        }
+      } catch (error) {
+        console.error('Error loading favorites:', error)
+      }
+    }
+    loadFavorites()
+  }, [])
+
+  const toggleFavorite = async (post) => {
+    try {
+      const isFavorited = favorites.some(fav => fav.url === (post.sourceUrl || post.url || post.id))
+
+      if (isFavorited) {
+        // Remove from favorites
+        const response = await fetch('/api/favorites', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ url: post.sourceUrl || post.url || post.id })
+        })
+
+        if (response.ok) {
+          setFavorites(favorites.filter(fav => fav.url !== (post.sourceUrl || post.url || post.id)))
+          showToast('Removed from favorites', 'success')
+        } else {
+          showToast('Failed to remove favorite', 'error')
+        }
+      } else {
+        // Add to favorites
+        const response = await fetch('/api/favorites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            url: post.sourceUrl || post.url || post.id,
+            title: post.title,
+            category: post.category || 'news',
+            source: 'news'
+          })
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setFavorites([...favorites, data.favorite])
+          showToast('Added to favorites', 'success')
+        } else {
+          const data = await response.json()
+          showToast(data.error || 'Failed to add favorite', 'error')
+        }
+      }
+    } catch (error) {
+      showToast('Error toggling favorite', 'error')
+    }
+  }
+
+  const isFavorited = (post) => {
+    return favorites.some(fav => fav.url === (post.sourceUrl || post.url || post.id))
+  }
 
   // API hooks for news data
   const { data: blogPosts, loading: postsLoading, error: postsError, refetch: refetchPosts } = useApi('/api/news/blog-posts')
@@ -85,13 +155,13 @@ const NewsTab = ({ showToast }) => {
   }
 
   // Add new news source
-  const addNewsSource = async () => {
+  const addNewsSource = async (sourceData) => {
     try {
       const response = await fetch('/api/news/sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(newSource)
+        body: JSON.stringify(sourceData)
       })
 
       if (response.ok) {
@@ -155,7 +225,20 @@ const NewsTab = ({ showToast }) => {
                 </div>
               )}
               <div className="p-4">
-                <h4 className="font-semibold text-gray-800 mb-2 line-clamp-2">{post.title}</h4>
+                <div className="flex justify-between items-start mb-2">
+                  <h4 className="font-semibold text-gray-800 line-clamp-2 flex-1 mr-2">{post.title}</h4>
+                  <button
+                    onClick={() => toggleFavorite(post)}
+                    className={`p-1 rounded-full transition-colors flex-shrink-0 ${
+                      isFavorited(post)
+                        ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                    }`}
+                    title={isFavorited(post) ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    {isFavorited(post) ? '⭐' : '☆'}
+                  </button>
+                </div>
                 <p className="text-sm text-gray-600 mb-3 line-clamp-3">{post.excerpt}</p>
                 <div className="flex justify-between items-center text-xs text-gray-500 mb-2">
                   <span className={`px-2 py-1 rounded-full ${
@@ -335,19 +418,43 @@ const NewsTab = ({ showToast }) => {
   const AddSourceModal = () => {
     if (!isSourceModalOpen) return null
 
+    // Use local state to avoid re-renders on every keystroke
+    const [localSource, setLocalSource] = useState(newSource)
+
+    // Update parent state only when modal is closed or submitted
+    useEffect(() => {
+      if (isSourceModalOpen) {
+        setLocalSource(newSource)
+      }
+    }, [isSourceModalOpen, newSource])
+
+    // Handle modal submission
+    const handleAddSource = () => {
+      setNewSource(localSource)
+      addNewsSource(localSource)
+    }
+
+    // Handle Enter key to prevent blur
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+      }
+    }
+
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-xl font-semibold">Add News Source</h3>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4" onKeyDown={handleKeyDown}>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
               <input
                 type="url"
-                value={newSource.url}
-                onChange={(e) => setNewSource({ ...newSource, url: e.target.value })}
+                value={localSource.url}
+                onChange={(e) => setLocalSource({ ...localSource, url: e.target.value })}
+                onKeyDown={handleKeyDown}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                 placeholder="https://news.google.com/..."
               />
@@ -356,8 +463,9 @@ const NewsTab = ({ showToast }) => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Name (Optional)</label>
               <input
                 type="text"
-                value={newSource.name}
-                onChange={(e) => setNewSource({ ...newSource, name: e.target.value })}
+                value={localSource.name}
+                onChange={(e) => setLocalSource({ ...localSource, name: e.target.value })}
+                onKeyDown={handleKeyDown}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                 placeholder="Google News HK"
               />
@@ -367,8 +475,9 @@ const NewsTab = ({ showToast }) => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Region</label>
                 <input
                   type="text"
-                  value={newSource.region}
-                  onChange={(e) => setNewSource({ ...newSource, region: e.target.value })}
+                  value={localSource.region}
+                  onChange={(e) => setLocalSource({ ...localSource, region: e.target.value })}
+                  onKeyDown={handleKeyDown}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                   placeholder="HK"
                 />
@@ -377,8 +486,9 @@ const NewsTab = ({ showToast }) => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
                 <input
                   type="text"
-                  value={newSource.language}
-                  onChange={(e) => setNewSource({ ...newSource, language: e.target.value })}
+                  value={localSource.language}
+                  onChange={(e) => setLocalSource({ ...localSource, language: e.target.value })}
+                  onKeyDown={handleKeyDown}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                   placeholder="en"
                 />
@@ -390,8 +500,9 @@ const NewsTab = ({ showToast }) => {
                 type="number"
                 min="1"
                 max="10"
-                value={newSource.priority}
-                onChange={(e) => setNewSource({ ...newSource, priority: parseInt(e.target.value) })}
+                value={localSource.priority}
+                onChange={(e) => setLocalSource({ ...localSource, priority: parseInt(e.target.value) })}
+                onKeyDown={handleKeyDown}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
               />
             </div>
@@ -404,7 +515,7 @@ const NewsTab = ({ showToast }) => {
               Cancel
             </button>
             <button
-              onClick={addNewsSource}
+              onClick={handleAddSource}
               className="bg-wa-teal text-white px-4 py-2 rounded-md hover:bg-green-600 transition-colors"
             >
               Add Source
