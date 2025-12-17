@@ -93,17 +93,15 @@ export class BrowserService {
 
   /**
    * Main Autonomous Surfing Loop
+   * The Autonomous service should call this method when it decides browsing is appropriate
    */
   async surf(intent?: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
     // Reset flags
     this.stopSignal = false;
     this.isSurfing = true;
 
-    if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) {
-        console.log('💤 Browser resting (Rate limit reached)');
-        this.isSurfing = false;
-        return { urlsVisited: [], knowledgeGained: 0 };
-    }
+    // Note: Rate limit checking is now handled by the Autonomous service/Scheduler
+    // This service just executes browsing when instructed
 
     const results = { urlsVisited: [] as string[], knowledgeGained: 0 };
 
@@ -140,7 +138,6 @@ export class BrowserService {
                 console.log('🛑 Browsing loop interrupted.');
                 break;
             }
-            if (this.pagesVisitedThisHour >= this.MAX_PAGES_PER_HOUR) break;
 
             // 4. Check Stale/Tracker Status
             const trackInfo = this.linkTracker.get(article.url);

@@ -26,15 +26,18 @@ export class GoogleNewsService {
   private webScrapeService: WebScrapeService;
   private openaiService: OpenAIService;
   private config: GoogleNewsConfig;
+  private browserService?: any; // Optional BrowserService reference for rate limiting
 
   constructor(
     webScrapeService: WebScrapeService,
     openaiService: OpenAIService,
-    config?: Partial<GoogleNewsConfig>
+    config?: Partial<GoogleNewsConfig>,
+    browserService?: any
   ) {
     this.prisma = new PrismaClient();
     this.webScrapeService = webScrapeService;
     this.openaiService = openaiService;
+    this.browserService = browserService;
     this.config = {
       urls: [
         'https://news.google.com/home?hl=en-HK&gl=HK&ceid=HK:en',
@@ -50,9 +53,30 @@ export class GoogleNewsService {
   }
 
   /**
+   * Check if scraping can proceed based on browser rate limits
+   * Returns information for the Autonomous service to make decisions
+   */
+  canProceedWithScraping(): { canProceed: boolean; pagesRemaining: number } {
+    if (!this.browserService) {
+      return { canProceed: true, pagesRemaining: Infinity }; // No browser service, no limits
+    }
+
+    const stats = this.browserService.getStats();
+    const pagesRemaining = Math.max(0, 20 - stats.pagesVisitedThisHour); // MAX_PAGES_PER_HOUR
+    return { canProceed: pagesRemaining > 0, pagesRemaining };
+  }
+
+  /**
    * Scrape Google News front page for article links
    */
   async scrapeGoogleNewsFrontPage(url: string): Promise<GoogleNewsArticle[]> {
+    // Check browser rate limits before proceeding (Autonomous service should check this)
+    const scrapingStatus = this.canProceedWithScraping();
+    if (!scrapingStatus.canProceed) {
+      console.log('💤 Google News scraping paused (browser rate limit reached)');
+      return [];
+    }
+
     try {
       console.log(`🌐 Scraping Google News: ${url}`);
 
@@ -160,6 +184,13 @@ export class GoogleNewsService {
    * Follow article link and extract full content
    */
   async extractFullArticleContent(article: GoogleNewsArticle): Promise<GoogleNewsArticle> {
+    // Check browser rate limits before proceeding (Autonomous service should check this)
+    const scrapingStatus = this.canProceedWithScraping();
+    if (!scrapingStatus.canProceed) {
+      console.log('💤 Article content extraction paused (browser rate limit reached)');
+      return { ...article, fullContent: undefined };
+    }
+
     try {
       console.log(`📖 Reading full article: ${article.title}`);
 
@@ -574,7 +605,8 @@ export class GoogleNewsService {
 export function createGoogleNewsService(
   webScrapeService: WebScrapeService,
   openaiService: OpenAIService,
-  config?: Partial<GoogleNewsConfig>
+  config?: Partial<GoogleNewsConfig>,
+  browserService?: any
 ): GoogleNewsService {
-  return new GoogleNewsService(webScrapeService, openaiService, config);
+  return new GoogleNewsService(webScrapeService, openaiService, config, browserService);
 }

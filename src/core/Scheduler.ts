@@ -111,12 +111,12 @@ export class Scheduler {
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
       // 2. Check for deep news browsing (daily at 6:00 AM)
-      if (this.shouldPerformDeepNewsBrowsing()) {
+      if (this.shouldPerformDeepNewsBrowsing() && this.shouldBrowse(activeUsers.length) && this.canGoogleNewsProceed()) {
         await this.performDeepNewsBrowsing();
       }
 
       // 3. Check for quick news checks (every 3 hours)
-      if (this.shouldPerformQuickNewsCheck()) {
+      if (this.shouldPerformQuickNewsCheck() && this.shouldBrowse(activeUsers.length) && this.canGoogleNewsProceed()) {
         await this.performQuickNewsCheck();
       }
 
@@ -331,6 +331,20 @@ export class Scheduler {
     } catch (error) {
       console.error('❌ Error during quick news check:', error);
     }
+  }
+
+  /**
+   * Check if Google News can proceed with scraping based on browser limits
+   */
+  private canGoogleNewsProceed(): boolean {
+    if (!this.googleNewsService) return false;
+
+    const scrapingStatus = this.googleNewsService.canProceedWithScraping();
+    if (!scrapingStatus.canProceed) {
+      console.log(`💤 Google News paused (${scrapingStatus.pagesRemaining} pages remaining)`);
+      return false;
+    }
+    return true;
   }
 
   private async maintenance(): Promise<void> {

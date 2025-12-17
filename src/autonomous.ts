@@ -94,14 +94,14 @@ class AutonomousWhatsAppAgent {
       const scraper = createWebScrapeService();
       this.browser = new BrowserService(scraper, this.kb);
 
+      // Initialize Google News Service (pass browser service for rate limiting)
+      this.googleNewsService = createGoogleNewsService(scraper, this.openai, undefined, this.browser);
+
       // Initialize News Stack
       // Mock GoogleSearchService for processor if not available, or initialize properly
       const searchService = createGoogleSearchServiceFromEnv();
       const newsProcessor = new NewsProcessorService(this.openai, searchService, this.vectorStore);
       const newsService = createNewsScrapeService(scraper, newsProcessor, this.googleNewsService);
-
-      // Initialize Google News Service
-      this.googleNewsService = createGoogleNewsService(scraper, this.openai);
 
       // Initialize Blog Generation Service
       this.blogGenerationService = createBlogGenerationService(this.openai);
