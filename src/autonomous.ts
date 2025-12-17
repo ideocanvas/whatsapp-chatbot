@@ -1,32 +1,31 @@
 import 'dotenv/config';
-import { Scheduler } from './core/Scheduler';
+import * as fs from 'fs'; // Added for reading generated audio files
+import { DatabaseConfig } from './config/databaseConfig';
 import { Agent } from './core/Agent';
+import { Scheduler } from './core/Scheduler';
+import { ToolRegistry } from './core/ToolRegistry';
 import { ContextManager } from './memory/ContextManager';
 import { SummaryStore } from './memory/SummaryStore';
-import { ToolRegistry } from './core/ToolRegistry';
-import { BrowserService } from './services/BrowserService';
 import { ActionQueueService } from './services/ActionQueueService';
-import { WhatsAppService } from './services/whatsappService';
-import { MediaService } from './services/mediaService';
-import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
-import { WebScrapeService, createWebScrapeService } from './services/webScrapeService';
+import { BrowserService } from './services/BrowserService';
+import { UserProfileService } from './services/UserProfileService';
+import { BlogGenerationService, createBlogGenerationService } from './services/blogGenerationService';
+import { GoogleNewsService, createGoogleNewsService } from './services/googleNewsService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
-import { WebSearchTool } from './tools/WebSearchTool';
+import { MediaService } from './services/mediaService';
+import { NewsProcessorService } from './services/newsProcessorService';
+import { createNewsScrapeService } from './services/newsScrapeService';
+import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
+import { createWebScrapeService } from './services/webScrapeService';
+import { WhatsAppService } from './services/whatsappService';
+import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
-import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
-import { NewsScrapeService, createNewsScrapeService } from './services/newsScrapeService';
-import { NewsProcessorService } from './services/newsProcessorService';
-import { GoogleNewsService, createGoogleNewsService } from './services/googleNewsService';
-import { BlogGenerationService, createBlogGenerationService } from './services/blogGenerationService';
-import { DatabaseConfig } from './config/databaseConfig';
-import type { KnowledgeDocument } from './memory/KnowledgeBasePostgres';
-import * as fs from 'fs'; // Added for reading generated audio files
-import { UserProfileService } from './services/UserProfileService';
+import { WebSearchTool } from './tools/WebSearchTool';
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
- * 
+ *
  * This is the complete replacement for the reactive bot architecture.
  * Features autonomous browsing, proactive messaging, and intelligent memory management.
  */
@@ -62,14 +61,14 @@ class AutonomousWhatsAppAgent {
       this.openai = await createOpenAIServiceFromConfig();
       this.contextMgr = new ContextManager();
       this.summaryStore = new SummaryStore();
-      
+
       // Initialize database services using configuration switcher
       await DatabaseConfig.initialize();
       this.kb = DatabaseConfig.getKnowledgeBase(this.openai);
       this.historyStore = DatabaseConfig.getHistoryStore();
       this.vectorStore = DatabaseConfig.getVectorStoreService(this.openai);
       this.actionQueue = new ActionQueueService();
-      
+
       // Initialize User Profile Service
       this.userProfileService = new UserProfileService();
 
@@ -94,7 +93,7 @@ class AutonomousWhatsAppAgent {
       // 2. Initialize Browser & News Services
       const scraper = createWebScrapeService();
       this.browser = new BrowserService(scraper, this.kb);
-      
+
       // Initialize News Stack
       // Mock GoogleSearchService for processor if not available, or initialize properly
       const searchService = createGoogleSearchServiceFromEnv();
@@ -103,13 +102,13 @@ class AutonomousWhatsAppAgent {
 
       // Initialize Google News Service
       this.googleNewsService = createGoogleNewsService(scraper, this.openai);
-      
+
       // Initialize Blog Generation Service
       this.blogGenerationService = createBlogGenerationService(this.openai);
 
       // 3. Initialize Tool Registry
       this.tools = new ToolRegistry();
-      
+
       // Register Web Search
       if (searchService) {
         this.tools.registerTool(new WebSearchTool(searchService));
@@ -118,7 +117,7 @@ class AutonomousWhatsAppAgent {
       // Register NEW Tools
       this.tools.registerTool(new RecallHistoryTool(this.historyStore));
       this.tools.registerTool(new ScrapeNewsTool(newsService));
-      
+
       // Register Deep Research Tool
       if (this.browser) {
           this.tools.registerTool(new DeepResearchTool(this.browser));
@@ -141,7 +140,7 @@ class AutonomousWhatsAppAgent {
 
       this.isInitialized = true;
       console.log('✅ Autonomous WhatsApp Agent Initialized Successfully');
-      
+
       // Start background news service
       newsService.startBackgroundService(30);
 
@@ -164,20 +163,20 @@ class AutonomousWhatsAppAgent {
       } catch (error) {
         console.log('⚠️ Google Search Service not configured (missing API keys)');
       }
-      
+
       // Register Web Search Tool if available
       if (searchService) {
         const webSearchTool = new WebSearchTool(searchService);
         this.tools!.registerTool(webSearchTool);
         console.log('🔍 Web Search Tool registered');
       }
-      
+
       console.log(`🛠️ Tool Registry: ${this.tools!.getAvailableTools().length} tools available`);
-      
+
       if (this.tools!.getAvailableTools().length === 0) {
         console.log('⚠️ No tools available - agent will rely on knowledge base only');
       }
-      
+
     } catch (error) {
       console.error('❌ Tool initialization failed:', error);
       console.log('⚠️ Continuing with knowledge base only');
@@ -266,7 +265,7 @@ class AutonomousWhatsAppAgent {
 
     } catch (error) {
       console.error(`❌ Error processing message from ${userId}:`, error);
-      
+
       // Fallback response
       const fallback = "Sorry, I encountered an issue. Please try again.";
       if (process.env.DEV_MODE !== 'true') {
@@ -293,11 +292,11 @@ class AutonomousWhatsAppAgent {
     try {
       // 1. Download Media
       const mediaInfo = await this.mediaService.downloadAndSaveMedia(imageId, mimeType, sha256, 'image');
-      
+
       // 2. Analyze using Vision AI
       console.log(`👁️ Analyzing image: ${mediaInfo.filename}`);
       const analysis = await this.mediaService.analyzeImageWithOpenAI(mediaInfo.filepath);
-      
+
       // LOG USER MESSAGE (IMAGE) TO HISTORY
       // We store the analysis in the message text so it's searchable via Recall tool
       if (this.historyStore) {
@@ -321,9 +320,9 @@ class AutonomousWhatsAppAgent {
       // 3. Construct Augmented Message for Agent
       // We present the image analysis as system context or augmented user message
       const augmentedMessage = `[USER SENT AN IMAGE]\n\nImage Analysis:\n${analysis}\n\n${caption ? `User Caption: "${caption}"` : 'No caption provided.'}`;
-      
+
       console.log(`📝 Processing analyzed image as text context...`);
-      
+
       // 4. Pass to standard agent handler
       const response = await this.agent.handleUserMessage(userId, augmentedMessage);
 
@@ -372,11 +371,11 @@ class AutonomousWhatsAppAgent {
     try {
       // 2. Download Audio
       const mediaInfo = await this.mediaService.downloadAndSaveMedia(audioId, mimeType, sha256, 'audio');
-      
+
       // 3. Convert audio to WAV format for better transcription (fixes OGG/Opus issues)
       console.log(`🔄 Converting audio to WAV format: ${mediaInfo.filename}`);
       const convertedAudioPath = await this.mediaService.convertAudioToWav(mediaInfo.filepath);
-      
+
       // 4. Transcribe (Speech-to-Text)
       console.log(`👂 Transcribing audio: ${convertedAudioPath}`);
       // Assuming 'en' or auto-detect. You can change 'en' to undefined to auto-detect if supported.
@@ -431,7 +430,7 @@ class AutonomousWhatsAppAgent {
       if (uploadedMediaId) {
         // 8. Send Audio Message
         await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
-        
+
         // 9. Check for URLs and send them as text if present
         const urlRegex = /(https?:\/\/[^\s]+)/g;
         const links = textResponse.match(urlRegex);
@@ -440,9 +439,9 @@ class AutonomousWhatsAppAgent {
             // Deduplicate links
             const uniqueLinks = [...new Set(links)];
             const linkMessage = `🔗 *Links mentioned:*\n${uniqueLinks.join('\n')}`;
-            
+
             console.log(`🔗 Link(s) detected, sending text fallback to ${userId}`);
-            
+
             // Short delay to ensure audio arrives first on client
             await new Promise(resolve => setTimeout(resolve, 800));
             await this.whatsapp.sendMessage(userId, linkMessage);
@@ -533,7 +532,7 @@ class AutonomousWhatsAppAgent {
       // For text, just the text
       const inputToAgent = attachment ? processedMessage : message;
       const responseText = await this.agent.handleUserMessage(userId, inputToAgent);
-      
+
       // LOG AGENT RESPONSE
       if (this.historyStore) {
         await this.historyStore.storeMessage({
@@ -552,7 +551,7 @@ class AutonomousWhatsAppAgent {
           try {
               console.log(`🗣️ Generating audio response for Web UI...`);
               const audioInfo = await this.mediaService.synthesizeAudio(responseText);
-              
+
               if (fs.existsSync(audioInfo.filepath)) {
                   const buffer = fs.readFileSync(audioInfo.filepath);
                   // Convert to base64 Data URI
@@ -606,7 +605,7 @@ class AutonomousWhatsAppAgent {
     if (!this.isInitialized || !this.kb) {
       return [];
     }
-    
+
     try {
       const documents = await (this.kb as any).getRecentDocuments(limit);
       return documents.map((doc: any) => ({
@@ -630,7 +629,7 @@ class AutonomousWhatsAppAgent {
     if (!this.isInitialized || !this.kb) {
       return [];
     }
-    
+
     try {
       const documents = await (this.kb as any).searchContent(query, limit);
       return documents.map((doc: any) => ({
