@@ -257,23 +257,6 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.post('/api/simulate/proactive', this.requireAuth.bind(this), async (req: Request, res: Response) => {
-      try {
-        const { userId = 'web-user', content } = req.body;
-        const agent = getAutonomousAgent();
-
-        this.logActivity(`Simulating proactive message to ${userId}`);
-
-        // Simulate proactive messaging logic
-        setTimeout(() => {
-          this.logActivity(`Proactive message sent to ${userId}: "Check out this interesting content!"`);
-        }, 1000);
-
-        res.json({ success: true, message: 'Proactive message simulation started' });
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to simulate proactive message' });
-      }
-    });
 
 
     // GET endpoint for memory search (frontend compatibility)

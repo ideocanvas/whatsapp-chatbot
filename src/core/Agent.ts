@@ -46,10 +46,10 @@ export class Agent {
 
     // 5. Add "UpdateProfileTool" specifically for this user context
     const profileTool = new UpdateProfileTool(this.profileService, userId);
-    
+
     // Create a temporary registry for this request that includes the base tools + context-aware tool
     const requestTools = [...this.tools.getOpenAITools(), profileTool.toOpenAISchema()];
-    
+
     // We need a way to execute this tool since it's not in the global registry
     // We can create a temporary registry wrapper or handle it inside generateResponse
     const tempRegistry = new ToolRegistry();
@@ -63,7 +63,7 @@ export class Agent {
 
     // 6. Generate Response
     const history = this.contextMgr.getHistory(userId);
-    
+
     const response = await this.generateResponseWithContext({
       systemPrompt: systemContext,
       history: history,
@@ -76,46 +76,6 @@ export class Agent {
     return this.optimizeForMobile(response);
   }
 
-  /**
-   * Entry point for Autonomous Thoughts (proactive mode)
-   */
-  async generateProactiveMessage(userId: string, discoveredContent: string): Promise<string | null> {
-    // Check if we should bother the user (cooldown and relevance)
-    if (!this.actionQueue.canSendProactiveMessage(userId)) {
-      console.log(`⏰ Proactive message cooldown active for ${userId}`);
-      return null;
-    }
-
-    const userInterests = this.contextMgr.getUserInterests(userId);
-    const history = this.contextMgr.getHistory(userId).slice(-3); // Last 3 messages
-
-    // Ask LLM if we should share this discovery
-    const prompt = `
-You discovered this interesting content: "${discoveredContent}"
-
-Based on the user's conversation history and interests, decide if you should share this:
-- User interests: ${userInterests.join(', ') || 'Not yet discovered'}
-- Recent conversation: ${JSON.stringify(history)}
-
-Decision guidelines:
-✅ Share if: Content matches user interests, it's genuinely interesting, and it's been >15 mins since last message
-❌ Skip if: Content doesn't match interests, it's trivial, or user was recently active
-
-If you decide to share, write a short, natural WhatsApp message (under 30 words).
-If you decide to skip, reply exactly with: SKIP
-
-Your decision:`;
-
-    const decision = await this.openai.generateTextResponse(prompt);
-    
-    if (decision.trim().toUpperCase() === 'SKIP') {
-      console.log(`🤖 Decision: Skip proactive message to ${userId}`);
-      return null;
-    }
-
-    console.log(`🤖 Decision: Send proactive message to ${userId}`);
-    return this.optimizeForMobile(decision);
-  }
 
   /**
    * Generate response with full context and tool calling
@@ -147,7 +107,7 @@ Your decision:`;
       return response;
     } catch (error) {
       console.error('❌ Agent response generation failed:', error);
-      
+
       // Fallback response
       return `I encountered an issue processing your message. ${this.getFallbackResponse(options.userMessage)}`;
     }
@@ -205,16 +165,16 @@ ${profileContext || ''}
     // Remove markdown blocks
     let optimized = response.replace(/```[\s\S]*?```/g, '');
     optimized = optimized.replace(/`[^`]*`/g, match => match.replace(/`/g, ''));
-    
+
     // Limit to 50 words if too long
     const words = optimized.split(/\s+/);
     if (words.length > 50) {
       optimized = words.slice(0, 50).join(' ') + '...';
     }
-    
+
     // Ensure proper spacing for mobile readability
     optimized = optimized.replace(/\n{3,}/g, '\n\n');
-    
+
     return optimized.trim();
   }
 
@@ -223,7 +183,7 @@ ${profileContext || ''}
    */
   private getFallbackResponse(userMessage: string): string {
     const lowerMessage = userMessage.toLowerCase();
-    
+
     if (lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
       return 'Hello! 👋 How can I help you today?';
     }
@@ -233,41 +193,10 @@ ${profileContext || ''}
     if (lowerMessage.includes('time')) {
       return `The current time is: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
     }
-    
+
     return 'Please try asking your question again or rephrase it.';
   }
 
-  /**
-   * Check if content is relevant to user interests for proactive messaging
-   */
-  isContentRelevantToUser(userId: string, content: string): boolean {
-    const userInterests = this.contextMgr.getUserInterests(userId);
-    if (userInterests.length === 0) return false;
-
-    const lowerContent = content.toLowerCase();
-    
-    return userInterests.some(interest => 
-      lowerContent.includes(interest.toLowerCase()) ||
-      this.calculateRelevanceScore(interest, content) > 0.3
-    );
-  }
-
-  /**
-   * Calculate relevance score between interest and content
-   */
-  private calculateRelevanceScore(interest: string, content: string): number {
-    const interestWords = interest.toLowerCase().split(/\s+/);
-    const contentWords = content.toLowerCase().split(/\s+/);
-    
-    let matches = 0;
-    interestWords.forEach(word => {
-      if (contentWords.some(contentWord => contentWord.includes(word) || word.includes(contentWord))) {
-        matches++;
-      }
-    });
-    
-    return matches / Math.max(interestWords.length, 1);
-  }
 
   /**
    * [NEW] Batch Process News: Deduplicates and Summarizes
@@ -277,7 +206,7 @@ ${profileContext || ''}
     if (!rawNewsItems || rawNewsItems.length === 0) return null;
 
     const userInterests = this.contextMgr.getUserInterests(userId);
-    
+
     // If no interests are defined, we strictly do not generate a digest (as requested)
     if (userInterests.length === 0) {
         console.log(`🔕 skipping digest for ${userId}: No user interests defined.`);
@@ -312,7 +241,7 @@ If NO stories match the user's interests, respond exactly with: "NO_MATCHES"
 
     try {
       const response = await this.openai.generateTextResponse(prompt);
-      
+
       if (response.includes('NO_MATCHES')) {
         return null;
       }

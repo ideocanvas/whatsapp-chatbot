@@ -18,7 +18,6 @@ export class ActionQueueService {
   private processing: boolean = false;
   private readonly MAX_RETRIES = 3;
   private readonly RATE_LIMIT_DELAY = 2000; // 2 seconds between messages
-  private readonly PROACTIVE_COOLDOWN = 15 * 60 * 1000; // 15 minutes between proactive messages
   private messageSender?: (userId: string, content: string) => Promise<boolean>;
 
   constructor() {
@@ -43,9 +42,9 @@ export class ActionQueueService {
     metadata?: any;
   } = {}): string {
     const actionId = `action_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    
+
     const scheduledFor = new Date(Date.now() + (options.delayMs || 0));
-    
+
     const action: QueuedAction = {
       id: actionId,
       type: options.isProactive ? 'proactive' : 'message',
@@ -65,7 +64,7 @@ export class ActionQueueService {
     });
 
     console.log(`📬 Queued ${action.type} message for ${userId} (priority: ${action.priority})`);
-    
+
     return actionId;
   }
 
@@ -90,7 +89,7 @@ export class ActionQueueService {
     const now = new Date();
 
     // Find the next actionable item (scheduled for now or earlier)
-    const nextActionIndex = this.queue.findIndex(action => 
+    const nextActionIndex = this.queue.findIndex(action =>
       action.scheduledFor <= now
     );
 
@@ -104,12 +103,12 @@ export class ActionQueueService {
     try {
       // Simulate action execution (will be integrated with WhatsApp service)
       await this.executeAction(action);
-      
+
       console.log(`✅ Action completed: ${action.type} to ${action.userId}`);
-      
+
     } catch (error) {
       console.error(`❌ Action failed: ${action.type} to ${action.userId}`, error);
-      
+
       // Retry logic
       if (action.retryCount < this.MAX_RETRIES) {
         action.retryCount++;
@@ -123,7 +122,7 @@ export class ActionQueueService {
 
     // Rate limiting delay
     await new Promise(resolve => setTimeout(resolve, this.RATE_LIMIT_DELAY));
-    
+
     this.processing = false;
   }
 
@@ -132,7 +131,7 @@ export class ActionQueueService {
    */
   private async executeAction(action: QueuedAction): Promise<void> {
     console.log(`📤 Executing ${action.type} action for ${action.userId}`);
-    
+
     if (!this.messageSender) {
       console.warn('⚠️ No message sender registered in ActionQueue! Message logged but not sent.');
       return;
@@ -141,7 +140,7 @@ export class ActionQueueService {
     try {
       // Send via the registered callback
       const success = await this.messageSender(action.userId, action.content);
-      
+
       if (!success) {
         throw new Error('Message sender returned false');
       }
@@ -151,55 +150,17 @@ export class ActionQueueService {
     }
   }
 
-  /**
-   * Check if a user has a proactive message cooldown
-   */
-  canSendProactiveMessage(userId: string): boolean {
-    const lastProactive = this.getLastProactiveMessageTime(userId);
-    if (!lastProactive) return true;
-    
-    const cooldownRemaining = lastProactive.getTime() + this.PROACTIVE_COOLDOWN - Date.now();
-    return cooldownRemaining <= 0;
-  }
-
-  /**
-   * Get time until next proactive message can be sent to a user
-   */
-  getProactiveCooldownRemaining(userId: string): number {
-    const lastProactive = this.getLastProactiveMessageTime(userId);
-    if (!lastProactive) return 0;
-    
-    const cooldownRemaining = lastProactive.getTime() + this.PROACTIVE_COOLDOWN - Date.now();
-    return Math.max(0, cooldownRemaining);
-  }
-
-  /**
-   * Get the last proactive message time for a user
-   */
-  private getLastProactiveMessageTime(userId: string): Date | null {
-    const proactiveActions = this.queue.filter(action => 
-      action.type === 'proactive' && action.userId === userId
-    ).concat(
-      // Would also check completed actions from a log in production
-      []
-    );
-
-    if (proactiveActions.length === 0) return null;
-    
-    return new Date(Math.max(...proactiveActions.map(a => a.scheduledFor.getTime())));
-  }
 
   /**
    * Get queue statistics
    */
   getQueueStats() {
     const now = new Date();
-    
+
     return {
       totalQueued: this.queue.length,
       processing: this.processing,
       messages: this.queue.filter(a => a.type === 'message').length,
-      proactive: this.queue.filter(a => a.type === 'proactive').length,
       delayed: this.queue.filter(a => a.scheduledFor > now).length,
       ready: this.queue.filter(a => a.scheduledFor <= now).length,
       averagePriority: this.queue.reduce((sum, a) => sum + a.priority, 0) / this.queue.length || 0
