@@ -145,39 +145,6 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
-   * Initialize and register all tools
-   */
-  private async initializeTools(): Promise<void> {
-    try {
-      // Initialize Google Search Service if configured
-      let searchService: GoogleSearchService | undefined;
-      try {
-        searchService = createGoogleSearchServiceFromEnv();
-        console.log('✅ Google Search Service initialized');
-      } catch (error) {
-        console.log('⚠️ Google Search Service not configured (missing API keys)');
-      }
-
-      // Register Web Search Tool if available
-      if (searchService) {
-        const webSearchTool = new WebSearchTool(searchService);
-        this.tools!.registerTool(webSearchTool);
-        console.log('🔍 Web Search Tool registered');
-      }
-
-      console.log(`🛠️ Tool Registry: ${this.tools!.getAvailableTools().length} tools available`);
-
-      if (this.tools!.getAvailableTools().length === 0) {
-        console.log('⚠️ No tools available - agent will rely on knowledge base only');
-      }
-
-    } catch (error) {
-      console.error('❌ Tool initialization failed:', error);
-      console.log('⚠️ Continuing with knowledge base only');
-    }
-  }
-
-  /**
    * Start the autonomous agent system
    */
   start(): void {
