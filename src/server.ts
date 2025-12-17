@@ -1,11 +1,10 @@
+import cookieParser from 'cookie-parser';
 import 'dotenv/config';
 import express from 'express';
-import cookieParser from 'cookie-parser';
 import { startAutonomousAgent } from './autonomous';
 import { DashboardRoutes } from './routes/dashboard';
 import { WebhookRoutes } from './routes/webhook';
 import { WhatsAppService } from './services/whatsappService';
-import { MediaService } from './services/mediaService';
 
 /**
  * Main server that integrates both autonomous agent and web dashboard
@@ -20,7 +19,7 @@ class AutonomousServer {
     this.app = express();
     this.port = parseInt(process.env.PORT || '3000');
     this.dashboardRoutes = new DashboardRoutes();
-    
+
     this.setupMiddleware();
     // Note: setupRoutes() will be called after agent initialization in start() method
   }
@@ -28,7 +27,7 @@ class AutonomousServer {
   private setupMiddleware(): void {
     // Cookie parser middleware
     this.app.use(cookieParser());
-    
+
     // JSON parsing middleware - CRITICAL FIX FOR SIGNATURE VERIFICATION
     // We must capture the raw buffer before JSON parsing happens
     this.app.use(express.json({
@@ -37,10 +36,10 @@ class AutonomousServer {
         req.rawBody = buf;
       }
     }));
-    
+
     // URL-encoded parsing middleware
     this.app.use(express.urlencoded({ extended: true }));
-    
+
     // CORS middleware for web interface
     this.app.use((req, res, next) => {
       res.header('Access-Control-Allow-Origin', '*');
@@ -57,18 +56,18 @@ class AutonomousServer {
       phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
       apiVersion: 'v19.0'
     };
-    
+
     if (whatsappConfig.accessToken && whatsappConfig.phoneNumberId) {
       const isDevMode = process.env.DEV_MODE === 'true';
       const whatsappService = new WhatsAppService(whatsappConfig, isDevMode);
-      
+
       this.webhookRoutes = new WebhookRoutes(
         whatsappService,
         process.env.WHATSAPP_VERIFY_TOKEN || 'default-verify-token',
         process.env.WHATSAPP_APP_SECRET || '',
         whatsappConfig
       );
-      
+
       // Mount at /webhook
       this.app.use('/webhook', this.webhookRoutes.getRouter());
       console.log(`✅ WhatsApp webhook routes enabled`);
@@ -79,8 +78,8 @@ class AutonomousServer {
 
     // Health check endpoint
     this.app.get('/health', (req, res) => {
-      res.status(200).json({ 
-        status: 'healthy', 
+      res.status(200).json({
+        status: 'healthy',
         timestamp: new Date().toISOString(),
         mode: process.env.DEV_MODE === 'true' ? 'development' : 'production'
       });
@@ -109,16 +108,16 @@ class AutonomousServer {
   async start(): Promise<void> {
     try {
       console.log('🚀 Starting Autonomous WhatsApp Agent Server...');
-      
+
       // Start the autonomous agent first
       await startAutonomousAgent();
-      
+
       // Now set up routes after agent is initialized
       this.setupRoutes();
-      
+
       // Determine host based on environment variable or fallback to 0.0.0.0 for external access
       const host = process.env.HOST || '0.0.0.0';
-      
+
       // Start the HTTP server
       this.app.listen(this.port, host, () => {
         console.log('\n' + '='.repeat(60));
@@ -126,7 +125,7 @@ class AutonomousServer {
         console.log('='.repeat(60));
         console.log(`📍 Server Host: ${host}`);
         console.log(`📍 Server Port: ${this.port}`);
-        
+
         // Show appropriate URLs based on host binding
         if (host === '0.0.0.0') {
           console.log(`🌐 Web Dashboard: http://localhost:${this.port} (local)`);
@@ -134,7 +133,7 @@ class AutonomousServer {
         } else {
           console.log(`🌐 Web Dashboard: http://localhost:${this.port}`);
         }
-        
+
         if (process.env.DEV_MODE === 'true') {
           console.log('\n💡 DEVELOPMENT MODE ACTIVATED');
           console.log('📱 Messages will be logged to console');
@@ -143,7 +142,7 @@ class AutonomousServer {
           console.log('\n⚡ PRODUCTION MODE');
           console.log('📱 Messages will be sent to WhatsApp');
         }
-        
+
         if (this.webhookRoutes) {
           if (host === '0.0.0.0') {
             console.log(`🔗 Webhook URL: http://[your-ip]:${this.port}/webhook`);
@@ -151,7 +150,7 @@ class AutonomousServer {
             console.log(`🔗 Webhook URL: http://localhost:${this.port}/webhook`);
           }
         }
-        
+
         console.log(`❤️  Health Check: http://localhost:${this.port}/health`);
         console.log('='.repeat(60) + '\n');
       });
@@ -178,7 +177,7 @@ export { AutonomousServer };
 if (require.main === module) {
   const server = new AutonomousServer();
   server.start().catch(console.error);
-  
+
   // Graceful shutdown
   process.on('SIGINT', () => server.stop());
   process.on('SIGTERM', () => server.stop());
