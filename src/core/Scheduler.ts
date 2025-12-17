@@ -250,7 +250,9 @@ export class Scheduler {
   }
 
   private shouldBrowse(activeUserCount: number): boolean {
-    return true;
+    // Check if browser has reached its hourly limit
+    const browserStats = this.browser.getStats();
+    return browserStats.pagesVisitedThisHour < 20; // MAX_PAGES_PER_HOUR
   }
 
   /**
@@ -258,11 +260,11 @@ export class Scheduler {
    */
   private shouldPerformDeepNewsBrowsing(): boolean {
     if (!this.googleNewsService) return false;
-    
+
     const now = new Date();
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
-    
+
     // Check if it's approximately 6:00 AM
     return currentHour === 6 && currentMinute < 10;
   }
@@ -272,10 +274,10 @@ export class Scheduler {
    */
   private shouldPerformQuickNewsCheck(): boolean {
     if (!this.googleNewsService) return false;
-    
+
     const now = new Date();
     const currentHour = now.getHours();
-    
+
     // Check if current hour is divisible by 3 (0, 3, 6, 9, 12, 15, 18, 21)
     return currentHour % 3 === 0 && now.getMinutes() < 10;
   }
@@ -290,22 +292,22 @@ export class Scheduler {
     }
 
     console.log('🌅 Starting deep news browsing (6:00 AM)');
-    
+
     try {
       // 1. Perform deep news browsing
       const articles = await this.googleNewsService.performDeepNewsBrowsing();
-      
+
       // 2. Generate blog posts from articles
       if (articles.length > 0) {
         const blogPosts = await this.blogGenerationService.generateBlogPosts(articles);
         console.log(`📝 Generated ${blogPosts.length} blog posts`);
-        
+
         // 3. Generate daily digest
         const today = new Date();
         await this.blogGenerationService.generateDailyDigest(today);
         console.log('📅 Generated daily digest');
       }
-      
+
       console.log('✅ Deep news browsing completed');
     } catch (error) {
       console.error('❌ Error during deep news browsing:', error);
@@ -322,7 +324,7 @@ export class Scheduler {
     }
 
     console.log('⚡ Performing quick news check');
-    
+
     try {
       const articles = await this.googleNewsService.performQuickNewsCheck();
       console.log(`📰 Quick check: ${articles.length} articles processed`);
