@@ -194,15 +194,24 @@ describe('WebScrapeService', () => {
       // Mock sparse content (less than 300 characters)
       mockPage.evaluate.mockResolvedValue('Short content');
 
+      // Ensure the OpenAI service is properly mocked and configured
+      // We need to mock the instance that's actually used, not just the prototype
+      const mockOpenAIServiceInstance = {
+        isConfigured: jest.fn().mockReturnValue(true),
+        analyzeImage: jest.fn().mockResolvedValue('Analyzed image content')
+      };
+
+      // Mock the service creation to return our instance
+      (webScrapeService as any).openaiService = mockOpenAIServiceInstance;
+
       const url = 'https://example.com';
       const result = await webScrapeService.scrapeUrl(url);
 
-      // Even when switching to visual content, the method property might remain 'html'
-      // based on the current implementation behavior observed.
-      expect(result.method).toBe('html');
+      // When visual extraction succeeds, the method should be 'visual'
+      expect(result.method).toBe('visual');
 
       // Verify visual extraction was indeed triggered
-      expect(mockOpenAIService.prototype.analyzeImage).toHaveBeenCalled();
+      expect(mockOpenAIServiceInstance.analyzeImage).toHaveBeenCalled();
     });
 
     it('should handle missing last update date gracefully', async () => {
