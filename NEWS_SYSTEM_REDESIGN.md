@@ -277,14 +277,6 @@ flowchart TD
 7. **Continuous Discovery**: Effective source discovery mechanism
 8. **Comprehensive Coverage**: Daily and weekly digests for easy consumption
 
-## Migration Strategy
-
-1. **Phase 1**: Implement core blog generation infrastructure
-2. **Phase 2**: Develop dashboard interface
-3. **Phase 3**: Migrate from old news service to Google News
-4. **Phase 4**: Implement discovery mechanism
-5. **Phase 5**: Add enhanced features and polish
-
 ## Monitoring and Maintenance
 
 1. **Generation Logs**: Track successful/failed blog post generation

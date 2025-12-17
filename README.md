@@ -397,11 +397,6 @@ The system uses PostgreSQL with Prisma ORM to manage persistent storage. Here's 
 - **Key Fields**: content, vector (BYTEA embeddings), source, category, tags, relevanceScore
 - **Service**: [`KnowledgeBasePostgres`](src/memory/KnowledgeBasePostgres.ts)
 
-**Document** - Alternative vector storage implementation for document embeddings
-- **Purpose**: Vector-based document storage for RAG operations
-- **Key Fields**: content, vector (BYTEA), source, date, category, title
-- **Service**: [`VectorStoreServicePostgres`](src/services/VectorStoreServicePostgres.ts)
-
 **ConversationSummary** - Stores AI-generated summaries of conversations for efficient recall
 - **Purpose**: Compressed conversation memory with deduplication
 - **Key Fields**: userId, summary, contextHash (for deduplication), timestamp

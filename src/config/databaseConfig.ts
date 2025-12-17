@@ -1,7 +1,6 @@
 import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
-import { VectorStoreServicePostgres } from '../services/VectorStoreServicePostgres';
 import { OpenAIService } from '../services/openaiService';
 import { PrismaDatabaseUtils } from './prisma';
 
@@ -31,13 +30,6 @@ export class DatabaseConfig {
   }
 
   /**
-   * Get the VectorStoreService implementation (PostgreSQL)
-   */
-  static getVectorStoreService(openaiService: OpenAIService): VectorStoreServicePostgres {
-    return new VectorStoreServicePostgres(openaiService);
-  }
-
-  /**
    * Check if PostgreSQL is being used (always true now)
    */
   static isUsingPostgres(): boolean {
@@ -55,7 +47,7 @@ export class DatabaseConfig {
     vectorDocuments: number;
   }> {
     const stats = await PrismaDatabaseUtils.getDatabaseStats();
-    
+
     return {
       databaseType: 'PostgreSQL',
       conversationLogs: stats.conversationLogs,
@@ -89,7 +81,7 @@ export class DatabaseConfig {
     oldVectorDocuments: number;
   }> {
     const result = await PrismaDatabaseUtils.cleanupOldData();
-    
+
     return {
       oldConversations: result.oldConversations,
       oldKnowledge: result.oldKnowledge,
