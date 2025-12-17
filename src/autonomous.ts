@@ -20,6 +20,7 @@ import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new t
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { SetReminderTool } from './tools/SetReminderTool';
 import { WebSearchTool } from './tools/WebSearchTool';
+import { ConversationAnalyticsTool } from './tools/ConversationAnalyticsTool';
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
@@ -109,6 +110,7 @@ class AutonomousWhatsAppAgent {
 
       // Register NEW Tools
       this.tools.registerTool(new RecallHistoryTool(this.historyStore));
+      this.tools.registerTool(new ConversationAnalyticsTool(this.historyStore));
 
       // Register Deep Research Tool
       if (this.browser) {
