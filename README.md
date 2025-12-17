@@ -16,7 +16,7 @@ This is a complete architectural transformation from a **Reactive Bot** (Input �
 - **Autonomous Browsing**: 10 pages/hour limit with 2-5 second delays between pages
 - **Proactive Messaging**: User interest discovery and relevant content sharing
 
-### 🌐 Web Dashboard
+### 🌐 Dashboard Features
 
 - **Real-time Monitoring**: System stats, activity logs, memory visualization
 - **Interactive Chat**: Test the bot directly in the web interface
@@ -128,7 +128,7 @@ GOOGLE_SEARCH_ENGINE_ID=your_engine_id_here
 
 ## 🤖 Autonomous Agent Features
 
-### Three-Tier Memory System
+### Memory System Details
 
 - **Short-Term Context**: 1-hour conversation window with automatic user interest discovery
 - **Long-Term Knowledge**: Vector database storing facts learned from autonomous browsing
@@ -155,7 +155,7 @@ GOOGLE_SEARCH_ENGINE_ID=your_engine_id_here
 - **No markdown blocks** or complex formatting
 - **Emoji integration** for personality
 
-## 🌐 Web Dashboard
+## 🌐 Dashboard Interface
 
 ### Real-time Monitoring
 
@@ -229,7 +229,7 @@ WEBHOOK_URL=https://abc123.ngrok.io
 
 ## 📂 Project Structure
 
-```
+```bash
 whatsapp-chatbot/
 ├── src/
 │   ├── core/                    # Core Agent Components
@@ -237,7 +237,7 @@ whatsapp-chatbot/
 │   │   ├── Scheduler.ts        # The Heartbeat (1-minute ticks)
 │   │   ├── ToolRegistry.ts     # Dynamic Tool Management
 │   │   └── BaseTool.ts         # Tool Interface
-│   ├── memory/                 # Three-Tier Memory System
+│   ├── memory/                 # Memory System
 │   │   ├── ContextManager.ts   # Short-term (1h window)
 │   │   ├── KnowledgeBase.ts    # Long-term Vector Store
 │   │   └── HistoryStore.ts     # Conversation Logs (SQL)
@@ -315,11 +315,13 @@ whatsapp-chatbot/
 Autonomous behavior is configured through **environment variables** and **hardcoded constants** in the service classes:
 
 **Environment Variables:**
+
 - `AUTONOMOUS_TICK_INTERVAL_MS`: Scheduler tick interval (default: 60000ms)
 - `AUTONOMOUS_MAINTENANCE_INTERVAL_MS`: Maintenance interval (default: 300000ms)
 - `AUTONOMOUS_BATCH_FLUSH_INTERVAL`: News batch flush interval (default: 30 ticks)
 
 **Service Constants:**
+
 - Browser limits: `MAX_PAGES_PER_HOUR = 20` in [`BrowserService`](src/services/BrowserService.ts)
 - Memory settings: Hardcoded in respective memory management classes
 - Messaging delays: Configured in [`ActionQueueService`](src/services/ActionQueueService.ts)
@@ -331,7 +333,8 @@ Autonomous behavior is configured through **environment variables** and **hardco
     }
   }
 }
-```
+
+```json
 
 ## 📊 Rate Limits and Quotas
 
