@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { cleanLLMResponse } from '../utils/responseCleaner';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
-import { executeTool } from '../tools';
 import { ToolRegistry } from '../core/ToolRegistry';
 import { AIConfig } from '../types/aiConfig';
 import { ConfigLoader } from '../utils/configLoader';
@@ -163,14 +162,14 @@ export class OpenAIService {
         return cleanLLMResponse(message.content || 'I apologize, but I could not generate a response.');
       }
 
-      // Process tool calls using appropriate method
-      let toolResults;
+      // MODIFIED: Only use ToolRegistry. Removed legacy processToolCalls fallback.
+      let toolResults: any[] = [];
       if (toolRegistry) {
-        // Use new BaseTool system via ToolRegistry
         toolResults = await this.processToolCallsWithRegistry(message.tool_calls, toolRegistry);
       } else {
-        // Use old tool system
-        toolResults = await this.processToolCalls(message.tool_calls);
+        // Fallback if no registry provided (or log warning)
+        console.warn('⚠️ No ToolRegistry provided for tool execution.');
+        return "Error: Internal configuration issue (Missing ToolRegistry).";
       }
 
       // Add tool results to the conversation
@@ -207,47 +206,6 @@ export class OpenAIService {
     return 'I apologize, but I encountered an issue while processing your request. Please try again.';
   }
 
-  /**
-   * Process tool calls by executing the appropriate tools
-   */
-  private async processToolCalls(toolCalls: any[]): Promise<any[]> {
-    const results: any[] = [];
-
-    for (const toolCall of toolCalls) {
-      try {
-        console.log('🛠️ Processing tool call:', {
-          toolName: toolCall.function.name,
-          arguments: toolCall.function.arguments
-        });
-
-        const args = JSON.parse(toolCall.function.arguments);
-        const result = await executeTool(toolCall.function.name, args);
-
-        results.push({
-          tool_call_id: toolCall.id,
-          result: result
-        });
-
-        console.log('✅ Tool execution completed:', {
-          toolName: toolCall.function.name,
-          resultLength: typeof result === 'string' ? result.length : 'object'
-        });
-
-      } catch (error) {
-        console.error('❌ Tool execution failed:', {
-          toolName: toolCall.function.name,
-          error: error instanceof Error ? error.message : `${error}`
-        });
-
-        results.push({
-          tool_call_id: toolCall.id,
-          error: error instanceof Error ? error.message : 'Tool execution failed'
-        });
-      }
-    }
-
-    return results;
-  }
 
   /**
    * Process tool calls using ToolRegistry (for new BaseTool system)

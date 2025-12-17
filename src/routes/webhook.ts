@@ -1,10 +1,8 @@
-import { Router, Request, Response } from 'express';
-import { WhatsAppService } from '../services/whatsappService';
-import { MediaService } from '../services/mediaService';
+import { Request, Response, Router } from 'express';
 import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
-import { CryptoUtils } from '../utils/crypto';
+import { WhatsAppService } from '../services/whatsappService';
 import { WhatsAppMessage } from '../types/whatsapp';
-import { getToolSchemas } from '../tools';
+import { CryptoUtils } from '../utils/crypto';
 // Import the Autonomous Agent getter
 import { getAutonomousAgent } from '../autonomous';
 
@@ -56,7 +54,7 @@ export class WebhookRoutes {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-    
+
     // Log verification attempt for debugging
     console.log(`Webhook Verification: Mode=${mode}, Token=${token?.toString().substring(0,3)}...`);
 
@@ -81,7 +79,7 @@ export class WebhookRoutes {
         const signature = req.headers['x-hub-signature-256'] as string;
         // FIX: Use rawBody captured by middleware in server.ts
         const rawBody = (req as any).rawBody?.toString() || JSON.stringify(req.body);
-        
+
         if (!CryptoUtils.verifySignature(this.appSecret, rawBody, signature)) {
           console.warn('Invalid webhook signature');
           res.sendStatus(401);
@@ -132,10 +130,10 @@ export class WebhookRoutes {
                 } else if (message.type === 'image' && message.image) {
                   // Image Message
                   console.log(`🖼️ Processing image message from ${message.from}`);
-                  
+
                   // Extract caption if available
                   const caption = message.image.caption;
-                  
+
                   agent.handleImageMessage(
                     message.from,
                     message.image.id,
@@ -147,14 +145,14 @@ export class WebhookRoutes {
                 } else if (message.type === 'audio' && message.audio) {
                   // ✅ NEW: Handle Audio Messages
                   console.log(`🎤 Processing audio message from ${message.from}`);
-                  
+
                   agent.handleAudioMessage(
                     message.from,
                     message.audio.id,
                     message.audio.mime_type,
                     message.audio.sha256
                   ).catch(err => console.error('Agent audio processing error:', err));
-                  
+
                 } else {
                   console.log(`Unsupported message type: ${message.type}`);
                 }
