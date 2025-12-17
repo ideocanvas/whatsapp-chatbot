@@ -11,16 +11,16 @@ import { BrowserService } from './services/BrowserService';
 import { UserProfileService } from './services/UserProfileService';
 import { BlogGenerationService, createBlogGenerationService } from './services/blogGenerationService';
 import { GoogleNewsService, createGoogleNewsService } from './services/googleNewsService';
-import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
+import { createGoogleSearchServiceFromEnv } from './services/googleSearchService';
 import { MediaService } from './services/mediaService';
 import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
 import { createWebScrapeService } from './services/webScrapeService';
 import { WhatsAppService } from './services/whatsappService';
-import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
+import { ConversationAnalyticsTool } from './tools/ConversationAnalyticsTool';
+import { DeepResearchTool } from './tools/DeepResearchTool';
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { SetReminderTool } from './tools/SetReminderTool';
 import { WebSearchTool } from './tools/WebSearchTool';
-import { ConversationAnalyticsTool } from './tools/ConversationAnalyticsTool';
 
 /**
  * Autonomous WhatsApp Agent Main Entry Point
@@ -40,7 +40,6 @@ class AutonomousWhatsAppAgent {
   private mediaService?: MediaService; // Add MediaService
   private openai?: OpenAIService;
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
-  private vectorStore?: any; // VectorStoreService or VectorStoreServicePostgres
   private summaryStore?: SummaryStore;
   private userProfileService?: UserProfileService;
   private googleNewsService?: GoogleNewsService;
@@ -65,7 +64,6 @@ class AutonomousWhatsAppAgent {
       await DatabaseConfig.initialize();
       this.kb = DatabaseConfig.getKnowledgeBase(this.openai);
       this.historyStore = DatabaseConfig.getHistoryStore();
-      this.vectorStore = DatabaseConfig.getVectorStoreService(this.openai);
       this.actionQueue = new ActionQueueService();
 
       // Initialize User Profile Service
