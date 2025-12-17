@@ -37,12 +37,14 @@ export class BrowserService {
   private readonly DATA_DIR = path.join(process.cwd(), 'data');
   private readonly FAVORITES_PATH = path.join(process.cwd(), 'data', 'favorites.json');
   private readonly TRACKER_PATH = path.join(process.cwd(), 'data', 'link_tracker.json');
+  private readonly STATE_PATH = path.join(process.cwd(), 'data', 'browser_state.json');
 
   // Limits
   private readonly MAX_PAGES_PER_HOUR = 20;
   private readonly LINK_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   private pagesVisitedThisHour = 0;
+  private currentHourStart = 0;
 
   // New control flags
   private isSurfing: boolean = false;
@@ -65,14 +67,16 @@ export class BrowserService {
   private async initialize() {
     this.loadFavorites();
     this.loadLinkTracker();
+    this.loadBrowserState();
 
     try { this.openai = await createOpenAIServiceFromConfig(); } catch (e) { console.error('Browser: OpenAI init failed'); }
     try { this.googleSearch = createGoogleSearchServiceFromEnv(); } catch (e) { console.warn('Browser: Google Search not configured'); }
 
-    // Hourly Reset
+    // Hourly Reset - check if we need to reset based on persisted state
+    this.checkAndResetHourlyLimit();
+
     setInterval(() => {
-        this.pagesVisitedThisHour = 0;
-        console.log('🔄 Browser hourly limit reset');
+        this.checkAndResetHourlyLimit();
         this.saveLinkTracker(); // Periodic save
     }, 3600 * 1000);
   }
@@ -123,6 +127,7 @@ export class BrowserService {
         hub.lastVisited = Date.now();
         hub.visitCount++;
         this.saveFavorites();
+        this.saveBrowserState();
 
         console.log(`🔍 Found ${candidates.length} candidate articles on ${hub.url}`);
 
@@ -150,6 +155,7 @@ export class BrowserService {
                 const result = await this.scraper.scrapeUrl(article.url, undefined, true);
                 this.pagesVisitedThisHour++;
                 results.urlsVisited.push(article.url);
+                this.saveBrowserState();
 
                 if (result.content.length < 300) {
                     console.log('⏩ Skipping: Content too short');
@@ -205,6 +211,7 @@ export class BrowserService {
 
                 results.knowledgeGained++;
                 this.updateLinkTracker(article.url, currentHash);
+                this.saveBrowserState();
 
                 // 11. Discovery (Chance to add new domain to favorites)
                 if (Math.random() < 0.05) {
@@ -416,6 +423,47 @@ export class BrowserService {
           const data = Array.from(this.linkTracker.values());
           fs.writeFileSync(this.TRACKER_PATH, JSON.stringify(data, null, 2));
       } catch (e) { console.error('Error saving link tracker', e); }
+  }
+
+  private loadBrowserState() {
+      try {
+          if (fs.existsSync(this.STATE_PATH)) {
+              const state = JSON.parse(fs.readFileSync(this.STATE_PATH, 'utf8'));
+              this.pagesVisitedThisHour = state.pagesVisitedThisHour || 0;
+              this.currentHourStart = state.currentHourStart || Date.now();
+              console.log(`🔄 Loaded browser state: ${this.pagesVisitedThisHour} pages visited this hour`);
+          } else {
+              this.currentHourStart = Date.now();
+              this.saveBrowserState();
+          }
+      } catch (e) {
+          console.error('Error loading browser state', e);
+          this.currentHourStart = Date.now();
+      }
+  }
+
+  private saveBrowserState() {
+      try {
+          const state = {
+              pagesVisitedThisHour: this.pagesVisitedThisHour,
+              currentHourStart: this.currentHourStart,
+              lastSaved: Date.now()
+          };
+          fs.writeFileSync(this.STATE_PATH, JSON.stringify(state, null, 2));
+      } catch (e) { console.error('Error saving browser state', e); }
+  }
+
+  private checkAndResetHourlyLimit() {
+      const now = Date.now();
+      const hourInMs = 3600 * 1000;
+
+      // Check if we're in a new hour
+      if (now - this.currentHourStart >= hourInMs) {
+          this.pagesVisitedThisHour = 0;
+          this.currentHourStart = now;
+          console.log('🔄 Browser hourly limit reset');
+          this.saveBrowserState();
+      }
   }
 
   getStats() {
