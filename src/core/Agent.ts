@@ -34,7 +34,6 @@ export class Agent {
 
     // 2. Fetch User Profile
     const userProfileStr = await this.profileService.getProfileContext(userId);
-    const userProfileObj = await this.profileService.getProfile(userId);
 
     // 3. Prepare Dynamic System Prompt
     let systemContext = await this.getSystemPrompt(userId, userProfileStr);
