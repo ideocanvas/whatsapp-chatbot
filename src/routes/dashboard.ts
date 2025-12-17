@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaClient } from '@prisma/client';
 
+const CONTENT_PREVIEW_LENGTH = 300;
 /**
  * Dashboard API routes for the web interface
  * Provides real-time access to autonomous agent data and chat testing
@@ -138,53 +139,6 @@ export class DashboardRoutes {
       }
     });
 
-    this.router.get('/api/memory/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
-      try {
-        const agent = getAutonomousAgent();
-
-        // Get actual knowledge content from the autonomous agent
-        const knowledgeContent = await agent.getKnowledgeContent(20); // Get up to 20 recent documents
-
-        // If we have real content, show it
-        if (knowledgeContent.length > 0) {
-          const knowledgeData = knowledgeContent.map((doc: any) => ({
-            id: doc.id,
-            title: doc.title,
-            timestamp: doc.timestamp,
-            content: doc.content,
-            source: doc.source,
-            category: doc.category
-          }));
-
-          res.json(knowledgeData);
-        } else {
-          // If no real content yet, show what the agent is ready to learn
-          const exampleTopics = [
-            'AI and Machine Learning',
-            'Web Development',
-            'Mobile Technology',
-            'Cloud Computing',
-            'Cybersecurity',
-            'Data Science',
-            'Internet of Things',
-            'Blockchain Technology'
-          ];
-
-          const knowledgeData = exampleTopics.map((topic, i) => ({
-            id: `knowledge-ready-${i + 1}`,
-            title: `${topic} (Ready to Learn)`,
-            timestamp: new Date().toISOString(),
-            content: `The autonomous agent will learn about ${topic.toLowerCase()} during browsing sessions.`,
-            source: 'Autonomous Browsing',
-            category: topic
-          }));
-
-          res.json(knowledgeData);
-        }
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to get knowledge data' });
-      }
-    });
 
     this.router.get('/api/memory/history', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
@@ -321,51 +275,109 @@ export class DashboardRoutes {
       }
     });
 
-    // Knowledge search endpoint
-    this.router.post('/api/search/knowledge', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+
+    // GET endpoint for memory search (frontend compatibility)
+    // Unified knowledge API - handles both search and general listing
+    this.router.get('/api/memory/search', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { query } = req.body;
-
-        if (!query) {
-          return res.status(400).json({ error: 'Search query is required' });
-        }
-
+        const { q: query } = req.query;
         const agent = getAutonomousAgent();
 
-        // Log the search activity
-        this.logActivity(`Knowledge search: "${query}"`);
+        let results;
 
-        // Search actual knowledge content
-        const searchResults = await agent.searchKnowledgeContent(query, 10);
+        if (query) {
+          // Search mode - search actual knowledge content
+          this.logActivity(`Knowledge search: "${query}"`);
+          results = await agent.searchKnowledgeContent(query as string, 10);
+        } else {
+          // General listing mode - get all knowledge content
+          this.logActivity('Loading knowledge list');
+          results = await agent.getKnowledgeContent(20);
+        }
 
-        // Format results with relevance scoring
-        const formattedResults = searchResults.map((doc: any, index: number) => ({
+        // Format results with consistent content handling
+        const formattedResults = results.map((doc: any, index: number) => ({
           id: doc.id,
           title: doc.title,
           timestamp: doc.timestamp,
-          content: doc.content.substring(0, 500) + (doc.content.length > 500 ? '...' : ''), // Limit content length
-          relevance: ['High', 'Medium', 'Low'][index % 3], // Simple relevance based on order
+          content: doc.content.substring(0, CONTENT_PREVIEW_LENGTH) + (doc.content.length > CONTENT_PREVIEW_LENGTH ? '...' : ''), // Always truncate for list view
+          relevance: query ? ['High', 'Medium', 'Low'][index % 3] : undefined, // Only add relevance for search results
           source: doc.source,
           category: doc.category
         }));
 
         // If no real results, provide informative message
         if (formattedResults.length === 0) {
-          formattedResults.push({
-            id: 'search-no-results',
-            title: 'No Results Found',
-            timestamp: new Date().toISOString(),
-            content: `No knowledge found matching "${query}". The autonomous agent will learn about this topic during future browsing sessions.`,
-            relevance: 'Low',
-            source: 'Knowledge Base',
-            category: 'Information'
-          });
+          if (query) {
+            formattedResults.push({
+              id: 'search-no-results',
+              title: 'No Results Found',
+              timestamp: new Date().toISOString(),
+              content: `No knowledge found matching "${query}". The autonomous agent will learn about this topic during future browsing sessions.`,
+              relevance: 'Low',
+              source: 'Knowledge Base',
+              category: 'Information'
+            });
+          } else {
+            // If no real content yet, show what the agent is ready to learn
+            const exampleTopics = [
+              'AI and Machine Learning',
+              'Web Development',
+              'Mobile Technology',
+              'Cloud Computing',
+              'Cybersecurity',
+              'Data Science',
+              'Internet of Things',
+              'Blockchain Technology'
+            ];
+
+            const exampleData = exampleTopics.map((topic, i) => ({
+              id: `knowledge-ready-${i + 1}`,
+              title: `${topic} (Ready to Learn)`,
+              timestamp: new Date().toISOString(),
+              content: `The autonomous agent will learn about ${topic.toLowerCase()} during browsing sessions.`,
+              relevance: undefined, // No relevance for example data
+              source: 'Autonomous Browsing',
+              category: topic
+            }));
+
+            formattedResults.push(...exampleData);
+          }
         }
 
         res.json(formattedResults);
       } catch (error) {
-        console.error('Knowledge search error:', error);
-        res.status(500).json({ error: 'Failed to search knowledge base' });
+        console.error('Knowledge API error:', error);
+        res.status(500).json({ error: 'Failed to process knowledge request' });
+      }
+    });
+
+    // Get full knowledge content by ID
+    this.router.get('/api/memory/knowledge/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const agent = getAutonomousAgent();
+
+        // Get all knowledge content and find the specific item
+        const knowledgeContent = await agent.getKnowledgeContent(100); // Get more items to find the specific one
+        const knowledgeItem = knowledgeContent.find((doc: any) => doc.id === id);
+
+        if (!knowledgeItem) {
+          return res.status(404).json({ error: 'Knowledge item not found' });
+        }
+
+        // Return full content
+        res.json({
+          id: knowledgeItem.id,
+          title: knowledgeItem.title,
+          timestamp: knowledgeItem.timestamp,
+          content: knowledgeItem.content, // Full content
+          source: knowledgeItem.source,
+          category: knowledgeItem.category
+        });
+      } catch (error) {
+        console.error('Error getting knowledge item:', error);
+        res.status(500).json({ error: 'Failed to get knowledge item' });
       }
     });
 
