@@ -247,7 +247,6 @@ whatsapp-chatbot/
 │   │   ├── WhatsappService.ts # Enhanced with proactive support
 │   │   └── OpenAIService.ts   # LLM Integration
 │   ├── config/               # Configuration
-│   │   ├── autonomous.json   # Behavior settings
 │   │   └── databaseConfig.ts # Database configuration switcher
 │   ├── routes/              # API Routes
 │   │   ├── dashboard.ts     # Web interface API
@@ -313,31 +312,17 @@ whatsapp-chatbot/
 
 ### Autonomous Behavior Settings
 
-Edit [`src/config/autonomous.json`](src/config/autonomous.json) to customize:
+Autonomous behavior is configured through **environment variables** and **hardcoded constants** in the service classes:
 
-```json
-{
-  "autonomous": {
-    "scheduler": {
-      "tickIntervalMs": 60000,
-      "browsingChanceWhenUsersActive": 0.3,
-      "proactiveCheckChance": 0.5
-    },
-    "browser": {
-      "maxPagesPerHour": 10,
-      "dailyUrls": ["https://techcrunch.com", "https://news.ycombinator.com"],
-      "mobileMode": true,
-      "pageDelayMs": {
-        "min": 2000,
-        "max": 5000
-      }
-    },
-    "memory": {
-      "shortTermTtlMs": 3600000,
-      "longTermCleanupDays": 30
-    },
-    "messaging": {
-      "rateLimitDelayMs": 2000,
+**Environment Variables:**
+- `AUTONOMOUS_TICK_INTERVAL_MS`: Scheduler tick interval (default: 60000ms)
+- `AUTONOMOUS_MAINTENANCE_INTERVAL_MS`: Maintenance interval (default: 300000ms)
+- `AUTONOMOUS_BATCH_FLUSH_INTERVAL`: News batch flush interval (default: 30 ticks)
+
+**Service Constants:**
+- Browser limits: `MAX_PAGES_PER_HOUR = 20` in [`BrowserService`](src/services/BrowserService.ts)
+- Memory settings: Hardcoded in respective memory management classes
+- Messaging delays: Configured in [`ActionQueueService`](src/services/ActionQueueService.ts)
       "proactiveCooldownMs": 900000,
       "mobileOptimization": {
         "maxWords": 50,
