@@ -13,6 +13,7 @@ export interface WebScrapeResult {
   content: string;
   links: string[]; // Added links array
   extractedAt: string;
+  lastUpdateDate?: string; // Page last update date (ISO 8601)
   method: 'html' | 'visual' | 'hybrid';
   mobileView?: boolean;
   viewport?: { width: number; height: number };
@@ -60,7 +61,7 @@ export class WebScrapeService {
 
     if (config.mobileView) {
       const device = config.mobileDevice || 'iphone';
-      
+
       if (device !== 'custom') {
         // Only 'iphone' is supported in the updated presets
         const preset = this.mobilePresets.iphone;
@@ -197,7 +198,7 @@ export class WebScrapeService {
   private shouldUseMobileView(url: string): boolean {
     // Check if mobile view is explicitly configured
     if (this.config.mobileView) return true;
-    
+
     // Auto-detect mobile sites based on URL patterns
     const mobilePatterns = [
       /m\./i,                    // m.domain.com
@@ -207,7 +208,7 @@ export class WebScrapeService {
       /touch\./i,                // touch.domain.com
       /\/wml\//i,                // WML mobile pages
     ];
-    
+
     return mobilePatterns.some(pattern => pattern.test(url));
   }
 
@@ -216,7 +217,7 @@ export class WebScrapeService {
     if (!this.browser) throw new Error('Browser not initialized');
 
     const useMobileView = forceMobile || this.shouldUseMobileView(url);
-    
+
     // Default Context Options
     const contextOptions: any = {
         viewport: this.config.viewport,
@@ -270,7 +271,7 @@ export class WebScrapeService {
                     )
                     .map((link: any) => link.href);
             });
-            
+
             // Unique links
             const uniqueLinks = [...new Set(links)] as string[];
 
@@ -310,6 +311,9 @@ export class WebScrapeService {
                 }
             }
 
+            // Extract last update date from page metadata
+            const lastUpdateDate = await this.extractLastUpdateDate(page);
+
             await context.close();
 
             return {
@@ -318,6 +322,7 @@ export class WebScrapeService {
                 content: extractedContent,
                 links: uniqueLinks, // Return collected links
                 extractedAt: new Date().toISOString(),
+                lastUpdateDate,
                 method,
                 mobileView: useMobileView,
                 viewport: contextOptions.viewport,
@@ -357,7 +362,7 @@ export class WebScrapeService {
     try {
       const page = await context.newPage();
       await page.goto(url, { timeout: 30000, waitUntil: 'domcontentloaded' });
-      
+
       // Fast scroll to trigger lazy loading
       await this.fastSmartScroll(page);
 
@@ -375,13 +380,13 @@ export class WebScrapeService {
           // 1. Basic filtering
           if (!href || href.startsWith('javascript:') || href.startsWith('mailto:') || !title) return;
           if (title.length < 15) return; // Skip "Home", "More", "Login"
-          
+
           try {
             const urlObj = new URL(href, baseUrl);
-            
+
             // 2. Strict Domain Check (Must be internal link)
             if (!urlObj.hostname.includes(baseDomain)) return;
-            
+
             // 3. Remove query params for cleaner URLs
             const cleanUrl = urlObj.origin + urlObj.pathname;
 
@@ -473,6 +478,99 @@ export class WebScrapeService {
     return ['timeout', 'network', 'connection', 'reset', 'navigat', 'closed'].some(k => msg.includes(k));
   }
 
+  /**
+   * Extract last update date from page metadata and structured data
+   * Priority: Meta tags > Structured data (JSON-LD)
+   * Returns ISO 8601 string or undefined if no date found
+   */
+  private async extractLastUpdateDate(page: Page): Promise<string | undefined> {
+    try {
+      const date = await page.evaluate(() => {
+        // Function to parse and normalize date strings
+        const parseDate = (dateString: string): Date | null => {
+          try {
+            // Try ISO 8601 format first
+            const isoDate = new Date(dateString);
+            if (!isNaN(isoDate.getTime())) return isoDate;
+
+            // Try common formats
+            const formats = [
+              dateString.trim(),
+              dateString.replace(/GMT.*$/, 'GMT').trim(), // Clean up timezone
+              dateString.replace(/\s+at\s+/i, ' '), // Remove "at" in dates
+            ];
+
+            for (const format of formats) {
+              const parsed = new Date(format);
+              if (!isNaN(parsed.getTime())) return parsed;
+            }
+
+            return null;
+          } catch {
+            return null;
+          }
+        };
+
+        // Try meta tags first
+        const metaTags = [
+          'meta[property="article:modified_time"]',
+          'meta[name="last-modified"]',
+          'meta[property="og:updated_time"]',
+          'meta[name="date"]',
+          'meta[name="modified"]',
+        ];
+
+        for (const selector of metaTags) {
+          const element = document.querySelector(selector);
+          if (element && element.getAttribute('content')) {
+            const content = element.getAttribute('content')!;
+            const parsedDate = parseDate(content);
+            if (parsedDate) {
+              return parsedDate.toISOString();
+            }
+          }
+        }
+
+        // Try JSON-LD structured data
+        const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]');
+        for (const scriptElement of Array.from(jsonLdScripts)) {
+          try {
+            const script = scriptElement as any;
+            const data = JSON.parse(script.textContent || script.innerHTML || '{}');
+
+            // Check for dateModified in Schema.org Article
+            if (data.dateModified) {
+              const parsedDate = parseDate(data.dateModified);
+              if (parsedDate) return parsedDate.toISOString();
+            }
+
+            // Check for updateDate in other schemas
+            if (data.updateDate) {
+              const parsedDate = parseDate(data.updateDate);
+              if (parsedDate) return parsedDate.toISOString();
+            }
+
+            // Check for datePublished as fallback (some sites only have publish date)
+            if (data.datePublished && !data.dateModified) {
+              const parsedDate = parseDate(data.datePublished);
+              if (parsedDate) return parsedDate.toISOString();
+            }
+          } catch (e) {
+            // Skip invalid JSON
+            continue;
+          }
+        }
+
+        return undefined;
+      });
+
+      return date || undefined;
+    } catch (error) {
+      console.warn('Failed to extract last update date:', error);
+      return undefined;
+    }
+  }
+
   private async initializeOpenAIService(): Promise<void> {
     try { this.openaiService = await createOpenAIServiceFromConfig(); }
     catch (e) { try { this.openaiService = createOpenAIServiceFromEnv(); } catch (e) { this.openaiService = null; } }
@@ -480,9 +578,12 @@ export class WebScrapeService {
 
   formatScrapeResults(results: WebScrapeResult[]): string {
     if (results.length === 0) return 'No content scraped.';
-    return results.map((result, index) =>
-      `[${index + 1}] ${result.title} (${result.method})${result.mobileView ? ' 📱' : ''}\nURL: ${result.url}\nContent: ${result.content}\n`
-    ).join('\n');
+    return results.map((result, index) => {
+      const baseInfo = `[${index + 1}] ${result.title} (${result.method})${result.mobileView ? ' 📱' : ''}\nURL: ${result.url}`;
+      const dateInfo = result.lastUpdateDate ? `\nLast Updated: ${result.lastUpdateDate}` : '';
+      const contentInfo = `\nContent: ${result.content}`;
+      return baseInfo + dateInfo + contentInfo + '\n';
+    }).join('\n');
   }
 }
 
