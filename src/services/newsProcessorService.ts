@@ -1,7 +1,15 @@
 import { OpenAIService } from './openaiService';
 import { GoogleSearchService } from './googleSearchService';
 import { VectorStoreServicePostgres } from './VectorStoreServicePostgres';
-import { NewsArticle } from './newsScrapeService';
+// NewsArticle interface moved here since newsScrapeService.ts is removed
+interface NewsArticle {
+  title: string;
+  url: string;
+  content: string;
+  source: string;
+  category?: string;
+  scrapedAt?: string;
+}
 
 export class NewsProcessorService {
   private openaiService: OpenAIService;
@@ -31,25 +39,25 @@ export class NewsProcessorService {
         1. Summarize the key facts in 2 sentences.
         2. Identify if this topic requires more context to be fully understood (e.g., technical terms, historical context, stock symbols).
         3. If yes, generate a specific search query. If no, output "NO_SEARCH".
-        
+
         Article:
         ${article.title}
         ${article.content.substring(0, 1000)}
       `;
 
       const analysis = await this.openaiService.generateTextResponse(analysisPrompt);
-      
+
       let fullContent = `Title: ${article.title}\n\n${article.content}`;
       let sourceLabel = 'web_scrape';
 
       // 2. Enrichment Step (Google Search)
       // If the LLM suggests a search (and it's not NO_SEARCH), we enrich.
       const searchMatch = analysis.match(/Search Query: "(.*)"/i) || analysis.split('\n').pop()?.match(/"(.*)"/);
-      
+
       if (!analysis.includes("NO_SEARCH") && searchMatch) {
         const query = searchMatch[1];
         console.log(`🔍 Enriching knowledge with Google Search: ${query}`);
-        
+
         const searchResults = await this.googleService.search(query, 3);
         const searchContext = this.googleService.formatSearchResults(searchResults);
 

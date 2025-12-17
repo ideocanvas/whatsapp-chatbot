@@ -13,14 +13,11 @@ import { BlogGenerationService, createBlogGenerationService } from './services/b
 import { GoogleNewsService, createGoogleNewsService } from './services/googleNewsService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/googleSearchService';
 import { MediaService } from './services/mediaService';
-import { NewsProcessorService } from './services/newsProcessorService';
-import { createNewsScrapeService } from './services/newsScrapeService';
 import { OpenAIService, createOpenAIServiceFromConfig } from './services/openaiService';
 import { createWebScrapeService } from './services/webScrapeService';
 import { WhatsAppService } from './services/whatsappService';
 import { DeepResearchTool } from './tools/DeepResearchTool'; // Import the new tool
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
-import { ScrapeNewsTool } from './tools/ScrapeNewsTool';
 import { WebSearchTool } from './tools/WebSearchTool';
 
 /**
@@ -97,12 +94,6 @@ class AutonomousWhatsAppAgent {
       // Initialize Google News Service (pass browser service for rate limiting)
       this.googleNewsService = createGoogleNewsService(scraper, this.openai, undefined, this.browser);
 
-      // Initialize News Stack
-      // Mock GoogleSearchService for processor if not available, or initialize properly
-      const searchService = createGoogleSearchServiceFromEnv();
-      const newsProcessor = new NewsProcessorService(this.openai, searchService, this.vectorStore);
-      const newsService = createNewsScrapeService(scraper, newsProcessor, this.googleNewsService);
-
       // Initialize Blog Generation Service
       this.blogGenerationService = createBlogGenerationService(this.openai);
 
@@ -110,13 +101,13 @@ class AutonomousWhatsAppAgent {
       this.tools = new ToolRegistry();
 
       // Register Web Search
+      const searchService = createGoogleSearchServiceFromEnv();
       if (searchService) {
         this.tools.registerTool(new WebSearchTool(searchService));
       }
 
       // Register NEW Tools
       this.tools.registerTool(new RecallHistoryTool(this.historyStore));
-      this.tools.registerTool(new ScrapeNewsTool(newsService));
 
       // Register Deep Research Tool
       if (this.browser) {
@@ -140,9 +131,6 @@ class AutonomousWhatsAppAgent {
 
       this.isInitialized = true;
       console.log('✅ Autonomous WhatsApp Agent Initialized Successfully');
-
-      // Start background news service
-      newsService.startBackgroundService(30);
 
     } catch (error) {
       console.error('❌ Failed to initialize Autonomous Agent:', error);
