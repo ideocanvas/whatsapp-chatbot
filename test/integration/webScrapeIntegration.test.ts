@@ -41,13 +41,20 @@ describe('WebScrapeService Integration Tests', () => {
     it('should successfully scrape example.com', async () => {
       const result = await webScrapeService.scrapeUrl(TEST_URLS.simple);
 
-      expect(result).toEqual({
-        title: expect.any(String),
-        url: TEST_URLS.simple,
-        content: expect.any(String),
-        extractedAt: expect.any(String),
-        method: expect.stringMatching(/html|visual/) // Allow both methods
-      });
+      // Check each property individually instead of using toEqual for the entire object
+      expect(result.title).toEqual(expect.any(String));
+      expect(result.url).toEqual(TEST_URLS.simple);
+      expect(result.content).toEqual(expect.any(String));
+      expect(result.links).toEqual(expect.any(Array));
+      expect(result.extractedAt).toEqual(expect.any(String));
+      // Check lastUpdateDate can be string or undefined
+      if (result.lastUpdateDate !== undefined) {
+        expect(result.lastUpdateDate).toEqual(expect.any(String));
+      }
+      expect(result.method).toMatch(/html|visual/);
+      expect(result.mobileView).toEqual(expect.any(Boolean));
+      expect(result.viewport).toEqual(expect.any(Object));
+      expect(result.userAgent).toEqual(expect.any(String));
 
       // Basic content validation
       expect(result.title).toBeTruthy();
@@ -60,13 +67,20 @@ describe('WebScrapeService Integration Tests', () => {
     it('should scrape content-rich pages', async () => {
       const result = await webScrapeService.scrapeUrl(TEST_URLS.contentRich);
 
-      expect(result).toEqual({
-        title: expect.any(String),
-        url: TEST_URLS.contentRich,
-        content: expect.any(String),
-        extractedAt: expect.any(String),
-        method: 'html'
-      });
+      // Check each property individually instead of using toEqual for the entire object
+      expect(result.title).toEqual(expect.any(String));
+      expect(result.url).toEqual(TEST_URLS.contentRich);
+      expect(result.content).toEqual(expect.any(String));
+      expect(result.links).toEqual(expect.any(Array));
+      expect(result.extractedAt).toEqual(expect.any(String));
+      // Check lastUpdateDate can be string or undefined
+      if (result.lastUpdateDate !== undefined) {
+        expect(result.lastUpdateDate).toEqual(expect.any(String));
+      }
+      expect(result.method).toEqual('html');
+      expect(result.mobileView).toEqual(expect.any(Boolean));
+      expect(result.viewport).toEqual(expect.any(Object));
+      expect(result.userAgent).toEqual(expect.any(String));
 
       // Content-rich page should have more content
       expect(result.content.length).toBeGreaterThan(100);
@@ -77,13 +91,20 @@ describe('WebScrapeService Integration Tests', () => {
     it('should handle specific selector extraction', async () => {
       const result = await webScrapeService.scrapeUrl(TEST_URLS.contentRich, 'h1');
 
-      expect(result).toEqual({
-        title: expect.any(String),
-        url: TEST_URLS.contentRich,
-        content: expect.any(String),
-        extractedAt: expect.any(String),
-        method: expect.stringMatching(/html|visual/) // Allow both methods
-      });
+      // Check each property individually instead of using toEqual for the entire object
+      expect(result.title).toEqual(expect.any(String));
+      expect(result.url).toEqual(TEST_URLS.contentRich);
+      expect(result.content).toEqual(expect.any(String));
+      expect(result.links).toEqual(expect.any(Array));
+      expect(result.extractedAt).toEqual(expect.any(String));
+      // Check lastUpdateDate can be string or undefined
+      if (result.lastUpdateDate !== undefined) {
+        expect(result.lastUpdateDate).toEqual(expect.any(String));
+      }
+      expect(result.method).toMatch(/html|visual/);
+      expect(result.mobileView).toEqual(expect.any(Boolean));
+      expect(result.viewport).toEqual(expect.any(Object));
+      expect(result.userAgent).toEqual(expect.any(String));
 
       // Selector-based extraction should work
       expect(result.content).toBeTruthy();
@@ -133,13 +154,20 @@ describe('WebScrapeService Integration Tests', () => {
       expect(results.every(r => r !== null)).toBe(true);
 
       results.forEach((result, index) => {
-        expect(result).toEqual({
-          title: expect.any(String),
-          url: urls[index],
-          content: expect.any(String),
-          extractedAt: expect.any(String),
-          method: expect.stringMatching(/html|visual/) // Allow both methods
-        });
+        // Check each property individually instead of using toEqual for the entire object
+        expect(result.title).toEqual(expect.any(String));
+        expect(result.url).toEqual(urls[index]);
+        expect(result.content).toEqual(expect.any(String));
+        expect(result.links).toEqual(expect.any(Array));
+        expect(result.extractedAt).toEqual(expect.any(String));
+        // Check lastUpdateDate can be string or undefined
+        if (result.lastUpdateDate !== undefined) {
+          expect(result.lastUpdateDate).toEqual(expect.any(String));
+        }
+        expect(result.method).toMatch(/html|visual/);
+        expect(result.mobileView).toEqual(expect.any(Boolean));
+        expect(result.viewport).toEqual(expect.any(Object));
+        expect(result.userAgent).toEqual(expect.any(String));
       });
 
       console.log(`✅ Concurrent scraping completed: ${results.length} URLs`);
@@ -262,13 +290,20 @@ describe('WebScrapeService Visual Extraction (Conditional)', () => {
 
       // If it succeeds, verify the result structure
       if (result) {
-        expect(result).toEqual({
-          title: expect.any(String),
-          url: 'https://httpbin.org/bytes/10',
-          content: expect.any(String),
-          extractedAt: expect.any(String),
-          method: expect.stringMatching(/html|visual/)
-        });
+        // Check each property individually instead of using toEqual for the entire object
+        expect(result.title).toEqual(expect.any(String));
+        expect(result.url).toEqual('https://httpbin.org/bytes/10');
+        expect(result.content).toEqual(expect.any(String));
+        expect(result.links).toEqual(expect.any(Array));
+        expect(result.extractedAt).toEqual(expect.any(String));
+        // Check lastUpdateDate can be string or undefined
+        if (result.lastUpdateDate !== undefined) {
+          expect(result.lastUpdateDate).toEqual(expect.any(String));
+        }
+        expect(result.method).toMatch(/html|visual/);
+        expect(result.mobileView).toEqual(expect.any(Boolean));
+        expect(result.viewport).toEqual(expect.any(Object));
+        expect(result.userAgent).toEqual(expect.any(String));
       }
     } catch (error) {
       // It's acceptable for this to fail - binary endpoints aren't meant for scraping
