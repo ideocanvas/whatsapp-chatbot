@@ -606,6 +606,20 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
+   * Get the Google News service for external access
+   */
+  getGoogleNewsService(): GoogleNewsService | undefined {
+    return this.googleNewsService;
+  }
+
+  /**
+   * Get the browser service for external access
+   */
+  getBrowserService(): BrowserService | undefined {
+    return this.browser;
+  }
+
+  /**
    * Stop the autonomous system
    */
   stop(): void {

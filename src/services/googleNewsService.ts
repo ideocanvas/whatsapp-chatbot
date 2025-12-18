@@ -69,12 +69,14 @@ export class GoogleNewsService {
   /**
    * Scrape Google News front page for article links
    */
-  async scrapeGoogleNewsFrontPage(url: string): Promise<GoogleNewsArticle[]> {
+  async scrapeGoogleNewsFrontPage(url: string, bypassLimit: boolean = false): Promise<GoogleNewsArticle[]> {
     // Check browser rate limits before proceeding (Autonomous service should check this)
-    const scrapingStatus = this.canProceedWithScraping();
-    if (!scrapingStatus.canProceed) {
-      console.log('💤 Google News scraping paused (browser rate limit reached)');
-      return [];
+    if (!bypassLimit) {
+      const scrapingStatus = this.canProceedWithScraping();
+      if (!scrapingStatus.canProceed) {
+        console.log('💤 Google News scraping paused (browser rate limit reached)');
+        return [];
+      }
     }
 
     try {
@@ -183,12 +185,14 @@ export class GoogleNewsService {
   /**
    * Follow article link and extract full content
    */
-  async extractFullArticleContent(article: GoogleNewsArticle): Promise<GoogleNewsArticle> {
+  async extractFullArticleContent(article: GoogleNewsArticle, bypassLimit: boolean = false): Promise<GoogleNewsArticle> {
     // Check browser rate limits before proceeding (Autonomous service should check this)
-    const scrapingStatus = this.canProceedWithScraping();
-    if (!scrapingStatus.canProceed) {
-      console.log('💤 Article content extraction paused (browser rate limit reached)');
-      return { ...article, fullContent: undefined };
+    if (!bypassLimit) {
+      const scrapingStatus = this.canProceedWithScraping();
+      if (!scrapingStatus.canProceed) {
+        console.log('💤 Article content extraction paused (browser rate limit reached)');
+        return { ...article, fullContent: undefined };
+      }
     }
 
     try {
@@ -264,18 +268,18 @@ export class GoogleNewsService {
   /**
    * Deep news browsing - comprehensive article reading
    */
-  async performDeepNewsBrowsing(): Promise<GoogleNewsArticle[]> {
+  async performDeepNewsBrowsing(bypassLimit: boolean = false): Promise<GoogleNewsArticle[]> {
     console.log('🌅 Starting deep news browsing...');
     const allArticles: GoogleNewsArticle[] = [];
 
     for (const url of this.config.urls) {
       try {
-        const articles = await this.scrapeGoogleNewsFrontPage(url);
+        const articles = await this.scrapeGoogleNewsFrontPage(url, bypassLimit);
         const articlesWithContent: GoogleNewsArticle[] = [];
 
         // Process a limited number of articles
         for (const article of articles.slice(0, this.config.maxArticlesPerDeepBrowse)) {
-          const fullArticle = await this.extractFullArticleContent(article);
+          const fullArticle = await this.extractFullArticleContent(article, bypassLimit);
           if (fullArticle.fullContent) {
             articlesWithContent.push(fullArticle);
           }

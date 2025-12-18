@@ -1,4 +1,5 @@
 import React from 'react'
+import { useApiMutation } from '../hooks/useApi'
 
 const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, status, showToast, onLogout }) => {
   const navItems = [
@@ -9,22 +10,27 @@ const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, s
     { id: 'favorites', label: 'Favorites', icon: '⭐' },
   ]
 
-  const triggerBrowsing = async () => {
-    try {
-      const response = await fetch('/api/trigger-browse', {
-        method: 'POST',
-        credentials: 'include',
-      })
+  const { mutate: triggerNewsBrowsing, loading: newsLoading } = useApiMutation('/api/browse/news')
+  const { mutate: triggerFavoritesBrowsing, loading: favoritesLoading } = useApiMutation('/api/browse/favorites')
 
-      if (response.ok) {
-        showToast('Browsing triggered successfully', 'success')
-      } else {
-        showToast('Failed to trigger browsing', 'error')
-      }
+  const handleTriggerNewsBrowsing = async () => {
+    try {
+      await triggerNewsBrowsing({ intent: 'general', bypassLimit: true })
+      showToast('News browsing triggered successfully', 'success')
     } catch (error) {
-      showToast('Error triggering browsing', 'error')
+      showToast('Failed to trigger news browsing', 'error')
     }
   }
+
+  const handleTriggerFavoritesBrowsing = async () => {
+    try {
+      await triggerFavoritesBrowsing({ intent: 'general', bypassLimit: true })
+      showToast('Favorite websites browsing triggered successfully', 'success')
+    } catch (error) {
+      showToast('Failed to trigger favorite websites browsing', 'error')
+    }
+  }
+
 
   const logout = () => {
     if (onLogout) {
@@ -90,10 +96,18 @@ const Sidebar = ({ mobileMenuOpen, activeTab, setActiveTab, setMobileMenuOpen, s
       {/* Bottom Actions */}
       <div className="p-4 border-t border-gray-100 bg-gray-50 space-y-2">
         <button
-          onClick={triggerBrowsing}
-          className="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
+          onClick={handleTriggerNewsBrowsing}
+          disabled={newsLoading}
+          className="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <span>🌐</span> <span>Trigger Browse</span>
+          <span>📰</span> <span>{newsLoading ? 'Browsing...' : 'Browse News'}</span>
+        </button>
+        <button
+          onClick={handleTriggerFavoritesBrowsing}
+          disabled={favoritesLoading}
+          className="w-full flex items-center justify-center space-x-2 bg-white border border-gray-200 hover:border-wa-teal hover:text-wa-teal text-gray-600 py-2 rounded-md text-sm font-medium transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <span>⭐</span> <span>{favoritesLoading ? 'Browsing...' : 'Browse Favorites'}</span>
         </button>
         <button
           onClick={logout}

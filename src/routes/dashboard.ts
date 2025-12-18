@@ -4,6 +4,7 @@ import express from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaClient } from '@prisma/client';
+import { createProcessedArticleService } from '../services/processedArticleService';
 
 const CONTENT_PREVIEW_LENGTH = 300;
 /**
@@ -364,30 +365,71 @@ export class DashboardRoutes {
       }
     });
 
-    // Manual browsing trigger endpoint
-    this.router.post('/api/browse/now', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+    // News browsing trigger endpoint
+    this.router.post('/api/browse/news', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { intent } = req.body;
+        const { intent, bypassLimit = true } = req.body; // Default to bypass limits for UI-triggered browsing
         const agent = getAutonomousAgent();
 
-        // Get browser service from agent (this would need to be exposed)
-        // For now, we'll simulate triggering a browsing session
-        this.logActivity(`Manual browsing triggered with intent: ${intent || 'general'}`);
+        this.logActivity(`Manual news browsing triggered with intent: ${intent || 'general'}, bypassLimit: ${bypassLimit}`);
 
-        // Simulate browsing session
-        setTimeout(() => {
-          this.logActivity(`Manual browsing completed - learned fresh content about ${intent || 'technology'}`);
-        }, 3000);
+        // Get the Google News service from the agent and trigger actual deep browsing
+        const googleNewsService = agent.getGoogleNewsService();
+        if (!googleNewsService) {
+          return res.status(500).json({ error: 'Google News service not available' });
+        }
+
+        // Trigger actual deep news browsing with bypass flag
+        const articles = await googleNewsService.performDeepNewsBrowsing(bypassLimit);
+
+        this.logActivity(`Manual news browsing completed - processed ${articles.length} articles with LLM and image analysis`);
 
         res.json({
           success: true,
-          message: `Browsing session started${intent ? ` with intent: ${intent}` : ''}`,
-          estimatedTime: '3-5 seconds'
+          message: `Deep news browsing completed${intent ? ` with intent: ${intent}` : ''}`,
+          articlesProcessed: articles.length,
+          estimatedTime: '5-15 minutes',
+          bypassLimit
         });
       } catch (error) {
-        res.status(500).json({ error: 'Failed to trigger browsing session' });
+        console.error('Error triggering deep news browsing:', error);
+        res.status(500).json({ error: 'Failed to trigger news browsing session' });
       }
     });
+
+    // Favorite websites browsing trigger endpoint
+    this.router.post('/api/browse/favorites', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { intent, bypassLimit = true } = req.body; // Default to bypass limits for UI-triggered browsing
+        const agent = getAutonomousAgent();
+
+        this.logActivity(`Manual favorite websites browsing triggered with intent: ${intent || 'general'}, bypassLimit: ${bypassLimit}`);
+
+        // Get the browser service from the agent
+        const browserService = agent.getBrowserService();
+        if (!browserService) {
+          return res.status(500).json({ error: 'Browser service not available' });
+        }
+
+        // Use the surf method to browse favorite websites with bypass flag
+        const result = await browserService.surf(intent || 'general', bypassLimit);
+
+        this.logActivity(`Manual favorite websites browsing completed - visited ${result.urlsVisited.length} pages, gained ${result.knowledgeGained} knowledge items`);
+
+        res.json({
+          success: true,
+          message: `Favorite websites browsing completed${intent ? ` with intent: ${intent}` : ''}`,
+          pagesVisited: result.urlsVisited.length,
+          knowledgeGained: result.knowledgeGained,
+          estimatedTime: '3-10 minutes',
+          bypassLimit
+        });
+      } catch (error) {
+        console.error('Error triggering favorite websites browsing:', error);
+        res.status(500).json({ error: 'Failed to trigger favorite websites browsing session' });
+      }
+    });
+
 
     // Force knowledge update endpoint
     this.router.post('/api/knowledge/refresh', this.requireAuth.bind(this), async (req: Request, res: Response) => {
@@ -788,6 +830,62 @@ export class DashboardRoutes {
       } catch (error) {
         console.error('Error discovering news sources:', error);
         res.status(500).json({ error: 'Failed to discover news sources' });
+      }
+    });
+
+    // --- Processed Articles Routes ---
+
+    // Search processed articles with comprehensive filtering, pagination, and ordering
+    this.router.get('/api/processed-articles', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const processedArticleService = createProcessedArticleService();
+        const {
+          q: query,
+          page = '1',
+          limit = '10',
+          category,
+          source,
+          status,
+          dateFrom,
+          dateTo,
+          orderBy = 'publishedAt',
+          orderDirection = 'desc'
+        } = req.query;
+
+        const result = await processedArticleService.searchProcessedArticles(query as string, {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          category: category as string,
+          source: source as string,
+          status: status as any,
+          dateFrom: dateFrom as string,
+          dateTo: dateTo as string,
+          orderBy: orderBy as 'publishedAt' | 'createdAt' | 'title' | 'source',
+          orderDirection: orderDirection as 'asc' | 'desc'
+        });
+
+        res.json(result);
+      } catch (error) {
+        console.error('Error searching processed articles:', error);
+        res.status(500).json({ error: 'Failed to search processed articles' });
+      }
+    });
+
+    // Get processed article by ID
+    this.router.get('/api/processed-articles/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const processedArticleService = createProcessedArticleService();
+        const { id } = req.params;
+
+        const article = await processedArticleService.getProcessedArticle(id);
+        if (!article) {
+          return res.status(404).json({ error: 'Processed article not found' });
+        }
+
+        res.json(article);
+      } catch (error) {
+        console.error('Error getting processed article:', error);
+        res.status(500).json({ error: 'Failed to get processed article' });
       }
     });
 

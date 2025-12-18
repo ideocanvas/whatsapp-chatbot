@@ -95,7 +95,7 @@ export class BrowserService {
    * Main Autonomous Surfing Loop
    * The Autonomous service should call this method when it decides browsing is appropriate
    */
-  async surf(intent?: string): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
+  async surf(intent?: string, bypassLimit: boolean = false): Promise<{ urlsVisited: string[]; knowledgeGained: number }> {
     // Reset flags
     this.stopSignal = false;
     this.isSurfing = true;
@@ -121,7 +121,9 @@ export class BrowserService {
 
         // 2. Extract Article Candidates
         const candidates = await this.scraper.extractArticleLinks(hub.url);
-        this.pagesVisitedThisHour++;
+        if (!bypassLimit) {
+          this.pagesVisitedThisHour++;
+        }
         hub.lastVisited = Date.now();
         hub.visitCount++;
         this.saveFavorites();
@@ -150,7 +152,9 @@ export class BrowserService {
             try {
                 console.log(`📖 Reading${isStale ? ' (Update Check)' : ''}: ${article.title}`);
                 const result = await this.scraper.scrapeUrl(article.url, undefined, true);
-                this.pagesVisitedThisHour++;
+                if (!bypassLimit) {
+                  this.pagesVisitedThisHour++;
+                }
                 results.urlsVisited.push(article.url);
                 this.saveBrowserState();
 
