@@ -273,7 +273,7 @@ export class WebScrapeService {
             });
 
             // Unique links
-            const uniqueLinks = [...new Set(links)] as string[];
+            const uniqueLinks = Array.from(new Set(links)) as string[];
 
             let extractedContent = await page.evaluate((inputSelector) => {
                 const junkSelectors = [

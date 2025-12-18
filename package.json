@@ -21,7 +21,8 @@
     "web:test": "ts-node src/test-autonomous.ts",
     "react:dev": "cd frontend && npm run dev",
     "react:build": "cd frontend && npm run build",
-    "react:preview": "cd frontend && npm run preview"
+    "react:preview": "cd frontend && npm run preview",
+    "webscrape": "ts-node src/commands/webScrapeCommand.ts"
   },
   "keywords": [
     "whatsapp",
