@@ -39,17 +39,77 @@ export class GoogleNewsService {
     this.openaiService = openaiService;
     this.browserService = browserService;
     this.config = {
-      urls: [
-        'https://news.google.com/home?hl=en-HK&gl=HK&ceid=HK:en',
-        'https://news.google.com/home?hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
-        'https://news.google.com/home?hl=en-US&gl=US&ceid=US:en'
-      ],
+      urls: [], // Empty initially, will be loaded from database
       deepBrowsingTime: '06:00',
       quickCheckInterval: 180, // 3 hours
       maxArticlesPerDeepBrowse: 15,
       maxArticlesPerQuickCheck: 5,
       ...config
     };
+
+    // Initialize news sources from database
+    this.initializeNewsSources();
+  }
+
+  /**
+   * Initialize news sources from database
+   */
+  private async initializeNewsSources(): Promise<void> {
+    try {
+      await this.loadNewsSourcesFromDatabase();
+    } catch (error) {
+      console.error('❌ Error initializing news sources:', error);
+    }
+  }
+
+  /**
+   * Load news source URLs from database and update config
+   */
+  private async loadNewsSourcesFromDatabase(): Promise<string[]> {
+    try {
+      const sources = await this.prisma.newsSource.findMany({
+        where: { isActive: true },
+        orderBy: { priority: 'desc' }
+      });
+
+      const urls = sources?.map(source => source.url) || [];
+      console.log(`📰 Loaded ${urls.length} news sources from database`);
+
+      // Update config with database sources
+      this.config.urls = urls;
+
+      return urls;
+    } catch (error) {
+      console.error('❌ Error loading news sources from database:', error);
+
+      // Fallback to default Google News URLs if database fails
+      const fallbackUrls = [
+        'https://news.google.com/home?hl=en-HK&gl=HK&ceid=HK:en',
+        'https://news.google.com/home?hl=zh-HK&gl=HK&ceid=HK:zh-Hant',
+        'https://news.google.com/home?hl=en-US&gl=US&ceid=US:en'
+      ];
+      this.config.urls = fallbackUrls;
+      console.log('🔄 Using fallback news sources');
+
+      return fallbackUrls;
+    }
+  }
+
+  /**
+   * Refresh news sources from database
+   */
+  async refreshNewsSources(): Promise<void> {
+    console.log('🔄 Refreshing news sources from database...');
+    await this.loadNewsSourcesFromDatabase();
+  }
+
+  /**
+   * Ensure news sources are loaded before operations
+   */
+  private async ensureNewsSources(): Promise<void> {
+    if (this.config.urls.length === 0) {
+      await this.refreshNewsSources();
+    }
   }
 
   /**
@@ -262,7 +322,8 @@ export class GoogleNewsService {
       .filter(word => word.length > 3 && !commonWords.has(word))
       .slice(0, 10);
 
-    return [...new Set(words)]; // Remove duplicates
+    // Remove duplicates using Array.from instead of spread operator for ES5 compatibility
+    return Array.from(new Set(words));
   }
 
   /**
@@ -270,6 +331,15 @@ export class GoogleNewsService {
    */
   async performDeepNewsBrowsing(bypassLimit: boolean = false): Promise<GoogleNewsArticle[]> {
     console.log('🌅 Starting deep news browsing...');
+
+    // Ensure news sources are loaded from database
+    await this.ensureNewsSources();
+
+    if (this.config.urls.length === 0) {
+      console.warn('⚠️ No news sources available for browsing');
+      return [];
+    }
+
     const allArticles: GoogleNewsArticle[] = [];
 
     for (const url of this.config.urls) {
@@ -308,6 +378,14 @@ export class GoogleNewsService {
    */
   async performQuickNewsCheck(): Promise<GoogleNewsArticle[]> {
     console.log('⚡ Performing quick news check...');
+
+    // Ensure news sources are loaded from database
+    await this.ensureNewsSources();
+
+    if (this.config.urls.length === 0) {
+      console.warn('⚠️ No news sources available for quick check');
+      return [];
+    }
 
     // Get recent keywords to focus on
     const recentKeywords = await this.getRecentKeywords();
@@ -406,7 +484,7 @@ export class GoogleNewsService {
         take: 10
       });
 
-      return keywords.map(k => k.keyword);
+      return keywords?.map(k => k.keyword) || [];
     } catch (error) {
       console.error('❌ Error getting recent keywords:', error);
       return [];
