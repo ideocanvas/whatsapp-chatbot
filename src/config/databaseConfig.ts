@@ -1,7 +1,7 @@
 import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
-import { OpenAIService } from '../services/openaiService';
+import { OpenAIService } from '../services/OpenAIService';
 import { PrismaDatabaseUtils } from './prisma';
 
 /**

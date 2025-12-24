@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { WebScrapeService, WebScrapeResult } from '../services/webScrapeService';
+import { WebScrapeService, WebScrapeResult } from '../services/WebScrapeService';
 import * as fs from 'fs';
 import * as path from 'path';
 

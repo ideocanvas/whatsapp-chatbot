@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
-import { OpenAIService } from './openaiService';
-import { WebScrapeService } from './webScrapeService';
+import { OpenAIService } from './OpenAIService';
+import { WebScrapeService } from './WebScrapeService';
 
 export interface GoogleNewsArticle {
   title: string;

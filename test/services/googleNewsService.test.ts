@@ -1,6 +1,6 @@
-import { GoogleNewsService } from '../../src/services/googleNewsService';
-import { WebScrapeService } from '../../src/services/webScrapeService';
-import { OpenAIService } from '../../src/services/openaiService';
+import { GoogleNewsService } from '../../src/services/GoogleNewsService';
+import { WebScrapeService } from '../../src/services/WebScrapeService';
+import { OpenAIService } from '../../src/services/OpenAIService';
 import { PrismaClient } from '@prisma/client';
 
 // Mock dependencies

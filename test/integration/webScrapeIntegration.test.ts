@@ -1,4 +1,4 @@
-import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/webScrapeService';
+import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/WebScrapeService';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';

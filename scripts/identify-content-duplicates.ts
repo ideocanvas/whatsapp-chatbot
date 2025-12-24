@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { OpenAIService, createOpenAIServiceFromEnv } from '../src/services/openaiService';
+import { OpenAIService, createOpenAIServiceFromEnv } from '../src/services/OpenAIService';
 
 const prisma = new PrismaClient();
 

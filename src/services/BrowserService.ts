@@ -1,7 +1,7 @@
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
-import { WebScrapeService } from './webScrapeService';
-import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './googleSearchService';
-import { OpenAIService, createOpenAIServiceFromConfig } from './openaiService';
+import { WebScrapeService } from './WebScrapeService';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './GoogleSearchService';
+import { OpenAIService, createOpenAIServiceFromConfig } from './OpenAIService';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';

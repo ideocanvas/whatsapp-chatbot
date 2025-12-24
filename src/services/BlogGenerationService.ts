@@ -1,6 +1,6 @@
-import { OpenAIService } from './openaiService';
+import { OpenAIService } from './OpenAIService';
 import { PrismaClient } from '@prisma/client';
-import { GoogleNewsArticle } from './googleNewsService';
+import { GoogleNewsArticle } from './GoogleNewsService';
 
 export interface BlogPost {
   title: string;

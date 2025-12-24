@@ -1,4 +1,4 @@
-import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../../src/services/googleSearchService';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../../src/services/GoogleSearchService';
 import * as dotenv from 'dotenv';
 
 // Load environment variables for Jest tests

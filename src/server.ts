@@ -4,7 +4,7 @@ import express from 'express';
 import { startAutonomousAgent } from './autonomous';
 import { DashboardRoutes } from './routes/dashboard';
 import { WebhookRoutes } from './routes/webhook';
-import { WhatsAppService } from './services/whatsappService';
+import { WhatsAppService } from './services/WhatsAppService';
 
 /**
  * Main server that integrates both autonomous agent and web dashboard

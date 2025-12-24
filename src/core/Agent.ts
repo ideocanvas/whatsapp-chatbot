@@ -1,4 +1,4 @@
-import { OpenAIService } from '../services/openaiService';
+import { OpenAIService } from '../services/OpenAIService';
 import { ContextManager } from '../memory/ContextManager';
 import { ToolRegistry } from './ToolRegistry';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';

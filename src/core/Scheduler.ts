@@ -1,11 +1,11 @@
 import { BrowserService } from '../services/BrowserService';
 import { ContextManager } from '../memory/ContextManager';
-import { WhatsAppService } from '../services/whatsappService';
+import { WhatsAppService } from '../services/WhatsAppService';
 import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
-import { GoogleNewsService } from '../services/googleNewsService';
-import { BlogGenerationService } from '../services/blogGenerationService';
+import { GoogleNewsService } from '../services/GoogleNewsService';
+import { BlogGenerationService } from '../services/BlogGenerationService';
 import * as fs from 'fs';
 import * as path from 'path';
 

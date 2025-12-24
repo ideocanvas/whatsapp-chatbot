@@ -1,7 +1,7 @@
 import { chromium, Browser, Page, BrowserContext } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './OpenAIService';
 
 // --- TYPE DECLARATIONS ---
 declare const window: any;

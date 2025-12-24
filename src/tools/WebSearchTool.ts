@@ -1,5 +1,5 @@
 import { BaseTool } from '../core/BaseTool';
-import { GoogleSearchService } from '../services/googleSearchService';
+import { GoogleSearchService } from '../services/GoogleSearchService';
 
 /**
  * Web Search Tool for the autonomous agent

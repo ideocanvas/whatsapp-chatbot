@@ -5,7 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import FormData from 'form-data';
 import { WhatsAppAPIConfig } from '../types/whatsapp';
-import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './openaiService';
+import { OpenAIService, createOpenAIServiceFromEnv, createOpenAIServiceFromConfig } from './OpenAIService';
 
 const execAsync = promisify(exec);
 

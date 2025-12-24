@@ -1,6 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
-import { WhatsAppService } from '../services/whatsappService';
+import { WhatsAppService } from '../services/WhatsAppService';
 import { WhatsAppMessage } from '../types/whatsapp';
 import { CryptoUtils } from '../utils/crypto';
 // Import the Autonomous Agent getter

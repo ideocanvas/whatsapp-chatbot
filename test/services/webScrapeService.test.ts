@@ -1,6 +1,6 @@
-import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/webScrapeService';
+import { WebScrapeService, createWebScrapeService, WebScrapeResult } from '../../src/services/WebScrapeService';
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
-import { OpenAIService } from '../../src/services/openaiService';
+import { OpenAIService } from '../../src/services/OpenAIService';
 import * as fs from 'fs';
 import * as path from 'path';
 
