@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "news:cli": "ts-node src/news-cli.ts",
+    "news:cli": "ts-node src/commands/news-cli.ts",
+    "web:scrape": "ts-node src/commands/web-scrape-cli.ts",
     "dev": "npm run watch",
     "watch": "nodemon",
     "watch:verbose": "nodemon --verbose",
@@ -22,8 +23,7 @@
     "web:test": "ts-node src/test-autonomous.ts",
     "react:dev": "cd frontend && npm run dev",
     "react:build": "cd frontend && npm run build",
-    "react:preview": "cd frontend && npm run preview",
-    "webscrape": "ts-node src/commands/webScrapeCommand.ts"
+    "react:preview": "cd frontend && npm run preview"
   },
   "keywords": [
     "whatsapp",

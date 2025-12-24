@@ -3,7 +3,7 @@ dotenv.config();
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { GoogleSearchService } from './services/GoogleSearchService';
+import { GoogleSearchService } from '../services/GoogleSearchService';
 
 async function main() {
   const args = process.argv.slice(2);
