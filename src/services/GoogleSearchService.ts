@@ -1,5 +1,8 @@
 import axios from 'axios';
 import { DesktopToWebService, createDesktopToWebServiceFromEnv } from './DesktopToWebService';
+import { HtmlToMarkdownService, createHtmlToMarkdownServiceFromEnv } from './HtmlToMarkdownService';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface GoogleSearchConfig {
   apiKey: string;
@@ -32,6 +35,7 @@ export interface NewsSourceGroup {
 export class GoogleSearchService {
   private config: GoogleSearchConfig;
   private desktopService?: DesktopToWebService;
+  private htmlToMarkdownService?: HtmlToMarkdownService;
   private desktopLock: Promise<void> = Promise.resolve(); // Mutex for desktop service operations
 
   constructor(config: GoogleSearchConfig) {
@@ -39,6 +43,7 @@ export class GoogleSearchService {
     if (config.useDesktopService) {
       try {
         this.desktopService = createDesktopToWebServiceFromEnv();
+        this.htmlToMarkdownService = createHtmlToMarkdownServiceFromEnv();
       } catch (e) {
         console.warn('⚠️ DesktopToWebService not configured, falling back to direct HTTP requests');
       }
@@ -542,26 +547,27 @@ export class GoogleSearchService {
   }
 
   /**
-   * Fetch full article text for a given URL using DesktopToWebService if available.
+   * Fetch full article text for a given URL using HtmlToMarkdownService if available.
    * Falls back to direct HTTP requests if desktop service is not configured.
    *
-   * Desktop service workflow:
-   * 1. Send the URL to clipboard
-   * 2. Execute "get_page_content" script template
-   * 3. Read the page content from clipboard
-   * 4. Convert the HTML content to cleaned content
+   * HtmlToMarkdownService workflow:
+   * 1. Check cache for existing markdown
+   * 2. Fetch HTML using DesktopToWebService
+   * 3. Convert HTML to markdown with image downloads
+   * 4. Return the markdown content
    *
    * Direct HTTP fallback:
    * Attempts to follow canonical redirects and extract the main article or largest
    * paragraph blocks. Returns a cleaned plain-text version of the article.
    */
   async fetchFullArticle(url: string, timeoutMs: number = 8000): Promise<string> {
-    // Try using DesktopToWebService if configured
-    if (this.desktopService && this.desktopService.isConfigured()) {
+    // Try using HtmlToMarkdownService if configured
+    if (this.htmlToMarkdownService && this.htmlToMarkdownService.isConfigured()) {
       try {
-        return await this.fetchFullArticleViaDesktop(url);
+        return await this.fetchFullArticleViaHtmlToMarkdown(url);
       } catch (e) {
-        console.warn('⚠️ Desktop service fetch failed, falling back to direct HTTP:', e instanceof Error ? e.message : `${e}`);
+        console.warn('⚠️ HtmlToMarkdownService fetch failed, falling back to direct HTTP:', e instanceof Error ? e.message : `${e}`);
+        console.error('Full error:', e);
       }
     }
 
@@ -659,41 +665,45 @@ export class GoogleSearchService {
   }
 
   /**
-   * Fetch full article text using DesktopToWebService.
+   * Fetch full article text using HtmlToMarkdownService.
    *
    * Workflow:
-   * 1. Send the URL to clipboard
-   * 2. Execute "get_page_content" script template
-   * 3. Read the page content from clipboard
-   * 4. Convert the HTML content to cleaned content
+   * 1. Check cache for existing markdown
+   * 2. Fetch HTML using DesktopToWebService
+   * 3. Convert HTML to markdown with image downloads
+   * 4. Return the markdown content
    */
-  private async fetchFullArticleViaDesktop(url: string): Promise<string> {
+  private async fetchFullArticleViaHtmlToMarkdown(url: string): Promise<string> {
     return this.withDesktopLock(async () => {
-      console.log(`🖥️ Fetching article via Desktop service: ${url}`);
+      console.log(`📄 Fetching article via HtmlToMarkdownService: ${url}`);
 
-      // Step 1: Send URL to clipboard
-      const sendResult = await this.desktopService!.sendToClipboard(url);
-      if (sendResult.status !== 'success') {
-        throw new Error(`Failed to send URL to clipboard: ${sendResult.message}`);
+      // Process the URL using HtmlToMarkdownService
+      const result = await this.htmlToMarkdownService!.processUrl(url);
+
+      if (!result.success) {
+        throw new Error(`Failed to process URL: ${result.error}`);
       }
 
-      // Step 2: Execute get_page_content script template with 300 second timeout
-      const executeResult = await this.desktopService!.executeScript('get_page_content', {}, 300);
-      if (executeResult.status !== 'success') {
-        throw new Error(`Failed to execute get_page_content script: ${executeResult.message}`);
+      // Read the markdown file content
+      if (result.markdownPath && fs.existsSync(result.markdownPath)) {
+        const markdownContent = fs.readFileSync(result.markdownPath, 'utf-8');
+        console.log(`✅ Article fetched via HtmlToMarkdownService: ${markdownContent.length} characters, ${result.imagesDownloaded || 0} images downloaded`);
+        return markdownContent;
       }
 
-      // Step 3: Read page content from clipboard
-      const readResult = await this.desktopService!.readFromClipboard();
-      if (readResult.status !== 'success' || !readResult.text) {
-        throw new Error(`Failed to read page content from clipboard: ${readResult.message}`);
+      // If cached, we need to find the markdown file
+      if (result.cached && result.markdownUrl) {
+        // Convert markdownUrl to file path
+        const cacheDir = './data/html/cache';
+        const markdownPath = path.join(cacheDir, result.markdownUrl.replace('/html/cache/', ''));
+        if (fs.existsSync(markdownPath)) {
+          const markdownContent = fs.readFileSync(markdownPath, 'utf-8');
+          console.log(`✅ Article loaded from cache: ${markdownContent.length} characters`);
+          return markdownContent;
+        }
       }
 
-      // Step 4: Convert HTML content to cleaned content
-      const cleanedContent = this.cleanHtmlContent(readResult.text);
-      console.log(`✅ Article fetched via Desktop service: ${cleanedContent.length} characters`);
-      
-      return this.truncateText(cleanedContent);
+      throw new Error('Failed to read markdown content');
     });
   }
 
@@ -757,8 +767,8 @@ export class GoogleSearchService {
     const items = await this.searchNews(query, numResults);
     const results: SearchResult[] = [];
 
-    // When using desktop service, use concurrency of 1 to prevent concurrent access
-    const concurrency = this.desktopService && this.desktopService.isConfigured() ? 1 : 3;
+    // When using htmlToMarkdownService, use concurrency of 1 to prevent concurrent access
+    const concurrency = this.htmlToMarkdownService && this.htmlToMarkdownService.isConfigured() ? 1 : 3;
     let index = 0;
 
     const workers: Promise<void>[] = [];
@@ -822,8 +832,8 @@ export class GoogleSearchService {
       }
     }
 
-    // When using desktop service, use concurrency of 1 to prevent concurrent access
-    const concurrency = this.desktopService && this.desktopService.isConfigured() ? 1 : 3;
+    // When using htmlToMarkdownService, use concurrency of 1 to prevent concurrent access
+    const concurrency = this.htmlToMarkdownService && this.htmlToMarkdownService.isConfigured() ? 1 : 3;
     let cursor = 0;
     const workers: Promise<void>[] = [];
 
