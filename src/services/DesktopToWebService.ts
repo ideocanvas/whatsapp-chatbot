@@ -1,6 +1,4 @@
 import { spawn } from 'child_process';
-import * as https from 'https';
-import * as http from 'http';
 
 /**
  * Configuration for the Desktop-to-Web API service
