@@ -1,5 +1,5 @@
 import { OpenAIService } from './OpenAIService';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 
 // Local interface for article data (replaces GoogleNewsArticle)
 export interface ArticleData {
@@ -35,12 +35,10 @@ export interface BlogGenerationConfig {
 }
 
 export class BlogGenerationService {
-  private prisma: PrismaClient;
   private openaiService: OpenAIService;
   private config: BlogGenerationConfig;
 
   constructor(openaiService: OpenAIService, config?: Partial<BlogGenerationConfig>) {
-    this.prisma = new PrismaClient();
     this.openaiService = openaiService;
     this.config = {
       postsPerDay: 5,
@@ -346,7 +344,7 @@ export class BlogGenerationService {
   private async saveBlogPosts(blogPosts: BlogPost[]): Promise<void> {
     try {
       for (const post of blogPosts) {
-        await this.prisma.blogPost.create({
+        await prisma.blogPost.create({
           data: {
             title: post.title,
             content: post.content,
@@ -382,7 +380,7 @@ export class BlogGenerationService {
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
 
-      const posts = await this.prisma.blogPost.findMany({
+      const posts = await prisma.blogPost.findMany({
         where: {
           publishedAt: {
             gte: startOfDay,
@@ -400,7 +398,7 @@ export class BlogGenerationService {
       const digestContent = this.formatDailyDigest(posts, date);
 
       // Save daily digest
-      await this.prisma.dailyDigest.create({
+      await prisma.dailyDigest.create({
         data: {
           date: startOfDay,
           title: `Daily Digest - ${date.toISOString().split('T')[0]}`,
@@ -442,7 +440,7 @@ export class BlogGenerationService {
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 6); // End of week (Saturday)
 
-      const dailyDigests = await this.prisma.dailyDigest.findMany({
+      const dailyDigests = await prisma.dailyDigest.findMany({
         where: {
           date: {
             gte: startDate,
@@ -462,7 +460,7 @@ export class BlogGenerationService {
       const weeklyContent = this.formatWeeklyDigest(dailyDigests, startDate, endDate);
 
       // Save weekly digest
-      await this.prisma.weeklyDigest.create({
+      await prisma.weeklyDigest.create({
         data: {
           startDate,
           endDate,
@@ -523,10 +521,10 @@ export class BlogGenerationService {
    */
   async getStats(): Promise<any> {
     try {
-      const totalPosts = await this.prisma.blogPost.count();
-      const publishedPosts = await this.prisma.blogPost.count({ where: { status: 'published' } });
-      const dailyDigests = await this.prisma.dailyDigest.count();
-      const weeklyDigests = await this.prisma.weeklyDigest.count();
+      const totalPosts = await prisma.blogPost.count();
+      const publishedPosts = await prisma.blogPost.count({ where: { status: 'published' } });
+      const dailyDigests = await prisma.dailyDigest.count();
+      const weeklyDigests = await prisma.weeklyDigest.count();
 
       return {
         totalPosts,

@@ -3,7 +3,7 @@ import { getAutonomousAgent } from '../autonomous';
 import express from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import { createProcessedArticleService } from '../services/ProcessedArticleService';
 
 const CONTENT_PREVIEW_LENGTH = 300;
@@ -459,7 +459,6 @@ export class DashboardRoutes {
     // Get blog posts
     this.router.get('/api/news/blog-posts', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const prisma = new PrismaClient();
         const { page = '1', limit = '10', category, status } = req.query;
 
         const pageNum = parseInt(page as string);
@@ -497,7 +496,6 @@ export class DashboardRoutes {
     // Get daily digests
     this.router.get('/api/news/daily-digests', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const prisma = new PrismaClient();
         const { page = '1', limit = '10' } = req.query;
 
         const pageNum = parseInt(page as string);
@@ -539,7 +537,6 @@ export class DashboardRoutes {
     // Get weekly digests
     this.router.get('/api/news/weekly-digests', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const prisma = new PrismaClient();
         const { page = '1', limit = '10' } = req.query;
 
         const pageNum = parseInt(page as string);
@@ -584,7 +581,6 @@ export class DashboardRoutes {
     // Get news sources
     this.router.get('/api/news/sources', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const prisma = new PrismaClient();
         const sources = await prisma.newsSource.findMany({
           orderBy: [{ priority: 'desc' }, { name: 'asc' }]
         });
@@ -605,7 +601,6 @@ export class DashboardRoutes {
           return res.status(400).json({ error: 'URL is required' });
         }
 
-        const prisma = new PrismaClient();
         const source = await prisma.newsSource.create({
           data: {
             url,
@@ -632,7 +627,6 @@ export class DashboardRoutes {
         const { id } = req.params;
         const { name, region, language, priority, isActive } = req.body;
 
-        const prisma = new PrismaClient();
         const source = await prisma.newsSource.update({
           where: { id },
           data: {
@@ -657,7 +651,6 @@ export class DashboardRoutes {
       try {
         const { id } = req.params;
 
-        const prisma = new PrismaClient();
         const source = await prisma.newsSource.delete({
           where: { id }
         });
@@ -673,7 +666,6 @@ export class DashboardRoutes {
     // Get news keywords
     this.router.get('/api/news/keywords', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const prisma = new PrismaClient();
         const { limit = '50' } = req.query;
         const limitNum = parseInt(limit as string);
 
@@ -693,7 +685,6 @@ export class DashboardRoutes {
     this.router.get('/api/news/daily-digest/:date/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { date } = req.params;
-        const prisma = new PrismaClient();
 
         const digest = await prisma.dailyDigest.findFirst({
           where: { date: new Date(date) },
@@ -719,7 +710,6 @@ export class DashboardRoutes {
     this.router.get('/api/news/weekly-digest/:startDate/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { startDate } = req.params;
-        const prisma = new PrismaClient();
 
         const digest = await prisma.weeklyDigest.findFirst({
           where: { startDate: new Date(startDate) },
@@ -767,7 +757,6 @@ export class DashboardRoutes {
     this.router.get('/api/news/blog-post/:id/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
-        const prisma = new PrismaClient();
 
         const post = await prisma.blogPost.findUnique({
           where: { id: id }
@@ -791,8 +780,6 @@ export class DashboardRoutes {
     // Discover new news sources
     this.router.post('/api/news/discover-sources', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const prisma = new PrismaClient();
-
         // Get recent articles to analyze for source discovery
         const recentArticles = await prisma.blogPost.findMany({
           where: {

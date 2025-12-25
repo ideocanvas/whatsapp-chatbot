@@ -1,4 +1,4 @@
-import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { prisma } from '../config/prisma';
 import { OpenAIService } from '../services/OpenAIService';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -22,8 +22,6 @@ export class KnowledgeBasePostgres {
 
   constructor(openaiService: OpenAIService) {
     this.openaiService = openaiService;
-    // Initialize database connection
-    PrismaDatabaseUtils.initialize().catch(console.error);
   }
 
   /**

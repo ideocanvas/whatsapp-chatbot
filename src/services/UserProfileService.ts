@@ -1,4 +1,4 @@
-import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { prisma } from '../config/prisma';
 
 export interface UserFact {
   key: string;
@@ -7,7 +7,7 @@ export interface UserFact {
 
 export class UserProfileService {
   constructor() {
-    PrismaDatabaseUtils.initialize().catch(console.error);
+    // Database connection is initialized via prisma singleton
   }
 
   async getProfile(userId: string) {

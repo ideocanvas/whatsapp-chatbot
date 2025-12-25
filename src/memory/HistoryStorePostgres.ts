@@ -1,4 +1,4 @@
-import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { prisma } from '../config/prisma';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -17,8 +17,7 @@ interface ConversationLog {
 
 export class HistoryStorePostgres {
   constructor() {
-    // Initialize database connection
-    PrismaDatabaseUtils.initialize().catch(console.error);
+    // Database connection is initialized via prisma singleton
   }
 
   /**

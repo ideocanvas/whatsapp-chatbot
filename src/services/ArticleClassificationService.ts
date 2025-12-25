@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import { OpenAIService } from './OpenAIService';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -19,7 +19,6 @@ export interface ClassificationResult {
 }
 
 export class ArticleClassificationService {
-  private prisma: PrismaClient;
   private openaiService: OpenAIService;
   private config: Required<ClassificationConfig>;
 
@@ -27,7 +26,6 @@ export class ArticleClassificationService {
     openaiService: OpenAIService,
     config: ClassificationConfig = {}
   ) {
-    this.prisma = new PrismaClient();
     this.openaiService = openaiService;
     this.config = {
       keywordSimilarityThreshold: config.keywordSimilarityThreshold ?? 0.7,
@@ -68,7 +66,7 @@ export class ArticleClassificationService {
   async extractKeywords(content: string): Promise<string[]> {
     try {
       // Get all active keywords from NewsKeyword table
-      const keywords = await this.prisma.newsKeyword.findMany({
+      const keywords = await prisma.newsKeyword.findMany({
         where: { relevance: { gte: 0.3 } }, // Filter by minimum relevance
         orderBy: { relevance: 'desc' },
         take: 100, // Limit to top 100 keywords for matching
@@ -155,7 +153,7 @@ export class ArticleClassificationService {
   async classifyCategory(title: string, content: string): Promise<string | undefined> {
     try {
       // Get unique categories from NewsKeyword table
-      const categories = await this.prisma.newsKeyword.findMany({
+      const categories = await prisma.newsKeyword.findMany({
         where: { category: { not: null } },
         select: { category: true },
         distinct: ['category'],
@@ -398,12 +396,6 @@ Example: #artificial-intelligence, #openai, #tech-funding, #startup
     }
   }
 
-  /**
-   * Close database connection
-   */
-  async disconnect(): Promise<void> {
-    await this.prisma.$disconnect();
-  }
 }
 
 export function createArticleClassificationService(

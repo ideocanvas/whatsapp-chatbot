@@ -1,9 +1,8 @@
-import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { prisma } from '../config/prisma';
 
 export class ProcessedMessageServicePostgres {
   constructor() {
-    // Initialize database connection
-    PrismaDatabaseUtils.initialize().catch(console.error);
+    // Database connection is initialized via prisma singleton
   }
 
   async hasMessageBeenProcessed(messageId: string): Promise<boolean> {

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import { ProcessedArticle } from '../types/article';
 
 export interface ProcessedArticleCreateData {
@@ -34,10 +34,8 @@ export interface ProcessedArticleUpdateData {
 }
 
 export class ProcessedArticleService {
-  private prisma: PrismaClient;
-
   constructor() {
-    this.prisma = new PrismaClient();
+    // Database connection is initialized via prisma singleton
   }
 
   /**
@@ -45,7 +43,7 @@ export class ProcessedArticleService {
    */
   async createProcessedArticle(data: ProcessedArticleCreateData): Promise<string> {
     try {
-      const article = await this.prisma.processedArticle.create({
+      const article = await prisma.processedArticle.create({
         data: {
           title: data.title,
           url: data.url,
@@ -77,7 +75,7 @@ export class ProcessedArticleService {
    */
   async updateProcessedArticle(id: string, data: ProcessedArticleUpdateData): Promise<void> {
     try {
-      await this.prisma.processedArticle.update({
+      await prisma.processedArticle.update({
         where: { id },
         data: {
           ...data,
@@ -97,7 +95,7 @@ export class ProcessedArticleService {
    */
   async getProcessedArticle(id: string): Promise<ProcessedArticle | null> {
     try {
-      const article = await this.prisma.processedArticle.findUnique({
+      const article = await prisma.processedArticle.findUnique({
         where: { id }
       });
 
@@ -117,7 +115,7 @@ export class ProcessedArticleService {
    */
   async getProcessedArticleByUrl(url: string): Promise<{ id: string } & ProcessedArticle | null> {
     try {
-      const article = await this.prisma.processedArticle.findUnique({
+      const article = await prisma.processedArticle.findUnique({
         where: { url }
       });
 
@@ -184,13 +182,13 @@ export class ProcessedArticleService {
       orderBy[orderField] = orderDir;
 
       const [articles, total] = await Promise.all([
-        this.prisma.processedArticle.findMany({
+        prisma.processedArticle.findMany({
           where,
           skip,
           take: limit,
           orderBy
         }),
-        this.prisma.processedArticle.count({ where })
+        prisma.processedArticle.count({ where })
       ]);
 
       return {
@@ -211,7 +209,7 @@ export class ProcessedArticleService {
    */
   async articleExistsWithDate(url: string): Promise<{ exists: boolean; createdAt?: Date; updatedAt?: Date }> {
     try {
-      const article = await this.prisma.processedArticle.findFirst({
+      const article = await prisma.processedArticle.findFirst({
         where: { url },
         select: { createdAt: true, updatedAt: true }
       });
@@ -244,7 +242,7 @@ export class ProcessedArticleService {
    */
   async articleExistsByTitle(title: string): Promise<boolean> {
     try {
-      const count = await this.prisma.processedArticle.count({
+      const count = await prisma.processedArticle.count({
         where: { title }
       });
       return count > 0;
@@ -259,7 +257,7 @@ export class ProcessedArticleService {
    */
   async deleteProcessedArticle(id: string): Promise<void> {
     try {
-      await this.prisma.processedArticle.delete({
+      await prisma.processedArticle.delete({
         where: { id }
       });
 
@@ -280,19 +278,19 @@ export class ProcessedArticleService {
     bySource: Record<string, number>;
   }> {
     try {
-      const totalArticles = await this.prisma.processedArticle.count();
+      const totalArticles = await prisma.processedArticle.count();
 
-      const byStatus = await this.prisma.processedArticle.groupBy({
+      const byStatus = await prisma.processedArticle.groupBy({
         by: ['processingStatus'],
         _count: true
       });
 
-      const byCategory = await this.prisma.processedArticle.groupBy({
+      const byCategory = await prisma.processedArticle.groupBy({
         by: ['category'],
         _count: true
       });
 
-      const bySource = await this.prisma.processedArticle.groupBy({
+      const bySource = await prisma.processedArticle.groupBy({
         by: ['source'],
         _count: true
       });
@@ -340,12 +338,6 @@ export class ProcessedArticleService {
     };
   }
 
-  /**
-   * Close database connection
-   */
-  async disconnect(): Promise<void> {
-    await this.prisma.$disconnect();
-  }
 }
 
 export function createProcessedArticleService(): ProcessedArticleService {

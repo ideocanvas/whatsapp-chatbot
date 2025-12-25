@@ -1,4 +1,4 @@
-import { prisma, PrismaDatabaseUtils } from '../config/prisma';
+import { prisma } from '../config/prisma';
 import { createHash } from 'crypto';
 
 /**
@@ -7,8 +7,7 @@ import { createHash } from 'crypto';
  */
 export class SummaryStore {
   constructor() {
-    // Initialize database connection
-    PrismaDatabaseUtils.initialize().catch(console.error);
+    // Database connection is initialized via prisma singleton
   }
 
   /**

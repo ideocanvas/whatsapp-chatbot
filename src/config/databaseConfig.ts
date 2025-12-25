@@ -2,7 +2,7 @@ import { HistoryStorePostgres } from '../memory/HistoryStorePostgres';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ProcessedMessageServicePostgres } from '../services/ProcessedMessageServicePostgres';
 import { OpenAIService } from '../services/OpenAIService';
-import { PrismaDatabaseUtils } from './prisma';
+import { prisma } from './prisma';
 
 /**
  * Database configuration for PostgreSQL-only setup
@@ -46,14 +46,19 @@ export class DatabaseConfig {
     processedMessages: number;
     vectorDocuments: number;
   }> {
-    const stats = await PrismaDatabaseUtils.getDatabaseStats();
+    const [conversationLogs, knowledgeDocuments, processedMessages, vectorDocuments] = await Promise.all([
+      prisma.conversationLog.count(),
+      prisma.knowledge.count(),
+      prisma.processedMessage.count(),
+      prisma.document.count(),
+    ]);
 
     return {
       databaseType: 'PostgreSQL',
-      conversationLogs: stats.conversationLogs,
-      knowledgeDocuments: stats.knowledgeDocuments,
-      processedMessages: stats.processedMessages,
-      vectorDocuments: stats.vectorDocuments,
+      conversationLogs,
+      knowledgeDocuments,
+      processedMessages,
+      vectorDocuments,
     };
   }
 
@@ -61,14 +66,26 @@ export class DatabaseConfig {
    * Initialize the database connection
    */
   static async initialize(): Promise<void> {
-    await PrismaDatabaseUtils.initialize();
+    try {
+      await prisma.$connect();
+      console.log('✅ Prisma connected to database');
+    } catch (error) {
+      console.error('❌ Database initialization failed:', error);
+      throw error;
+    }
   }
 
   /**
    * Health check for PostgreSQL
    */
   static async healthCheck(): Promise<boolean> {
-    return await PrismaDatabaseUtils.healthCheck();
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return true;
+    } catch (error) {
+      console.error('❌ Database health check failed:', error);
+      return false;
+    }
   }
 
   /**
@@ -80,12 +97,37 @@ export class DatabaseConfig {
     oldProcessedMessages: number;
     oldVectorDocuments: number;
   }> {
-    const result = await PrismaDatabaseUtils.cleanupOldData();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [oldConversations, oldKnowledge, oldProcessedMessages] = await Promise.all([
+      prisma.conversationLog.deleteMany({
+        where: {
+          timestamp: {
+            lt: thirtyDaysAgo,
+          },
+        },
+      }),
+      prisma.knowledge.deleteMany({
+        where: {
+          timestamp: {
+            lt: thirtyDaysAgo,
+          },
+        },
+      }),
+      prisma.processedMessage.deleteMany({
+        where: {
+          processedAt: {
+            lt: thirtyDaysAgo,
+          },
+        },
+      }),
+    ]);
 
     return {
-      oldConversations: result.oldConversations,
-      oldKnowledge: result.oldKnowledge,
-      oldProcessedMessages: result.oldProcessedMessages,
+      oldConversations: oldConversations.count,
+      oldKnowledge: oldKnowledge.count,
+      oldProcessedMessages: oldProcessedMessages.count,
       oldVectorDocuments: 0, // Vector documents cleanup not implemented yet
     };
   }
