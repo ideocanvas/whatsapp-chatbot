@@ -1,4 +1,6 @@
-import axios from 'axios';
+import { spawn } from 'child_process';
+import * as https from 'https';
+import * as http from 'http';
 
 /**
  * Configuration for the Desktop-to-Web API service
@@ -62,12 +64,81 @@ export interface ExecuteScriptResponse {
  * - Listing and executing script templates
  * 
  * Based on the API documentation in docs/NODEJS_INTEGRATION.md
+ * 
+ * IMPLEMENTATION NOTE:
+ * This service uses curl for all HTTP requests instead of axios to avoid
+ * connection pooling and timeout issues. Curl is more reliable for long-running
+ * requests and doesn't have the connection reuse problems that axios has.
  */
 export class DesktopToWebService {
   private config: DesktopToWebConfig;
 
   constructor(config: DesktopToWebConfig) {
     this.config = config;
+  }
+
+  /**
+   * Make a curl request with timeout
+   * 
+   * @param method - HTTP method (GET, POST, etc.)
+   * @param url - Full URL to request
+   * @param data - Optional data to send (for POST requests)
+   * @param timeoutMs - Timeout in milliseconds (default: 30000)
+   * @returns Promise with the parsed JSON response
+   */
+  private async curlRequest<T>(
+    method: 'GET' | 'POST',
+    url: string,
+    data?: any,
+    timeoutMs: number = 30000
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const args: string[] = [
+        '-s',           // Silent mode
+        '-L',           // Follow redirects
+        '--max-time', String(Math.ceil(timeoutMs / 1000)), // Timeout in seconds
+        '-H', `X-API-KEY: ${this.config.apiKey}`,
+        '-H', 'Accept: application/json',
+      ];
+
+      if (method === 'POST') {
+        args.push('-X', 'POST');
+        args.push('-H', 'Content-Type: application/json');
+        args.push('-d', JSON.stringify(data));
+      }
+
+      args.push(url);
+
+      const curl = spawn('curl', args);
+
+      let stdout = '';
+      let stderr = '';
+
+      curl.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+
+      curl.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      curl.on('close', (code) => {
+        if (code === 0) {
+          try {
+            const result = JSON.parse(stdout);
+            resolve(result as T);
+          } catch (e) {
+            reject(new Error(`Failed to parse response: ${stdout}`));
+          }
+        } else {
+          reject(new Error(`curl exited with code ${code}: ${stderr || 'Unknown error'}`));
+        }
+      });
+
+      curl.on('error', (err) => {
+        reject(new Error(`curl error: ${err.message}`));
+      });
+    });
   }
 
   /**
@@ -80,19 +151,15 @@ export class DesktopToWebService {
     try {
       console.log(`📋 Sending text to clipboard: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
-      const response = await axios.post(
+      const response = await this.curlRequest<SendToClipboardResponse>(
+        'POST',
         `${this.config.baseUrl}/api/send_to_clipboard`,
         { text },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-KEY': this.config.apiKey
-          }
-        }
+        30000
       );
 
       console.log('✅ Text sent to clipboard successfully');
-      return response.data as SendToClipboardResponse;
+      return response;
     } catch (error) {
       console.error('❌ Error sending text to clipboard:', error);
       return {
@@ -111,18 +178,15 @@ export class DesktopToWebService {
     try {
       console.log('📋 Reading from clipboard...');
 
-      const response = await axios.get(
+      const response = await this.curlRequest<ReadFromClipboardResponse>(
+        'GET',
         `${this.config.baseUrl}/api/read_from_clipboard`,
-        {
-          headers: {
-            'X-API-KEY': this.config.apiKey
-          }
-        }
+        undefined,
+        30000
       );
 
-      const data = response.data as ReadFromClipboardResponse;
-      console.log(`✅ Clipboard read successfully: "${data.text?.substring(0, 50)}${data.text && data.text.length > 50 ? '...' : ''}"`);
-      return data;
+      console.log(`✅ Clipboard read successfully: "${response.text?.substring(0, 50)}${response.text && response.text.length > 50 ? '...' : ''}"`);
+      return response;
     } catch (error) {
       console.error('❌ Error reading from clipboard:', error);
       return {
@@ -141,18 +205,15 @@ export class DesktopToWebService {
     try {
       console.log('📜 Listing script templates...');
 
-      const response = await axios.get(
+      const response = await this.curlRequest<ScriptTemplatesResponse>(
+        'GET',
         `${this.config.baseUrl}/api/script_templates`,
-        {
-          headers: {
-            'X-API-KEY': this.config.apiKey
-          }
-        }
+        undefined,
+        30000
       );
 
-      const data = response.data as ScriptTemplatesResponse;
-      console.log(`✅ Found ${data.templates?.length || 0} script templates`);
-      return data;
+      console.log(`✅ Found ${response.templates?.length || 0} script templates`);
+      return response;
     } catch (error) {
       console.error('❌ Error listing script templates:', error);
       return {
@@ -164,37 +225,37 @@ export class DesktopToWebService {
 
   /**
    * Execute a script template
-   * 
+   *
    * @param templateId - The ID of the template to execute
    * @param parameters - Optional parameters for the script
+   * @param timeoutSeconds - Optional timeout in seconds (default: 300)
    * @returns Promise with the execution result
    */
   async executeScript(
     templateId: string,
-    parameters?: Record<string, any>
+    parameters?: Record<string, any>,
+    timeoutSeconds: number = 300
   ): Promise<ExecuteScriptResponse> {
     try {
       console.log(`🚀 Executing script template: ${templateId}`);
       if (parameters) {
         console.log(`   Parameters:`, parameters);
       }
+      console.log(`   Timeout: ${timeoutSeconds}s`);
 
-      const response = await axios.post(
+      const response = await this.curlRequest<ExecuteScriptResponse>(
+        'POST',
         `${this.config.baseUrl}/api/execute_parameterized_script`,
         {
           template_id: templateId,
-          parameters: parameters || {}
+          parameters: parameters || {},
+          timeout_seconds: timeoutSeconds
         },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-KEY': this.config.apiKey
-          }
-        }
+        (timeoutSeconds + 10) * 1000 // Add 10s buffer to server timeout
       );
 
       console.log('✅ Script executed successfully');
-      return response.data as ExecuteScriptResponse;
+      return response;
     } catch (error) {
       console.error(`❌ Error executing script template ${templateId}:`, error);
       return {

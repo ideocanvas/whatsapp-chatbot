@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "news:cli": "ts-node src/commands/news-cli.ts",
     "web:scrape": "ts-node src/commands/web-scrape-cli.ts",
+    "desktop:cli": "ts-node src/commands/desktop-cli.ts",
     "dev": "npm run watch",
     "watch": "nodemon",
     "watch:verbose": "nodemon --verbose",
@@ -36,6 +37,7 @@
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^5.0.0",
+    "@types/jsdom": "^27.0.0",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",
     "commander": "^11.1.0",
@@ -43,6 +45,7 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "form-data": "^4.0.4",
+    "jsdom": "^27.3.0",
     "openai": "^4.20.1",
     "pg": "^8.11.3",
     "playwright": "^1.55.0",
@@ -65,4 +68,3 @@
     "schema": "prisma/schema.prisma"
   }
 }
-

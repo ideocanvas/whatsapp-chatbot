@@ -1,8 +1,10 @@
 import axios from 'axios';
+import { DesktopToWebService, createDesktopToWebServiceFromEnv } from './DesktopToWebService';
 
 export interface GoogleSearchConfig {
   apiKey: string;
   searchEngineId: string;
+  useDesktopService?: boolean; // Enable desktop service for page content fetching
 }
 
 export interface SearchResult {
@@ -29,9 +31,46 @@ export interface NewsSourceGroup {
 
 export class GoogleSearchService {
   private config: GoogleSearchConfig;
+  private desktopService?: DesktopToWebService;
+  private desktopLock: Promise<void> = Promise.resolve(); // Mutex for desktop service operations
 
   constructor(config: GoogleSearchConfig) {
     this.config = config;
+    if (config.useDesktopService) {
+      try {
+        this.desktopService = createDesktopToWebServiceFromEnv();
+      } catch (e) {
+        console.warn('⚠️ DesktopToWebService not configured, falling back to direct HTTP requests');
+      }
+    }
+  }
+
+  /**
+   * Acquire lock for desktop service operations to prevent concurrent access
+   */
+  private async withDesktopLock<T>(fn: () => Promise<T>): Promise<T> {
+    // Wait for the current lock to resolve
+    await this.desktopLock;
+    
+    // Create a new lock that resolves when our operation completes
+    let resolveLock: (() => void) | undefined;
+    const newLock = new Promise<void>(resolve => {
+      resolveLock = resolve;
+    });
+    
+    // Set the new lock before starting our operation
+    const oldLock = this.desktopLock;
+    this.desktopLock = newLock;
+    
+    try {
+      // Execute the operation
+      return await fn();
+    } finally {
+      // Release the lock
+      if (resolveLock) {
+        resolveLock();
+      }
+    }
   }
 
   /**
@@ -238,11 +277,15 @@ export class GoogleSearchService {
     const categories: Category[] = ['us', 'world', 'china', 'hongkong'];
 
     // Which editions apply to which category
+    // Note: Based on testing, the following combinations return no content:
+    // - China: all editions (enUS, base, zhHK) return empty
+    // - Hong Kong: enHK and base return empty, only zhHK works
+    // - US: zhHK returns empty, only enUS and base work
     const categoryEditions: Record<Category, Edition[]> = {
-      us: [editions.enUS, editions.zhHK],
-      world: [editions.enUS, editions.zhHK],
-      china: [editions.enUS, editions.zhHK],
-      hongkong: [editions.enHK, editions.zhHK],
+      us: [editions.enUS], // zhHK returns no content
+      world: [editions.enUS, editions.zhHK], // all work
+      china: [], // all editions return no content
+      hongkong: [editions.zhHK], // only zhHK works, enHK and base return no content
     };
 
     // Query suffixes per category/language to keep coverage broad while applying query everywhere
@@ -499,11 +542,30 @@ export class GoogleSearchService {
   }
 
   /**
-   * Fetch full article text for a given URL. Attempts to follow canonical redirects
-   * and extract the main article or largest paragraph blocks. Returns a cleaned
-   * plain-text version of the article (may be truncated on very long pages).
+   * Fetch full article text for a given URL using DesktopToWebService if available.
+   * Falls back to direct HTTP requests if desktop service is not configured.
+   *
+   * Desktop service workflow:
+   * 1. Send the URL to clipboard
+   * 2. Execute "get_page_content" script template
+   * 3. Read the page content from clipboard
+   * 4. Convert the HTML content to cleaned content
+   *
+   * Direct HTTP fallback:
+   * Attempts to follow canonical redirects and extract the main article or largest
+   * paragraph blocks. Returns a cleaned plain-text version of the article.
    */
   async fetchFullArticle(url: string, timeoutMs: number = 8000): Promise<string> {
+    // Try using DesktopToWebService if configured
+    if (this.desktopService && this.desktopService.isConfigured()) {
+      try {
+        return await this.fetchFullArticleViaDesktop(url);
+      } catch (e) {
+        console.warn('⚠️ Desktop service fetch failed, falling back to direct HTTP:', e instanceof Error ? e.message : `${e}`);
+      }
+    }
+
+    // Fallback to direct HTTP request
     try {
       const res = await axios.get(url, { responseType: 'text', timeout: timeoutMs, maxRedirects: 5 });
       let html = String(res.data || '');
@@ -596,6 +658,91 @@ export class GoogleSearchService {
     }
   }
 
+  /**
+   * Fetch full article text using DesktopToWebService.
+   *
+   * Workflow:
+   * 1. Send the URL to clipboard
+   * 2. Execute "get_page_content" script template
+   * 3. Read the page content from clipboard
+   * 4. Convert the HTML content to cleaned content
+   */
+  private async fetchFullArticleViaDesktop(url: string): Promise<string> {
+    return this.withDesktopLock(async () => {
+      console.log(`🖥️ Fetching article via Desktop service: ${url}`);
+
+      // Step 1: Send URL to clipboard
+      const sendResult = await this.desktopService!.sendToClipboard(url);
+      if (sendResult.status !== 'success') {
+        throw new Error(`Failed to send URL to clipboard: ${sendResult.message}`);
+      }
+
+      // Step 2: Execute get_page_content script template with 300 second timeout
+      const executeResult = await this.desktopService!.executeScript('get_page_content', {}, 300);
+      if (executeResult.status !== 'success') {
+        throw new Error(`Failed to execute get_page_content script: ${executeResult.message}`);
+      }
+
+      // Step 3: Read page content from clipboard
+      const readResult = await this.desktopService!.readFromClipboard();
+      if (readResult.status !== 'success' || !readResult.text) {
+        throw new Error(`Failed to read page content from clipboard: ${readResult.message}`);
+      }
+
+      // Step 4: Convert HTML content to cleaned content
+      const cleanedContent = this.cleanHtmlContent(readResult.text);
+      console.log(`✅ Article fetched via Desktop service: ${cleanedContent.length} characters`);
+      
+      return this.truncateText(cleanedContent);
+    });
+  }
+
+  /**
+   * Clean HTML content by removing scripts, styles, and extracting main text content.
+   */
+  private cleanHtmlContent(html: string): string {
+    // Remove scripts and styles
+    let cleaned = html.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+                      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+                      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ');
+
+    // Remove HTML comments
+    cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, ' ');
+
+    // Prefer <article> content
+    const articleMatch = /<article[^>]*>([\s\S]*?)<\/article>/i.exec(cleaned);
+    if (articleMatch && articleMatch[1]) {
+      cleaned = articleMatch[1];
+    }
+
+    // Extract text from common content tags
+    const contentTags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'span', 'div'];
+    const textParts: string[] = [];
+    
+    for (const tag of contentTags) {
+      const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(cleaned))) {
+        const text = this.stripHtml(this.decodeHtmlEntities(match[1] || ''));
+        if (text && text.trim().length > 10) {
+          textParts.push(text.trim());
+        }
+      }
+    }
+
+    // If we found content tags, use them; otherwise strip all HTML
+    let result = textParts.length > 0
+      ? textParts.join('\n\n')
+      : this.stripHtml(this.decodeHtmlEntities(cleaned));
+
+    // Clean up whitespace
+    result = result.replace(/\n\s*\n\s*\n/g, '\n\n')
+                   .replace(/^\s+|\s+$/g, '')
+                   .replace(/\s{2,}/g, ' ');
+
+    return result;
+  }
+
   private truncateText(text: string, maxChars: number = 20000): string {
     if (!text) return '';
     if (text.length <= maxChars) return text;
@@ -610,8 +757,8 @@ export class GoogleSearchService {
     const items = await this.searchNews(query, numResults);
     const results: SearchResult[] = [];
 
-    // Fetch full articles with a small concurrency limit
-    const concurrency = 3;
+    // When using desktop service, use concurrency of 1 to prevent concurrent access
+    const concurrency = this.desktopService && this.desktopService.isConfigured() ? 1 : 3;
     let index = 0;
 
     const workers: Promise<void>[] = [];
@@ -675,7 +822,8 @@ export class GoogleSearchService {
       }
     }
 
-    const concurrency = 3;
+    // When using desktop service, use concurrency of 1 to prevent concurrent access
+    const concurrency = this.desktopService && this.desktopService.isConfigured() ? 1 : 3;
     let cursor = 0;
     const workers: Promise<void>[] = [];
 

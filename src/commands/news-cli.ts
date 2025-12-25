@@ -1,25 +1,31 @@
-import dotenv from 'dotenv';
+import * as dotenv from 'dotenv';
 dotenv.config();
 
 import { promises as fs } from 'fs';
-import path from 'path';
+import * as path from 'path';
 import { GoogleSearchService } from '../services/GoogleSearchService';
 
 async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error('Usage: pnpm run news:cli "search query" [numResults] [output.json]');
+    console.error('Usage: pnpm run news:cli "search query" [numResults] [output.json] [--desktop]');
+    console.error('  --desktop: Use DesktopToWebService for fetching page content');
     process.exit(2);
   }
 
   const query = args[0];
-  const numResults = args[1] ? Math.max(1, parseInt(args[1], 10)) : 10;
-  const outPath = args[2] || `news_results_${Date.now()}.json`;
+  const numResults = args[1] && !args[1].startsWith('--') ? Math.max(1, parseInt(args[1], 10)) : 10;
+  const outPath = args[2] && !args[2].startsWith('--') ? args[2] : args[1] && !args[1].startsWith('--') ? `news_results_${Date.now()}.json` : `news_results_${Date.now()}.json`;
+  const useDesktop = args.includes('--desktop');
 
-  const svc = new GoogleSearchService({ apiKey: '', searchEngineId: '' });
+  const svc = new GoogleSearchService({
+    apiKey: '',
+    searchEngineId: '',
+    useDesktopService: useDesktop
+  });
 
   try {
-    console.log(`Searching Google News for: "${query}" (max ${numResults})`);
+    console.log(`Searching Google News for: "${query}" (max ${numResults})${useDesktop ? ' [using Desktop service]' : ''}`);
     const groups = await svc.searchNewsGroupedFull(query, numResults);
 
     // Normalize output

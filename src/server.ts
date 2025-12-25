@@ -47,6 +47,12 @@ class AutonomousServer {
       res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
       next();
     });
+
+    // Serve static files from public directory (for cached images)
+    this.app.use('/public', express.static('public'));
+    
+    // Serve static files from data/html/cache directory (for markdown and images)
+    this.app.use('/html/cache', express.static('data/html/cache'));
   }
 
   private setupRoutes(): void {
