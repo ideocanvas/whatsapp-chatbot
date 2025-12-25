@@ -10,6 +10,11 @@ class PrismaClientSingleton {
 
   static getInstance(): PrismaClient {
     if (!PrismaClientSingleton.instance) {
+      // Validate DATABASE_URL is set
+      if (!process.env.DATABASE_URL) {
+        throw new Error('DATABASE_URL environment variable is not set');
+      }
+
       PrismaClientSingleton.instance = new PrismaClient({
         log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
       });
