@@ -221,20 +221,25 @@ model ProcessedArticle {
   id                String   @id @default(uuid())
   title             String
   url               String   @unique
-  source            String
+  source            String   // Original link from RSS
+  feedUrl           String?  // Normalized RSS feed URL (without locale params)
   publishedAt       String
-  originalContent   String   // Raw HTML/text content
-  processedContent  String   // Markdown format after LLM processing
-  imagePaths        String[] // Array of downloaded image file paths
-  imageDescriptions Json?    // Vision LLM descriptions for each image
-  keywords          String[]
-  category          String?
-  processingStatus  ProcessedArticleStatus @default(completed)
+  originalContent   String   // Path to HTML file: /html/cache/YYYY-MM-DD/hash/article.html
+  processedContent  String   // Path to Markdown file: /html/cache/YYYY-MM-DD/hash/article.md
+  imagePaths        String[] // Array of relative image paths: [images/img_xxx.jpg, ...]
+  imageDescriptions Json?    // { "img_xxx.jpg": "description", ... }
+  keywords          String[] // Extracted keywords
+  tags              String[] // Hashtag-style tags: ["#technology", "#ai"]
+  category          String?  // Classified category
+  processingStatus  ProcessedArticleStatus @default(pending)
+  errorMessage      String?  // Error details if failed
+  retryCount        Int      @default(0) // Number of retry attempts
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([url])
   @@index([source])
+  @@index([feedUrl])
   @@index([publishedAt])
   @@index([category])
   @@index([processingStatus])

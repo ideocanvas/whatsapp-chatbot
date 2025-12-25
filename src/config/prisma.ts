@@ -1,10 +1,13 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 
 /**
  * Prisma client singleton
  */
 class PrismaClientSingleton {
   private static instance: PrismaClient;
+  private static pool: Pool;
 
   private constructor() {}
 
@@ -15,7 +18,16 @@ class PrismaClientSingleton {
         throw new Error('DATABASE_URL environment variable is not set');
       }
 
+      // Create connection pool
+      PrismaClientSingleton.pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+      });
+
+      // Create adapter
+      const adapter = new PrismaPg(PrismaClientSingleton.pool);
+
       PrismaClientSingleton.instance = new PrismaClient({
+        adapter,
         log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
       });
     }
@@ -25,6 +37,9 @@ class PrismaClientSingleton {
   static async disconnect(): Promise<void> {
     if (PrismaClientSingleton.instance) {
       await PrismaClientSingleton.instance.$disconnect();
+    }
+    if (PrismaClientSingleton.pool) {
+      await PrismaClientSingleton.pool.end();
     }
   }
 }
