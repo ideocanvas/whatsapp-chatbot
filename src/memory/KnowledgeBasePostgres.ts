@@ -316,7 +316,7 @@ export class KnowledgeBasePostgres {
       return rows.map(row => ({
         id: row.id,
         content: row.content,
-        vector: row.vector,
+        vector: Buffer.from(row.vector),
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
@@ -343,7 +343,7 @@ export class KnowledgeBasePostgres {
       return rows.map(row => ({
         id: row.id,
         content: row.content,
-        vector: row.vector,
+        vector: Buffer.from(row.vector),
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
@@ -373,7 +373,7 @@ export class KnowledgeBasePostgres {
       return rows.map(row => ({
         id: row.id,
         content: row.content,
-        vector: row.vector,
+        vector: Buffer.from(row.vector),
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
@@ -406,7 +406,7 @@ export class KnowledgeBasePostgres {
       return rows.map(row => ({
         id: row.id,
         content: row.content,
-        vector: row.vector,
+        vector: Buffer.from(row.vector),
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
