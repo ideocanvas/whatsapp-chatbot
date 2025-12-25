@@ -1,8 +1,12 @@
 import axios from 'axios';
 import { DesktopToWebService, createDesktopToWebServiceFromEnv } from './DesktopToWebService';
 import { HtmlToMarkdownService, createHtmlToMarkdownServiceFromEnv } from './HtmlToMarkdownService';
+import { ProcessedArticleService } from './ProcessedArticleService';
+import { ArticleClassificationService, createArticleClassificationService } from './ArticleClassificationService';
+import { OpenAIService } from './OpenAIService';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 export interface GoogleSearchConfig {
   apiKey: string;
@@ -24,6 +28,25 @@ export interface SearchResult {
   originalLink?: string;
 }
 
+export interface ProcessedNewsResult {
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  feedUrl?: string;
+  publishedAt: string;
+  originalContent: string; // Path to HTML file
+  processedContent: string; // Path to Markdown file
+  imagePaths: string[];
+  imageDescriptions: Record<string, string>;
+  keywords: string[];
+  tags: string[];
+  category?: string;
+  processingStatus: 'pending' | 'processing' | 'completed' | 'failed';
+  errorMessage?: string;
+  isNew: boolean; // true if article was just created, false if it already existed
+}
+
 export interface NewsSourceGroup {
   /** The exact RSS URL fetched */
   sourceUrl: string;
@@ -36,9 +59,14 @@ export class GoogleSearchService {
   private config: GoogleSearchConfig;
   private desktopService?: DesktopToWebService;
   private htmlToMarkdownService?: HtmlToMarkdownService;
+  private processedArticleService?: ProcessedArticleService;
+  private classificationService?: ArticleClassificationService;
   private desktopLock: Promise<void> = Promise.resolve(); // Mutex for desktop service operations
 
-  constructor(config: GoogleSearchConfig) {
+  constructor(
+    config: GoogleSearchConfig,
+    openaiService?: OpenAIService
+  ) {
     this.config = config;
     if (config.useDesktopService) {
       try {
@@ -47,6 +75,12 @@ export class GoogleSearchService {
       } catch (e) {
         console.warn('⚠️ DesktopToWebService not configured, falling back to direct HTTP requests');
       }
+    }
+    
+    // Initialize services for article processing
+    if (openaiService) {
+      this.processedArticleService = new ProcessedArticleService();
+      this.classificationService = createArticleClassificationService(openaiService);
     }
   }
 
@@ -878,6 +912,255 @@ export class GoogleSearchService {
   }
 
   /**
+   * Process news articles and return ProcessedNewsResult with full metadata
+   * This is the main method for the redesigned GoogleSearchService
+   */
+  async searchNewsProcessed(query?: string | null, numResults: number = 5): Promise<ProcessedNewsResult[]> {
+    if (!this.processedArticleService || !this.classificationService) {
+      throw new Error('ProcessedArticleService and ClassificationService are required. Provide OpenAIService in constructor.');
+    }
+
+    console.log('📰 Processing news articles with full metadata:', { query: query || '<none>', numResults });
+
+    // Get RSS items
+    const rssItems = await this.searchNews(query, numResults);
+    const results: ProcessedNewsResult[] = [];
+
+    // Process each article
+    for (const item of rssItems) {
+      try {
+        const result = await this.processArticle(item);
+        if (result) {
+          results.push(result);
+        }
+      } catch (error) {
+        console.error('❌ Failed to process article:', item.link, error);
+      }
+    }
+
+    console.log(`✅ Processed ${results.length} articles`);
+    return results;
+  }
+
+  /**
+   * Process a single article from RSS item
+   */
+  private async processArticle(item: SearchResult): Promise<ProcessedNewsResult | null> {
+    if (!this.processedArticleService || !this.classificationService || !this.htmlToMarkdownService) {
+      return null;
+    }
+
+    const url = item.link;
+    if (!url) return null;
+
+    // Check if article already exists
+    const existing = await this.processedArticleService.getProcessedArticleByUrl(url);
+    if (existing) {
+      console.log(`⏭️ Article already processed: ${url}`);
+      return {
+        id: existing.id,
+        title: existing.title,
+        url: existing.url,
+        source: existing.source,
+        feedUrl: undefined, // TODO: Add feedUrl to ProcessedArticle type
+        publishedAt: existing.publishedAt,
+        originalContent: existing.originalContent,
+        processedContent: existing.processedContent,
+        imagePaths: existing.imagePaths,
+        imageDescriptions: existing.imageDescriptions || {},
+        keywords: existing.keywords,
+        tags: [], // TODO: Add tags to ProcessedArticle type
+        category: existing.category,
+        processingStatus: 'completed',
+        isNew: false,
+      };
+    }
+
+    // Create pending record
+    const articleId = await this.processedArticleService.createProcessedArticle({
+      title: item.title,
+      url: url,
+      source: item.originalLink || url,
+      publishedAt: item.pubDate || new Date().toISOString(),
+      originalContent: '', // Will be updated after processing
+      processedContent: '', // Will be updated after processing
+      imagePaths: [],
+      keywords: [],
+      processingStatus: 'pending',
+    });
+
+    // Update to processing
+    await this.processedArticleService.updateProcessedArticle(articleId, {
+      processingStatus: 'processing',
+    });
+
+    try {
+      // Process URL with HtmlToMarkdownService
+      const htmlResult = await this.htmlToMarkdownService.processUrl(url);
+
+      if (!htmlResult.success || !htmlResult.markdownPath) {
+        throw new Error(htmlResult.error || 'Failed to process URL');
+      }
+
+      // Get cache folder
+      const cacheFolder = path.dirname(htmlResult.markdownPath);
+
+      // Read image map
+      const imageMap = this.loadImageMap(cacheFolder);
+      const imagePaths = Array.from(imageMap.values());
+
+      // Read markdown content for classification
+      const markdownContent = fs.readFileSync(htmlResult.markdownPath, 'utf-8');
+
+      // Classify article
+      const classification = await this.classificationService.classifyArticle(
+        item.title,
+        markdownContent,
+        imagePaths,
+        cacheFolder
+      );
+
+      // Update article with processed data
+      await this.processedArticleService.updateProcessedArticle(articleId, {
+        originalContent: `/html/cache/${path.relative('./data/html/cache', path.join(cacheFolder, 'article.html'))}`,
+        processedContent: `/html/cache/${path.relative('./data/html/cache', htmlResult.markdownPath)}`,
+        imagePaths,
+        imageDescriptions: classification.imageDescriptions,
+        keywords: classification.keywords,
+        tags: classification.tags,
+        category: classification.category,
+        processingStatus: 'completed',
+      });
+
+      console.log(`✅ Article processed: ${item.title}`);
+
+      return {
+        id: articleId,
+        title: item.title,
+        url: url,
+        source: item.originalLink || url,
+        feedUrl: item.feedUrl,
+        publishedAt: item.pubDate || new Date().toISOString(),
+        originalContent: `/html/cache/${path.relative('./data/html/cache', path.join(cacheFolder, 'article.html'))}`,
+        processedContent: `/html/cache/${path.relative('./data/html/cache', htmlResult.markdownPath)}`,
+        imagePaths,
+        imageDescriptions: classification.imageDescriptions,
+        keywords: classification.keywords,
+        tags: classification.tags,
+        category: classification.category,
+        processingStatus: 'completed',
+        isNew: true,
+      };
+    } catch (error) {
+      // Update to failed with error message
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await this.processedArticleService.updateProcessedArticle(articleId, {
+        processingStatus: 'failed',
+        errorMessage,
+      });
+
+      console.error(`❌ Article processing failed: ${item.title}`, error);
+
+      // Retry logic with exponential backoff
+      await this.retryArticle(articleId, item);
+
+      return null;
+    }
+  }
+
+  /**
+   * Retry failed article with exponential backoff
+   */
+  private async retryArticle(articleId: string, item: SearchResult): Promise<void> {
+    if (!this.processedArticleService) return;
+
+    const maxRetries = 3;
+    const baseDelay = 1000; // 1 second
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.log(`🔄 Retrying article (attempt ${attempt}/${maxRetries}) after ${delay}ms: ${item.title}`);
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      try {
+        // Re-process the article
+        const result = await this.processArticle(item);
+        if (result && result.processingStatus === 'completed') {
+          console.log(`✅ Article retry succeeded: ${item.title}`);
+          return;
+        }
+      } catch (error) {
+        console.error(`❌ Retry attempt ${attempt} failed:`, error);
+      }
+    }
+
+    console.error(`❌ All retry attempts failed for article: ${item.title}`);
+  }
+
+  /**
+   * Load image map from cache folder
+   */
+  private loadImageMap(cacheFolder: string): Map<string, string> {
+    const imageMapPath = path.join(cacheFolder, 'image-map.json');
+    
+    if (!fs.existsSync(imageMapPath)) {
+      return new Map();
+    }
+
+    try {
+      const data = fs.readFileSync(imageMapPath, 'utf-8');
+      const obj = JSON.parse(data);
+      return new Map(Object.entries(obj));
+    } catch (error) {
+      console.warn('⚠️ Failed to load image map:', error);
+      return new Map();
+    }
+  }
+
+  /**
+   * Get cache folder for a URL
+   */
+  private getCacheFolder(url: string): string {
+    const hash = crypto.createHash('sha256').update(url).digest('hex').substring(0, 16);
+    const today = new Date().toISOString().split('T')[0];
+    return path.join('./data/html/cache', today, hash);
+  }
+
+  /**
+   * Fetch the latest news articles (up to 100)
+   * This method is designed for scheduled news fetching
+   * Returns only new articles that haven't been processed before
+   */
+  async fetchLatestNews(numResults: number = 100): Promise<ProcessedNewsResult[]> {
+    if (!this.processedArticleService || !this.classificationService) {
+      throw new Error('ProcessedArticleService and ClassificationService are required. Provide OpenAIService in constructor.');
+    }
+
+    console.log(`📰 Fetching latest ${numResults} news articles`);
+
+    // Get RSS items without query (general news)
+    const rssItems = await this.searchNews(null, numResults);
+    const results: ProcessedNewsResult[] = [];
+
+    // Process each article
+    for (const item of rssItems) {
+      try {
+        const result = await this.processArticle(item);
+        // Only include new articles
+        if (result && result.isNew) {
+          results.push(result);
+        }
+      } catch (error) {
+        console.error('❌ Failed to process article:', item.link, error);
+      }
+    }
+
+    console.log(`✅ Fetched ${results.length} new news articles`);
+    return results;
+  }
+
+  /**
    * Check if the service is properly configured
    */
   isConfigured(): boolean {
@@ -886,7 +1169,7 @@ export class GoogleSearchService {
 }
 
 // Helper function to create GoogleSearchService instance from environment variables
-export function createGoogleSearchServiceFromEnv(): GoogleSearchService {
+export function createGoogleSearchServiceFromEnv(openaiService?: OpenAIService): GoogleSearchService {
   const apiKey = process.env.GOOGLE_SEARCH_API_KEY;
   const searchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID;
 
@@ -897,5 +1180,5 @@ export function createGoogleSearchServiceFromEnv(): GoogleSearchService {
   return new GoogleSearchService({
     apiKey,
     searchEngineId,
-  });
+  }, openaiService);
 }

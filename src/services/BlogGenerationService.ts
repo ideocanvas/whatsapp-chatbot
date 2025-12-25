@@ -1,6 +1,16 @@
 import { OpenAIService } from './OpenAIService';
 import { PrismaClient } from '@prisma/client';
-import { GoogleNewsArticle } from './GoogleNewsService';
+
+// Local interface for article data (replaces GoogleNewsArticle)
+export interface ArticleData {
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+  description?: string;
+  keywords?: string[];
+  fullContent?: string;
+}
 
 export interface BlogPost {
   title: string;
@@ -45,7 +55,7 @@ export class BlogGenerationService {
   /**
    * Generate blog posts from news articles
    */
-  async generateBlogPosts(articles: GoogleNewsArticle[]): Promise<BlogPost[]> {
+  async generateBlogPosts(articles: ArticleData[]): Promise<BlogPost[]> {
     console.log(`📝 Generating blog posts from ${articles.length} articles`);
 
     // Filter and score articles
@@ -84,8 +94,8 @@ export class BlogGenerationService {
   /**
    * Score and filter articles based on quality criteria
    */
-  private async scoreAndFilterArticles(articles: GoogleNewsArticle[]): Promise<{ article: GoogleNewsArticle; score: number }[]> {
-    const scoredArticles: { article: GoogleNewsArticle; score: number }[] = [];
+  private async scoreAndFilterArticles(articles: ArticleData[]): Promise<{ article: ArticleData; score: number }[]> {
+    const scoredArticles: { article: ArticleData; score: number }[] = [];
 
     for (const article of articles) {
       const score = await this.calculateArticleScore(article);
@@ -101,7 +111,7 @@ export class BlogGenerationService {
   /**
    * Calculate article quality score (0-1)
    */
-  private async calculateArticleScore(article: GoogleNewsArticle): Promise<number> {
+  private async calculateArticleScore(article: ArticleData): Promise<number> {
     let score = 0.0;
 
     // 1. Content length score
@@ -117,7 +127,7 @@ export class BlogGenerationService {
     }
 
     // 3. Keyword richness score
-    const keywordScore = Math.min(article.keywords.length / 10, 0.3);
+    const keywordScore = Math.min((article.keywords?.length || 0) / 10, 0.3);
     score += keywordScore;
 
     // 4. Source credibility score (simple heuristic)
@@ -138,7 +148,7 @@ export class BlogGenerationService {
   /**
    * Generate a blog post from a news article using AI
    */
-  private async generateBlogPostFromArticle(article: GoogleNewsArticle): Promise<BlogPost | null> {
+  private async generateBlogPostFromArticle(article: ArticleData): Promise<BlogPost | null> {
     try {
       const prompt = this.createBlogGenerationPrompt(article);
       const response = await this.openaiService.generateTextResponse(prompt);
@@ -160,7 +170,7 @@ export class BlogGenerationService {
   /**
    * Generate featured image for blog post
    */
-  private async generateFeaturedImage(blogPost: BlogPost, article: GoogleNewsArticle): Promise<void> {
+  private async generateFeaturedImage(blogPost: BlogPost, article: ArticleData): Promise<void> {
     try {
       if (!this.config.imageGenerationEnabled) return;
 
@@ -194,7 +204,7 @@ export class BlogGenerationService {
   /**
    * Create prompt for blog post generation
    */
-  private createBlogGenerationPrompt(article: GoogleNewsArticle): string {
+  private createBlogGenerationPrompt(article: ArticleData): string {
     return `
       You are a professional blog writer. Create a high-quality blog post based on the following news article.
 
@@ -239,7 +249,7 @@ export class BlogGenerationService {
   /**
    * Parse AI response into BlogPost object
    */
-  private parseBlogPostResponse(response: string, sourceArticle: GoogleNewsArticle): BlogPost {
+  private parseBlogPostResponse(response: string, sourceArticle: ArticleData): BlogPost {
     // Extract title from first heading
     const titleMatch = response.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : sourceArticle.title;
@@ -286,11 +296,11 @@ export class BlogGenerationService {
   /**
    * Extract tags from blog content and source article
    */
-  private extractTags(content: string, sourceArticle: GoogleNewsArticle): string[] {
+  private extractTags(content: string, sourceArticle: ArticleData): string[] {
     const tags = new Set<string>();
 
     // Add source keywords
-    sourceArticle.keywords.forEach(keyword => tags.add(keyword));
+    sourceArticle.keywords?.forEach((keyword: string) => tags.add(keyword));
 
     // Extract proper nouns and important terms from content
     const words = content.split(/\s+/);
@@ -308,7 +318,7 @@ export class BlogGenerationService {
   /**
    * Determine category based on content and keywords
    */
-  private determineCategory(article: GoogleNewsArticle, tags: string[]): string {
+  private determineCategory(article: ArticleData, tags: string[]): string {
     const categoryKeywords: Record<string, string[]> = {
       'technology': ['tech', 'software', 'ai', 'machine learning', 'computer', 'digital', 'internet'],
       'business': ['business', 'economy', 'market', 'finance', 'investment', 'company'],

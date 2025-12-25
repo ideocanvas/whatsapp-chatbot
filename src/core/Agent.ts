@@ -207,10 +207,10 @@ ${profileContext || ''}
 
   /**
    * [NEW] Batch Process News: Deduplicates and Summarizes
-   * Takes a list of raw content, groups duplicates, and returns a single digest message.
+   * Takes a list of processed news articles, groups duplicates, and returns a single digest message.
    */
-  async generateNewsDigest(userId: string, rawNewsItems: string[]): Promise<string | null> {
-    if (!rawNewsItems || rawNewsItems.length === 0) return null;
+  async generateNewsDigest(userId: string, articles: any[]): Promise<string | null> {
+    if (!articles || articles.length === 0) return null;
 
     const userInterests = this.contextMgr.getUserInterests(userId);
 
@@ -220,27 +220,40 @@ ${profileContext || ''}
         return null;
     }
 
+    // Format articles for the prompt
+    const articlesText = articles.map((article, i) => {
+      return `[${i+1}] ${article.title}
+URL: ${article.url}
+Source: ${article.source}
+Category: ${article.category || 'N/A'}
+Keywords: ${article.keywords.join(', ')}
+Tags: ${article.tags.join(', ')}
+Published: ${article.publishedAt}
+`;
+    }).join('\n');
+
     const prompt = `
 You are a smart news editor for WhatsApp.
-I have a list of raw news snippets found by a web scraper. There are likely duplicates (same story from different sources).
+I have a list of processed news articles with rich metadata. There are likely duplicates (same story from different sources).
 
 **User Interests:** ${userInterests.join(', ')}
 
-**Raw News Items:**
-${rawNewsItems.map((item, i) => `[${i+1}] ${item.substring(0, 300)}...`).join('\n')}
+**News Articles:**
+${articlesText}
 
 **Task:**
-1. Group duplicates (stories about the same event).
+1. Group duplicates (stories about the same event) - use title, keywords, and tags to identify duplicates.
 2. Select the top 3 most distinct stories that STRICTLY match the User Interests.
 3. If a story does not match the interests, discard it.
 4. Summarize each selected story into exactly ONE sentence.
+5. Include the source name in parentheses after each summary.
 
 **Output Format:**
 Return ONLY the final message to send to the user. Use emojis.
 Example:
 "Here is your news update 📰:
-• [One sentence summary of story 1]
-• [One sentence summary of story 2]
+• [One sentence summary of story 1] (Source)
+• [One sentence summary of story 2] (Source)
 "
 
 If NO stories match the user's interests, respond exactly with: "NO_MATCHES"

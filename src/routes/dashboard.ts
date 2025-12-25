@@ -373,26 +373,26 @@ export class DashboardRoutes {
 
         this.logActivity(`Manual news browsing triggered with intent: ${intent || 'general'}, bypassLimit: ${bypassLimit}`);
 
-        // Get the Google News service from the agent and trigger actual deep browsing
-        const googleNewsService = agent.getGoogleNewsService();
-        if (!googleNewsService) {
-          return res.status(500).json({ error: 'Google News service not available' });
+        // Get the Google Search service from the agent and trigger news fetching
+        const googleSearchService = agent.getGoogleSearchService();
+        if (!googleSearchService) {
+          return res.status(500).json({ error: 'Google Search service not available' });
         }
 
-        // Trigger actual deep news browsing with bypass flag
-        const articles = await googleNewsService.performDeepNewsBrowsing(bypassLimit);
+        // Trigger news fetching (up to 100 articles)
+        const articles = await googleSearchService.fetchLatestNews(100);
 
         this.logActivity(`Manual news browsing completed - processed ${articles.length} articles with LLM and image analysis`);
 
         res.json({
           success: true,
-          message: `Deep news browsing completed${intent ? ` with intent: ${intent}` : ''}`,
+          message: `News fetching completed${intent ? ` with intent: ${intent}` : ''}`,
           articlesProcessed: articles.length,
           estimatedTime: '5-15 minutes',
           bypassLimit
         });
       } catch (error) {
-        console.error('Error triggering deep news browsing:', error);
+        console.error('Error triggering news browsing:', error);
         res.status(500).json({ error: 'Failed to trigger news browsing session' });
       }
     });

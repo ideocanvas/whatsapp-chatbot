@@ -9,9 +9,7 @@ import { SummaryStore } from './memory/SummaryStore';
 import { ActionQueueService } from './services/ActionQueueService';
 import { BrowserService } from './services/BrowserService';
 import { UserProfileService } from './services/UserProfileService';
-import { BlogGenerationService, createBlogGenerationService } from './services/BlogGenerationService';
-import { GoogleNewsService, createGoogleNewsService } from './services/GoogleNewsService';
-import { createGoogleSearchServiceFromEnv } from './services/GoogleSearchService';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/GoogleSearchService';
 import { MediaService } from './services/MediaService';
 import { OpenAIService, createOpenAIServiceFromConfig } from './services/OpenAIService';
 import { createWebScrapeService } from './services/WebScrapeService';
@@ -42,8 +40,7 @@ class AutonomousWhatsAppAgent {
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
   private summaryStore?: SummaryStore;
   private userProfileService?: UserProfileService;
-  private googleNewsService?: GoogleNewsService;
-  private blogGenerationService?: BlogGenerationService;
+  private googleSearchService?: GoogleSearchService;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -91,19 +88,15 @@ class AutonomousWhatsAppAgent {
       const scraper = createWebScrapeService();
       this.browser = new BrowserService(scraper, this.kb);
 
-      // Initialize Google News Service (pass browser service for rate limiting)
-      this.googleNewsService = createGoogleNewsService(scraper, this.openai, undefined, this.browser);
-
-      // Initialize Blog Generation Service
-      this.blogGenerationService = createBlogGenerationService(this.openai);
+      // Initialize Google Search Service (with OpenAI for article processing)
+      this.googleSearchService = createGoogleSearchServiceFromEnv(this.openai);
 
       // 3. Initialize Tool Registry
       this.tools = new ToolRegistry();
 
       // Register Web Search
-      const searchService = createGoogleSearchServiceFromEnv();
-      if (searchService) {
-        this.tools.registerTool(new WebSearchTool(searchService));
+      if (this.googleSearchService) {
+        this.tools.registerTool(new WebSearchTool(this.googleSearchService));
       }
 
       // Register NEW Tools
@@ -129,8 +122,7 @@ class AutonomousWhatsAppAgent {
         this.agent,
         this.actionQueue,
         this.kb,
-        this.googleNewsService,
-        this.blogGenerationService
+        this.googleSearchService
       );
 
       this.isInitialized = true;
@@ -606,10 +598,10 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
-   * Get the Google News service for external access
+   * Get the Google Search service for external access
    */
-  getGoogleNewsService(): GoogleNewsService | undefined {
-    return this.googleNewsService;
+  getGoogleSearchService(): GoogleSearchService | undefined {
+    return this.googleSearchService;
   }
 
   /**

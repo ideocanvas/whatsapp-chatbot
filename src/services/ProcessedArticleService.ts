@@ -5,24 +5,32 @@ export interface ProcessedArticleCreateData {
   title: string;
   url: string;
   source: string;
+  feedUrl?: string;
   publishedAt: string;
   originalContent: string;
   processedContent: string;
   imagePaths: string[];
   imageDescriptions?: any; // JSON data
   keywords: string[];
+  tags?: string[];
   category?: string;
   processingStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  errorMessage?: string;
 }
 
 export interface ProcessedArticleUpdateData {
   title?: string;
+  feedUrl?: string;
+  originalContent?: string;
   processedContent?: string;
   imagePaths?: string[];
   imageDescriptions?: any;
   keywords?: string[];
+  tags?: string[];
   category?: string;
   processingStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  errorMessage?: string;
+  retryCount?: number;
 }
 
 export class ProcessedArticleService {
@@ -42,14 +50,17 @@ export class ProcessedArticleService {
           title: data.title,
           url: data.url,
           source: data.source,
+          feedUrl: data.feedUrl,
           publishedAt: data.publishedAt,
           originalContent: data.originalContent,
           processedContent: data.processedContent,
           imagePaths: data.imagePaths,
           imageDescriptions: data.imageDescriptions,
           keywords: data.keywords,
+          tags: data.tags || [],
           category: data.category,
-          processingStatus: data.processingStatus || 'completed'
+          processingStatus: data.processingStatus || 'pending',
+          errorMessage: data.errorMessage,
         }
       });
 
@@ -322,6 +333,7 @@ export class ProcessedArticleService {
       originalContent: dbArticle.originalContent,
       processedContent: dbArticle.processedContent,
       keywords: dbArticle.keywords,
+      tags: dbArticle.tags || [],
       category: dbArticle.category || undefined,
       imagePaths: dbArticle.imagePaths,
       imageDescriptions: dbArticle.imageDescriptions || undefined

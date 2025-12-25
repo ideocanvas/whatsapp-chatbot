@@ -4,8 +4,7 @@ import { WhatsAppService } from '../services/WhatsAppService';
 import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
-import { GoogleNewsService } from '../services/GoogleNewsService';
-import { BlogGenerationService } from '../services/BlogGenerationService';
+import { GoogleSearchService } from '../services/GoogleSearchService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -18,8 +17,8 @@ export class Scheduler {
   private tickCount: number = 0;
 
   // [NEW] Batching storage
-  // Map<UserId, Set<ContentString>> to automatically handle exact string duplicates
-  private pendingNewsBatch: Map<string, Set<string>> = new Map();
+  // Map<UserId, Map<Url, ProcessedNewsResult>> to automatically handle URL duplicates
+  private pendingNewsBatch: Map<string, Map<string, any>> = new Map();
   private readonly BATCH_FLUSH_INTERVAL: number;
   private readonly TICK_INTERVAL_MS: number;
   private readonly MAINTENANCE_INTERVAL_MS: number;
@@ -43,8 +42,7 @@ export class Scheduler {
     private agent: Agent,
     private actionQueue: ActionQueueService,
     private kb: KnowledgeBasePostgres,
-    private googleNewsService?: GoogleNewsService,
-    private blogGenerationService?: BlogGenerationService
+    private googleSearchService?: GoogleSearchService
   ) {
     // Initialize intervals from environment variables with defaults
     this.TICK_INTERVAL_MS = parseInt(process.env.AUTONOMOUS_TICK_INTERVAL_MS || '60000');
@@ -110,17 +108,12 @@ export class Scheduler {
       const activeUsers = this.contextMgr.getActiveUsers();
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // 2. Check for deep news browsing (daily at 6:00 AM)
-      if (this.shouldPerformDeepNewsBrowsing() && this.shouldBrowse(activeUsers.length) && this.canGoogleNewsProceed()) {
-        await this.performDeepNewsBrowsing();
+      // 2. Check for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
+      if (this.shouldFetchNews()) {
+        await this.performNewsFetching();
       }
 
-      // 3. Check for quick news checks (every 3 hours)
-      if (this.shouldPerformQuickNewsCheck() && this.shouldBrowse(activeUsers.length) && this.canGoogleNewsProceed()) {
-        await this.performQuickNewsCheck();
-      }
-
-      // 4. IDLE MODE: Browse (legacy browsing)
+      // 3. IDLE MODE: Browse (legacy browsing)
       if (this.shouldBrowse(activeUsers.length)) {
           let browseIntent = undefined;
           if (activeUsers.length > 0) {
@@ -133,12 +126,12 @@ export class Scheduler {
           await this.idleMode(browseIntent);
       }
 
-      // 5. PROACTIVE MODE: Accumulate News
+      // 4. PROACTIVE MODE: Accumulate News
       if (activeUsers.length > 0) {
         await this.accumulateNews(activeUsers);
       }
 
-      // 6. [NEW] Flush Batch based on configured interval
+      // 5. [NEW] Flush Batch based on configured interval
       if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
           await this.flushNewsBatches();
       }
@@ -173,21 +166,23 @@ export class Scheduler {
       }
 
       // 2. Find fresh content
-      const relevantContent = await this.findFreshRelevantContent(userId);
+      const relevantArticles = await this.findFreshRelevantArticles(userId, interests);
 
-      if (relevantContent) {
-          // Initialize set if not exists
+      if (relevantArticles.length > 0) {
+          // Initialize map if not exists
           if (!this.pendingNewsBatch.has(userId)) {
-              this.pendingNewsBatch.set(userId, new Set());
+              this.pendingNewsBatch.set(userId, new Map());
           }
 
           // Add to pending batch
           const userBatch = this.pendingNewsBatch.get(userId)!;
-          // Simple check to see if we already queued this exact string in this batch
-          if (!userBatch.has(relevantContent)) {
-              userBatch.add(relevantContent);
-              console.log(`📦 Added news item to queue for ${userId} (Queue size: ${userBatch.size})`);
-              changed = true;
+          for (const article of relevantArticles) {
+              // Check if we already queued this URL in this batch
+              if (!userBatch.has(article.url)) {
+                  userBatch.set(article.url, article);
+                  console.log(`📦 Added news item to queue for ${userId}: ${article.title} (Queue size: ${userBatch.size})`);
+                  changed = true;
+              }
           }
       }
     }
@@ -203,19 +198,19 @@ export class Scheduler {
       console.log('🔄 Flushing news batches...');
       let changed = false;
 
-      for (const [userId, contentSet] of this.pendingNewsBatch.entries()) {
-          if (contentSet.size === 0) continue;
+      for (const [userId, articleMap] of this.pendingNewsBatch.entries()) {
+          if (articleMap.size === 0) continue;
 
-          // Convert Set to Array
-          const rawItems = Array.from(contentSet);
+          // Convert Map to Array of ProcessedNewsResult
+          const articles = Array.from(articleMap.values());
 
           // Clear the batch immediately to prevent double sending if processing takes time
           this.pendingNewsBatch.delete(userId);
           changed = true;
 
           // Ask Agent to deduplicate and summarize
-          console.log(`🤖 Generating digest for ${userId} from ${rawItems.length} items...`);
-          const digest = await this.agent.generateNewsDigest(userId, rawItems);
+          console.log(`🤖 Generating digest for ${userId} from ${articles.length} items...`);
+          const digest = await this.agent.generateNewsDigest(userId, articles);
 
           if (digest) {
               // Send via ActionQueue
@@ -233,20 +228,63 @@ export class Scheduler {
       if (changed) this.saveState();
   }
 
-  private async findFreshRelevantContent(userId: string): Promise<string | null> {
-      const interests = this.contextMgr.getUserInterests(userId);
-      if (interests.length === 0) return null;
+  private async findFreshRelevantArticles(userId: string, interests: string[]): Promise<any[]> {
+      if (!this.googleSearchService) return [];
 
-      // Look for fresh content matching interests
-      for (const interest of interests) {
-          // We search for recent items (last 1 hour implied by KB search logic + recent tags)
-          // Note: In a real prod environment, we would pass a 'since' timestamp to the KB
-          const knowledge = await this.kb.search(interest, 2);
-          if (knowledge && knowledge.includes('🆕')) {
-              return knowledge;
+      const articles: any[] = [];
+      
+      // Get recently processed articles from the database
+      // We'll use ProcessedArticleService to get recent articles
+      const { ProcessedArticleService } = await import('../services/ProcessedArticleService');
+      const articleService = new ProcessedArticleService();
+      
+      // Get articles from the last 24 hours
+      const oneDayAgo = new Date();
+      oneDayAgo.setHours(oneDayAgo.getHours() - 24);
+      
+      const result = await articleService.searchProcessedArticles(undefined, {
+          dateFrom: oneDayAgo.toISOString(),
+          limit: 50,
+          status: 'completed',
+          orderBy: 'publishedAt',
+          orderDirection: 'desc'
+      });
+      
+      // Filter articles by user interests using keywords, tags, and category
+      for (const article of result.articles) {
+          // Check if article matches any interest
+          const matchesInterest = this.articleMatchesInterests(article, interests);
+          
+          if (matchesInterest) {
+              articles.push({
+                  title: article.title,
+                  url: article.url,
+                  source: article.source,
+                  feedUrl: article.feedUrl,
+                  publishedAt: article.publishedAt,
+                  keywords: article.keywords,
+                  tags: article.tags,
+                  category: article.category,
+                  processedContent: article.processedContent,
+              });
           }
       }
-      return null;
+      
+      return articles;
+  }
+  
+  /**
+   * Check if an article matches user interests
+   */
+  private articleMatchesInterests(article: any, interests: string[]): boolean {
+      const articleText = `${article.title} ${article.category} ${article.keywords.join(' ')} ${article.tags.join(' ')}`.toLowerCase();
+      
+      for (const interest of interests) {
+          if (articleText.includes(interest.toLowerCase())) {
+              return true;
+          }
+      }
+      return false;
   }
 
   private shouldBrowse(activeUserCount: number): boolean {
@@ -256,95 +294,42 @@ export class Scheduler {
   }
 
   /**
-   * Check if it's time for deep news browsing (6:00 AM daily)
+   * Check if it's time for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
    */
-  private shouldPerformDeepNewsBrowsing(): boolean {
-    if (!this.googleNewsService) return false;
+  private shouldFetchNews(): boolean {
+    if (!this.googleSearchService) return false;
 
     const now = new Date();
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
 
-    // Check if it's approximately 6:00 AM
-    return currentHour === 6 && currentMinute < 10;
+    // Check if it's approximately 6am, 12pm, 6pm, or 12am (within first 10 minutes)
+    return (currentHour === 0 || currentHour === 6 || currentHour === 12 || currentHour === 18) && currentMinute < 10;
   }
 
   /**
-   * Check if it's time for quick news check (every 3 hours)
+   * Perform news fetching
    */
-  private shouldPerformQuickNewsCheck(): boolean {
-    if (!this.googleNewsService) return false;
+  private async performNewsFetching(): Promise<void> {
+    if (!this.googleSearchService) {
+      console.log('⚠️ Google Search service not available');
+      return;
+    }
 
     const now = new Date();
-    const currentHour = now.getHours();
-
-    // Check if current hour is divisible by 3 (0, 3, 6, 9, 12, 15, 18, 21)
-    return currentHour % 3 === 0 && now.getMinutes() < 10;
-  }
-
-  /**
-   * Perform deep news browsing and blog generation
-   */
-  private async performDeepNewsBrowsing(): Promise<void> {
-    if (!this.googleNewsService || !this.blogGenerationService) {
-      console.log('⚠️ Google News or Blog Generation service not available');
-      return;
-    }
-
-    console.log('🌅 Starting deep news browsing (6:00 AM)');
+    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    console.log(`🌅 Starting news fetching (${timeStr})`);
 
     try {
-      // 1. Perform deep news browsing
-      const articles = await this.googleNewsService.performDeepNewsBrowsing();
+      // Fetch latest news articles (up to 100) - only returns new articles
+      const articles = await this.googleSearchService.fetchLatestNews(100);
+      
+      console.log(`📰 Fetched ${articles.length} new news articles`);
 
-      // 2. Generate blog posts from articles
-      if (articles.length > 0) {
-        const blogPosts = await this.blogGenerationService.generateBlogPosts(articles);
-        console.log(`📝 Generated ${blogPosts.length} blog posts`);
-
-        // 3. Generate daily digest
-        const today = new Date();
-        await this.blogGenerationService.generateDailyDigest(today);
-        console.log('📅 Generated daily digest');
-      }
-
-      console.log('✅ Deep news browsing completed');
+      console.log('✅ News fetching completed');
     } catch (error) {
-      console.error('❌ Error during deep news browsing:', error);
+      console.error('❌ Error during news fetching:', error);
     }
-  }
-
-  /**
-   * Perform quick news check
-   */
-  private async performQuickNewsCheck(): Promise<void> {
-    if (!this.googleNewsService) {
-      console.log('⚠️ Google News service not available');
-      return;
-    }
-
-    console.log('⚡ Performing quick news check');
-
-    try {
-      const articles = await this.googleNewsService.performQuickNewsCheck();
-      console.log(`📰 Quick check: ${articles.length} articles processed`);
-    } catch (error) {
-      console.error('❌ Error during quick news check:', error);
-    }
-  }
-
-  /**
-   * Check if Google News can proceed with scraping based on browser limits
-   */
-  private canGoogleNewsProceed(): boolean {
-    if (!this.googleNewsService) return false;
-
-    const scrapingStatus = this.googleNewsService.canProceedWithScraping();
-    if (!scrapingStatus.canProceed) {
-      console.log(`💤 Google News paused (${scrapingStatus.pagesRemaining} pages remaining)`);
-      return false;
-    }
-    return true;
   }
 
   private async maintenance(): Promise<void> {
@@ -396,9 +381,9 @@ export class Scheduler {
               fs.mkdirSync(this.DATA_DIR, { recursive: true });
           }
 
-          // Convert Map<string, Set<string>> to friendly JSON format: [string, string[]][]
-          const serializedBatch = Array.from(this.pendingNewsBatch.entries()).map(([userId, set]) => {
-              return [userId, Array.from(set)];
+          // Convert Map<string, Map<string, any>> to friendly JSON format: [string, any[]][]
+          const serializedBatch = Array.from(this.pendingNewsBatch.entries()).map(([userId, articleMap]) => {
+              return [userId, Array.from(articleMap.values())];
           });
 
           const state = {
@@ -423,9 +408,17 @@ export class Scheduler {
               if (state.tickCount) this.tickCount = state.tickCount;
 
               if (Array.isArray(state.pendingNewsBatch)) {
-                  // Convert back to Map<string, Set<string>>
+                  // Convert back to Map<string, Map<string, any>>
                   this.pendingNewsBatch = new Map(
-                      state.pendingNewsBatch.map(([userId, items]: [string, string[]]) => [userId, new Set(items)])
+                      state.pendingNewsBatch.map(([userId, items]: [string, any[]]) => {
+                          const articleMap = new Map();
+                          for (const item of items) {
+                              if (item && item.url) {
+                                  articleMap.set(item.url, item);
+                              }
+                          }
+                          return [userId, articleMap];
+                      })
                   );
               }
               console.log(`📦 Loaded scheduler state: ${this.pendingNewsBatch.size} pending batches`);

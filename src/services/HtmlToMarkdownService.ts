@@ -1,5 +1,4 @@
 import { createDesktopToWebServiceFromEnv, DesktopToWebService } from './DesktopToWebService';
-import { ImageDownloadService } from './ImageDownloadService';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -18,12 +17,10 @@ export interface HtmlToMarkdownResult {
 
 export class HtmlToMarkdownService {
   private desktopService: DesktopToWebService;
-  private imageService: ImageDownloadService;
   private cacheDir: string;
 
   constructor(cacheDir: string = './data/html/cache') {
     this.desktopService = createDesktopToWebServiceFromEnv();
-    this.imageService = new ImageDownloadService(cacheDir);
     this.cacheDir = cacheDir;
     
     // Ensure cache directory exists
