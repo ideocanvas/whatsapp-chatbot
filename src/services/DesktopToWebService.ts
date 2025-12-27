@@ -76,25 +76,75 @@ export class DesktopToWebService {
   }
 
   /**
-   * Make a curl request with timeout
-   * 
+   * Make a curl request with timeout and retry logic
+   *
    * @param method - HTTP method (GET, POST, etc.)
    * @param url - Full URL to request
    * @param data - Optional data to send (for POST requests)
    * @param timeoutMs - Timeout in milliseconds (default: 30000)
+   * @param maxRetries - Maximum number of retry attempts (default: 3)
    * @returns Promise with the parsed JSON response
    */
   private async curlRequest<T>(
     method: 'GET' | 'POST',
     url: string,
     data?: any,
-    timeoutMs: number = 30000
+    timeoutMs: number = 30000,
+    maxRetries: number = 3
+  ): Promise<T> {
+    const baseDelay = 1000; // 1 second base delay for exponential backoff
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.curlRequestOnce<T>(method, url, data, timeoutMs);
+      } catch (error) {
+        const isLastAttempt = attempt === maxRetries;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // Check if this is a timeout error (curl code 28) or connection error
+        const isTimeout = errorMessage.includes('exited with code 28') ||
+                         errorMessage.includes('timeout') ||
+                         errorMessage.includes('ETIMEDOUT');
+        const isConnectionError = errorMessage.includes('Connection refused') ||
+                                  errorMessage.includes('ECONNREFUSED') ||
+                                  errorMessage.includes('curl error');
+
+        if (isLastAttempt || (!isTimeout && !isConnectionError)) {
+          // Don't retry on non-retryable errors or on last attempt
+          throw error;
+        }
+
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.warn(`⚠️ Request failed (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms: ${errorMessage}`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw new Error('Max retries exceeded');
+  }
+
+  /**
+   * Make a single curl request without retry logic
+   *
+   * @param method - HTTP method (GET, POST, etc.)
+   * @param url - Full URL to request
+   * @param data - Optional data to send (for POST requests)
+   * @param timeoutMs - Timeout in milliseconds
+   * @returns Promise with the parsed JSON response
+   */
+  private async curlRequestOnce<T>(
+    method: 'GET' | 'POST',
+    url: string,
+    data: any | undefined,
+    timeoutMs: number
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       const args: string[] = [
         '-s',           // Silent mode
         '-L',           // Follow redirects
         '--max-time', String(Math.ceil(timeoutMs / 1000)), // Timeout in seconds
+        '--connect-timeout', '10', // Connection timeout: 10 seconds
         '-H', `X-API-KEY: ${this.config.apiKey}`,
         '-H', 'Accept: application/json',
       ];
