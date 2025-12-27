@@ -1078,41 +1078,11 @@ export class GoogleSearchService {
 
       console.error(`❌ Article processing failed: ${item.title}`, error);
 
-      // Retry logic with exponential backoff
-      await this.retryArticle(articleId, item);
+      // Note: Failed articles will be retried by the scheduled retry mechanism
+      // See retryArticles() method
 
       return null;
     }
-  }
-
-  /**
-   * Retry failed article with exponential backoff
-   */
-  private async retryArticle(articleId: string, item: SearchResult): Promise<void> {
-    if (!this.processedArticleService) return;
-
-    const maxRetries = 3;
-    const baseDelay = 1000; // 1 second
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const delay = baseDelay * Math.pow(2, attempt - 1);
-      console.log(`🔄 Retrying article (attempt ${attempt}/${maxRetries}) after ${delay}ms: ${item.title}`);
-
-      await new Promise(resolve => setTimeout(resolve, delay));
-
-      try {
-        // Re-process the article
-        const result = await this.processArticle(item);
-        if (result && result.processingStatus === 'completed') {
-          console.log(`✅ Article retry succeeded: ${item.title}`);
-          return;
-        }
-      } catch (error) {
-        console.error(`❌ Retry attempt ${attempt} failed:`, error);
-      }
-    }
-
-    console.error(`❌ All retry attempts failed for article: ${item.title}`);
   }
 
   /**
@@ -1208,6 +1178,133 @@ export class GoogleSearchService {
 
     console.log(`✅ Fetched ${results.length} new news articles`);
     return results;
+  }
+
+  /**
+   * Retry failed articles and articles stuck in processing status
+   * This is called by the scheduled maintenance task
+   */
+  async retryArticles(options: {
+    maxRetries?: number;
+    failedCooldownMs?: number;
+    processingTimeoutMs?: number;
+  } = {}): Promise<{
+    failedRetried: number;
+    failedSucceeded: number;
+    failedFailed: number;
+    stuckRetried: number;
+    stuckSucceeded: number;
+    stuckFailed: number;
+  }> {
+    if (!this.processedArticleService || !this.classificationService || !this.htmlToMarkdownService) {
+      console.warn('⚠️ Required services not available for retry');
+      return {
+        failedRetried: 0,
+        failedSucceeded: 0,
+        failedFailed: 0,
+        stuckRetried: 0,
+        stuckSucceeded: 0,
+        stuckFailed: 0,
+      };
+    }
+
+    console.log('🔄 Starting article retry process');
+
+    const maxRetries = options.maxRetries ?? 5;
+    const failedCooldownMs = options.failedCooldownMs ?? (60 * 60 * 1000); // 1 hour
+    const processingTimeoutMs = options.processingTimeoutMs ?? (30 * 60 * 1000); // 30 minutes
+
+    // Get articles needing retry
+    const { failedArticles, stuckProcessingArticles } = await this.processedArticleService.getArticlesNeedingRetry({
+      maxRetries,
+      failedCooldownMs,
+      processingTimeoutMs,
+    });
+
+    console.log(`📊 Found ${failedArticles.length} failed articles and ${stuckProcessingArticles.length} stuck processing articles to retry`);
+
+    let failedSucceeded = 0;
+    let failedFailed = 0;
+    let stuckSucceeded = 0;
+    let stuckFailed = 0;
+
+    // Retry failed articles
+    for (const article of failedArticles) {
+      try {
+        console.log(`🔄 Retrying failed article (${article.retryCount + 1}/${maxRetries}): ${article.title}`);
+
+        // Increment retry count and set to processing
+        await this.processedArticleService.updateProcessedArticle(article.id, {
+          retryCount: article.retryCount + 1,
+          processingStatus: 'processing',
+          errorMessage: undefined,
+        });
+
+        // Re-process the article
+        const item: SearchResult = {
+          title: article.title,
+          link: article.url,
+          snippet: '',
+        };
+
+        const result = await this.processArticle(item);
+
+        if (result && result.processingStatus === 'completed') {
+          failedSucceeded++;
+          console.log(`✅ Failed article retry succeeded: ${article.title}`);
+        } else {
+          failedFailed++;
+          console.log(`❌ Failed article retry failed: ${article.title}`);
+        }
+      } catch (error) {
+        failedFailed++;
+        console.error(`❌ Failed article retry error: ${article.title}`, error);
+      }
+    }
+
+    // Retry stuck processing articles
+    for (const article of stuckProcessingArticles) {
+      try {
+        console.log(`🔄 Retrying stuck processing article: ${article.title}`);
+
+        // Set to processing (retry count stays the same)
+        await this.processedArticleService.updateProcessedArticle(article.id, {
+          processingStatus: 'processing',
+          errorMessage: undefined,
+        });
+
+        // Re-process the article
+        const item: SearchResult = {
+          title: article.title,
+          link: article.url,
+          snippet: '',
+        };
+
+        const result = await this.processArticle(item);
+
+        if (result && result.processingStatus === 'completed') {
+          stuckSucceeded++;
+          console.log(`✅ Stuck processing article retry succeeded: ${article.title}`);
+        } else {
+          stuckFailed++;
+          console.log(`❌ Stuck processing article retry failed: ${article.title}`);
+        }
+      } catch (error) {
+        stuckFailed++;
+        console.error(`❌ Stuck processing article retry error: ${article.title}`, error);
+      }
+    }
+
+    console.log(`📊 Retry complete: ${failedSucceeded}/${failedArticles.length} failed succeeded, ${stuckSucceeded}/${stuckProcessingArticles.length} stuck succeeded`);
+
+    return {
+      failedRetried: failedArticles.length,
+      failedSucceeded,
+      failedFailed,
+      stuckRetried: stuckProcessingArticles.length,
+      stuckSucceeded,
+      stuckFailed,
+    };
   }
 
   /**

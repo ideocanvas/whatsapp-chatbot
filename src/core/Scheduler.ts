@@ -341,6 +341,23 @@ export class Scheduler {
     // Clean up old knowledge
     const oldKnowledgeCount = await this.kb.cleanupOldKnowledge(30); // 30 days
 
+    // Retry failed articles and stuck processing articles
+    if (this.googleSearchService) {
+      try {
+        const retryStats = await this.googleSearchService.retryArticles({
+          maxRetries: 5,
+          failedCooldownMs: 60 * 60 * 1000, // 1 hour
+          processingTimeoutMs: 30 * 60 * 1000, // 30 minutes
+        });
+
+        if (retryStats.failedRetried > 0 || retryStats.stuckRetried > 0) {
+          console.log(`📊 Article retry: ${retryStats.failedSucceeded}/${retryStats.failedRetried} failed succeeded, ${retryStats.stuckSucceeded}/${retryStats.stuckRetried} stuck succeeded`);
+        }
+      } catch (error) {
+        console.error('❌ Error during article retry:', error);
+      }
+    }
+
     if (expiredCount > 0 || oldKnowledgeCount > 0) {
       console.log(`📊 Maintenance: ${expiredCount} expired contexts, ${oldKnowledgeCount} old knowledge documents`);
     }

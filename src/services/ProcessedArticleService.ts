@@ -308,6 +308,69 @@ export class ProcessedArticleService {
   }
 
   /**
+   * Get articles that need to be retried
+   * Returns both failed articles (with retry count below max) and stuck processing articles
+   */
+  async getArticlesNeedingRetry(options: {
+    maxRetries?: number;
+    failedCooldownMs?: number;
+    processingTimeoutMs?: number;
+  } = {}): Promise<{
+    failedArticles: Array<{ id: string; url: string; title: string; retryCount: number; updatedAt: Date }>;
+    stuckProcessingArticles: Array<{ id: string; url: string; title: string; updatedAt: Date }>;
+  }> {
+    const maxRetries = options.maxRetries ?? 5;
+    const failedCooldownMs = options.failedCooldownMs ?? (60 * 60 * 1000); // 1 hour default
+    const processingTimeoutMs = options.processingTimeoutMs ?? (30 * 60 * 1000); // 30 minutes default
+
+    const now = new Date();
+    const failedCutoff = new Date(now.getTime() - failedCooldownMs);
+    const processingCutoff = new Date(now.getTime() - processingTimeoutMs);
+
+    try {
+      // Get failed articles that can be retried
+      const failedArticles = await prisma.processedArticle.findMany({
+        where: {
+          processingStatus: 'failed',
+          retryCount: { lt: maxRetries },
+          updatedAt: { lt: failedCutoff }
+        },
+        select: {
+          id: true,
+          url: true,
+          title: true,
+          retryCount: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'asc' }
+      });
+
+      // Get articles stuck in processing status
+      const stuckProcessingArticles = await prisma.processedArticle.findMany({
+        where: {
+          processingStatus: 'processing',
+          updatedAt: { lt: processingCutoff }
+        },
+        select: {
+          id: true,
+          url: true,
+          title: true,
+          updatedAt: true
+        },
+        orderBy: { updatedAt: 'asc' }
+      });
+
+      return {
+        failedArticles,
+        stuckProcessingArticles
+      };
+    } catch (error) {
+      console.error('❌ Error getting articles needing retry:', error);
+      throw new Error(`Failed to get articles needing retry: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
    * Helper to convert groupBy results to record
    */
   private arrayToRecord(array: any[], keyField: string, valueField: string): Record<string, number> {
