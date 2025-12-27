@@ -81,6 +81,14 @@ export class GoogleSearchService {
     if (openaiService) {
       this.processedArticleService = new ProcessedArticleService();
       this.classificationService = createArticleClassificationService(openaiService);
+      // HtmlToMarkdownService is required for article processing
+      if (!this.htmlToMarkdownService) {
+        try {
+          this.htmlToMarkdownService = createHtmlToMarkdownServiceFromEnv();
+        } catch (e) {
+          console.warn('⚠️ HtmlToMarkdownService not configured, article processing will be limited');
+        }
+      }
     }
   }
 
@@ -946,7 +954,16 @@ export class GoogleSearchService {
    * Process a single article from RSS item
    */
   private async processArticle(item: SearchResult): Promise<ProcessedNewsResult | null> {
-    if (!this.processedArticleService || !this.classificationService || !this.htmlToMarkdownService) {
+    if (!this.processedArticleService) {
+      console.warn('⚠️ ProcessedArticleService not available, cannot process article:', item.title);
+      return null;
+    }
+    if (!this.classificationService) {
+      console.warn('⚠️ ClassificationService not available, cannot process article:', item.title);
+      return null;
+    }
+    if (!this.htmlToMarkdownService) {
+      console.warn('⚠️ HtmlToMarkdownService not available, cannot process article:', item.title);
       return null;
     }
 
@@ -1139,6 +1156,25 @@ export class GoogleSearchService {
 
     console.log(`📰 Fetching latest ${numResults} news articles`);
 
+    // Get the most recent article's published date from the database
+    // This helps us filter out old articles that are still in the RSS feed
+    const recentArticles = await this.processedArticleService.searchProcessedArticles(undefined, {
+      limit: 1,
+      status: 'completed',
+      orderBy: 'publishedAt',
+      orderDirection: 'desc'
+    });
+
+    const lastPublishedDate = recentArticles.articles.length > 0
+      ? new Date(recentArticles.articles[0].publishedAt)
+      : null;
+
+    if (lastPublishedDate) {
+      console.log(`📅 Filtering articles published after: ${lastPublishedDate.toISOString()}`);
+    } else {
+      console.log(`📅 No existing articles found, processing all RSS items`);
+    }
+
     // Get RSS items without query (general news)
     const rssItems = await this.searchNews(null, numResults);
     const results: ProcessedNewsResult[] = [];
@@ -1146,6 +1182,20 @@ export class GoogleSearchService {
     // Process each article
     for (const item of rssItems) {
       try {
+        // Skip articles without a publication date
+        if (!item.pubDate) {
+          console.log(`⏭️ Skipping article without pubDate: ${item.title}`);
+          continue;
+        }
+
+        const itemPubDate = new Date(item.pubDate);
+
+        // If we have a last published date, skip articles older than or equal to it
+        if (lastPublishedDate && itemPubDate <= lastPublishedDate) {
+          console.log(`⏭️ Skipping old article (${itemPubDate.toISOString()}): ${item.title}`);
+          continue;
+        }
+
         const result = await this.processArticle(item);
         // Only include new articles
         if (result && result.isNew) {
