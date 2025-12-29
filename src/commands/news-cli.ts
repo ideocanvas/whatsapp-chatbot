@@ -3,50 +3,59 @@ dotenv.config();
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import { GoogleSearchService } from '../services/GoogleSearchService';
+import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../services/GoogleSearchService';
+import { createOpenAIServiceFromConfig } from '../services/OpenAIService';
 
 async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error('Usage: pnpm run news:cli "search query" [numResults] [output.json] [--desktop]');
-    console.error('  --desktop: Use DesktopToWebService for fetching page content');
+    console.error('Usage: pnpm run news:cli [numResults] [output.json]');
+    console.error('  numResults: Number of news articles to fetch (default: 100)');
     process.exit(2);
   }
 
-  const query = args[0];
-  const numResults = args[1] && !args[1].startsWith('--') ? Math.max(1, parseInt(args[1], 10)) : 10;
-  const outPath = args[2] && !args[2].startsWith('--') ? args[2] : args[1] && !args[1].startsWith('--') ? `news_results_${Date.now()}.json` : `news_results_${Date.now()}.json`;
-  const useDesktop = args.includes('--desktop');
+  const numResults = args[0] && !args[0].startsWith('--') ? Math.max(1, parseInt(args[0], 10)) : 100;
+  const outPath = args[1] && !args[1].startsWith('--') ? args[1] : args[0] && !args[0].startsWith('--') ? `news_results_${Date.now()}.json` : `news_results_${Date.now()}.json`;
 
-  const svc = new GoogleSearchService({
-    apiKey: '',
-    searchEngineId: '',
-    useDesktopService: useDesktop
-  });
+  // Initialize OpenAIService from config (required for fetchLatestNews)
+  const openaiService = await createOpenAIServiceFromConfig();
+
+  // Initialize GoogleSearchService from env with OpenAI service
+  const svc = createGoogleSearchServiceFromEnv(openaiService);
 
   try {
-    console.log(`Searching Google News for: "${query}" (max ${numResults})${useDesktop ? ' [using Desktop service]' : ''}`);
-    const groups = await svc.searchNewsGroupedFull(query, numResults);
+    // First, retry failed and stuck processing articles
+    console.log('Retrying failed and stuck processing articles...');
+    const retryResults = await svc.retryArticles();
+    console.log(`Retry results: ${retryResults.failedSucceeded}/${retryResults.failedRetried} failed succeeded, ${retryResults.stuckSucceeded}/${retryResults.stuckRetried} stuck succeeded`);
+
+    // Then fetch latest news articles
+    console.log(`Fetching latest ${numResults} news articles`);
+    const results = await svc.fetchLatestNews(numResults);
 
     // Normalize output
-    const out = groups.map(g => ({
-      sourceUrl: g.sourceUrl,
-      feedUrl: g.feedUrl,
-      items: g.items.map(r => ({
-        title: r.title,
-        link: r.link,
-        originalLink: r.originalLink || null,
-        image: r.image || null,
-        pubDate: r.pubDate || null,
-        feedUrl: r.feedUrl || null,
-        snippet: r.snippet,
-        fullText: r.fullText || null,
-      }))
+    const out = results.map(r => ({
+      id: r.id,
+      title: r.title,
+      url: r.url,
+      source: r.source,
+      feedUrl: r.feedUrl || null,
+      publishedAt: r.publishedAt,
+      originalContent: r.originalContent,
+      processedContent: r.processedContent,
+      imagePaths: r.imagePaths,
+      imageDescriptions: r.imageDescriptions,
+      keywords: r.keywords,
+      tags: r.tags,
+      category: r.category || null,
+      processingStatus: r.processingStatus,
+      errorMessage: r.errorMessage || null,
+      isNew: r.isNew,
     }));
 
     const abs = path.resolve(process.cwd(), outPath);
     await fs.writeFile(abs, JSON.stringify(out, null, 2), 'utf-8');
-    console.log(`Wrote ${out.length} groups to ${abs}`);
+    console.log(`Wrote ${out.length} articles to ${abs}`);
   } catch (err) {
     console.error('Error running news CLI:', err);
     process.exit(1);
