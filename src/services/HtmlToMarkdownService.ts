@@ -175,8 +175,29 @@ export class HtmlToMarkdownService {
    */
   private async convertHtmlToMarkdownFile(htmlPath: string, markdownPath: string, cacheFolder: string): Promise<Map<string, string>> {
     const html = fs.readFileSync(htmlPath, 'utf-8');
-    const dom = new JSDOM(html);
-    const document = dom.window.document;
+    
+    let dom: JSDOM;
+    let document: Document;
+    
+    try {
+      dom = new JSDOM(html);
+      document = dom.window.document;
+    } catch (jsdomError) {
+      // JSDOM failed to parse the HTML - try to salvage by cleaning the HTML first
+      // Remove problematic script tags that might contain malformed content
+      const cleanedHtml = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '');
+      
+      try {
+        dom = new JSDOM(cleanedHtml);
+        document = dom.window.document;
+      } catch (secondError) {
+        const secondErrorMsg = secondError instanceof Error ? secondError.message : String(secondError);
+        throw new Error(`Failed to parse HTML: ${secondErrorMsg}`);
+      }
+    }
 
     // Remove non-content elements
     const elementsToRemove = [
@@ -265,6 +286,17 @@ export class HtmlToMarkdownService {
       const src = img.getAttribute('src');
       if (src && !src.startsWith('data:')) {
         try {
+          // Skip invalid URLs that contain special characters that break URL parsing
+          // These are typically tracking/ad URLs that don't point to actual images
+          if (src.includes('Not)A') ||
+              src.includes('activityi;') ||
+              src.includes('javascript:') ||
+              src.includes(')') ||  // Skip URLs with closing parenthesis (breaks curl)
+              src.includes(';') ||   // Skip URLs with semicolons (tracking URLs)
+              src.includes('?') && src.includes(';')) {  // Skip complex tracking URLs
+            continue;
+          }
+          
           // Generate filename from URL
           const urlHash = crypto.createHash('md5').update(src).digest('hex').substring(0, 16);
           const ext = this.getImageExtension(src);
@@ -273,18 +305,17 @@ export class HtmlToMarkdownService {
           
           // Check if image already exists
           if (fs.existsSync(filepath)) {
-            console.log(`✅ Image already exists, skipping download: ${filename}`);
+            continue;
           } else {
             // Download image using curl (streams directly to disk)
             await this.downloadImageWithCurl(src, filepath);
-            console.log(`✅ Downloaded image: ${filename}`);
           }
           
           // Use relative path (images/filename.jpg) for markdown
           const relativePath = `images/${filename}`;
           imageMap.set(src, relativePath);
         } catch (e) {
-          console.warn(`⚠️ Failed to download image: ${src}`, e instanceof Error ? e.message : `${e}`);
+          // Silently skip failed image downloads
         }
       }
     }
@@ -571,6 +602,7 @@ export class HtmlToMarkdownService {
       const curl = spawn('curl', [
         '-s',           // Silent mode
         '-L',           // Follow redirects
+        '-g',           // Disable globbing (important for URLs with special chars like ')')
         '-o', filepath, // Output to file
         '--max-time', '30', // 30 second timeout
         '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', // User agent
@@ -594,7 +626,24 @@ export class HtmlToMarkdownService {
    */
   private getImageExtension(url: string): string {
     try {
-      const urlPath = new URL(url).pathname;
+      // Handle malformed URLs by extracting the path manually
+      // Some URLs contain special characters like ')' that break URL parsing
+      let urlPath: string;
+      
+      try {
+        urlPath = new URL(url).pathname;
+      } catch {
+        // If URL parsing fails, try to extract path manually
+        // Remove protocol and domain to get the path
+        const withoutProtocol = url.replace(/^https?:\/\//, '');
+        const firstSlash = withoutProtocol.indexOf('/');
+        if (firstSlash >= 0) {
+          urlPath = withoutProtocol.substring(firstSlash);
+        } else {
+          urlPath = url;
+        }
+      }
+      
       const ext = path.extname(urlPath);
       if (ext && ext.length <= 5) {
         return ext;
@@ -663,8 +712,6 @@ export class HtmlToMarkdownService {
                              errorMessage.includes('Unexpected token');
       
       if (isParsingError && fs.existsSync(htmlPath)) {
-        console.log(`⚠️ Parsing error detected, attempting to salvage content from HTML file: ${htmlPath}`);
-        
         try {
           // Try to parse the HTML with JSDOM (more tolerant than Python script)
           const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder);
@@ -672,8 +719,6 @@ export class HtmlToMarkdownService {
           const dateFolder = this.getDateFolder();
           const hash = this.getUrlHash(url);
           const markdownUrl = `/html/cache/${dateFolder}/${hash}/article.md`;
-          
-          console.log(`✅ Successfully salvaged content from HTML file`);
           
           return {
             success: true,
@@ -685,7 +730,7 @@ export class HtmlToMarkdownService {
             error: `Salvaged from parsing error: ${errorMessage}` // Include original error for reference
           };
         } catch (salvageError) {
-          console.log(`❌ Failed to salvage content: ${salvageError instanceof Error ? salvageError.message : String(salvageError)}`);
+          // Salvage failed, return original error
         }
       }
       
