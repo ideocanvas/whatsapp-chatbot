@@ -397,7 +397,10 @@ export class ProcessedArticleService {
       tags: dbArticle.tags || [],
       category: dbArticle.category || undefined,
       imagePaths: dbArticle.imagePaths,
-      imageDescriptions: dbArticle.imageDescriptions || undefined
+      imageDescriptions: dbArticle.imageDescriptions || undefined,
+      processingStatus: dbArticle.processingStatus,
+      errorMessage: dbArticle.errorMessage,
+      retryCount: dbArticle.retryCount
     };
   }
 
