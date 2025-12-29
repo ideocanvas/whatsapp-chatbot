@@ -970,41 +970,49 @@ export class GoogleSearchService {
     const url = item.link;
     if (!url) return null;
 
+    let articleId: string;
+
     // Check if article already exists
     const existing = await this.processedArticleService.getProcessedArticleByUrl(url);
     if (existing) {
-      console.log(`⏭️ Article already processed: ${url}`);
-      return {
-        id: existing.id,
-        title: existing.title,
-        url: existing.url,
-        source: existing.source,
-        feedUrl: undefined, // TODO: Add feedUrl to ProcessedArticle type
-        publishedAt: existing.publishedAt,
-        originalContent: existing.originalContent,
-        processedContent: existing.processedContent,
-        imagePaths: existing.imagePaths,
-        imageDescriptions: existing.imageDescriptions || {},
-        keywords: existing.keywords,
-        tags: [], // TODO: Add tags to ProcessedArticle type
-        category: existing.category,
-        processingStatus: 'completed',
-        isNew: false,
-      };
+      // Only skip if already completed - failed/processing articles should be retried
+      if (existing.processingStatus === 'completed') {
+        console.log(`⏭️ Article already processed: ${url}`);
+        return {
+          id: existing.id,
+          title: existing.title,
+          url: existing.url,
+          source: existing.source,
+          feedUrl: undefined, // TODO: Add feedUrl to ProcessedArticle type
+          publishedAt: existing.publishedAt,
+          originalContent: existing.originalContent,
+          processedContent: existing.processedContent,
+          imagePaths: existing.imagePaths,
+          imageDescriptions: existing.imageDescriptions || {},
+          keywords: existing.keywords,
+          tags: [], // TODO: Add tags to ProcessedArticle type
+          category: existing.category,
+          processingStatus: 'completed',
+          isNew: false,
+        };
+      }
+      // Article exists but is not completed - will retry it
+      console.log(`🔄 Retrying article (${existing.processingStatus}): ${url}`);
+      articleId = existing.id;
+    } else {
+      // Create pending record
+      articleId = await this.processedArticleService.createProcessedArticle({
+        title: item.title,
+        url: url,
+        source: item.originalLink || url,
+        publishedAt: item.pubDate || new Date().toISOString(),
+        originalContent: '', // Will be updated after processing
+        processedContent: '', // Will be updated after processing
+        imagePaths: [],
+        keywords: [],
+        processingStatus: 'pending',
+      });
     }
-
-    // Create pending record
-    const articleId = await this.processedArticleService.createProcessedArticle({
-      title: item.title,
-      url: url,
-      source: item.originalLink || url,
-      publishedAt: item.pubDate || new Date().toISOString(),
-      originalContent: '', // Will be updated after processing
-      processedContent: '', // Will be updated after processing
-      imagePaths: [],
-      keywords: [],
-      processingStatus: 'pending',
-    });
 
     // Update to processing
     await this.processedArticleService.updateProcessedArticle(articleId, {
@@ -1012,22 +1020,63 @@ export class GoogleSearchService {
     });
 
     try {
+      // Use the actual article URL (from source field) for processing
+      // The url field might be a Google News redirect URL which won't work
+      const actualUrl = existing?.source || item.originalLink || url;
+      console.log(`📄 Processing article URL: ${actualUrl}`);
+      
       // Process URL with HtmlToMarkdownService
-      const htmlResult = await this.htmlToMarkdownService.processUrl(url);
+      const htmlResult = await this.htmlToMarkdownService.processUrl(actualUrl);
 
-      if (!htmlResult.success || !htmlResult.markdownPath) {
-        throw new Error(htmlResult.error || 'Failed to process URL');
+      if (!htmlResult.success) {
+        const errorMsg = htmlResult.error || 'Failed to process URL';
+        console.log(`❌ HtmlToMarkdownService failed: ${errorMsg}`);
+        
+        // Check if this is a parsing error (malformed HTML/JS/CSS)
+        // These errors are persistent and won't be fixed by retrying
+        const isParsingError = errorMsg.includes('not found') ||
+                               errorMsg.includes('SyntaxError') ||
+                               errorMsg.includes('ParseError') ||
+                               errorMsg.includes('Unexpected token');
+        
+        if (isParsingError) {
+          console.log(`⚠️ Parsing error detected - this article cannot be processed due to malformed HTML`);
+          // Mark as permanently failed to prevent infinite retries
+          await this.processedArticleService.updateProcessedArticle(articleId, {
+            processingStatus: 'failed',
+            errorMessage: `Parsing error: ${errorMsg} (malformed HTML/JS/CSS)`,
+          });
+          return null;
+        }
+        
+        throw new Error(errorMsg);
+      }
+
+      // Log if content was salvaged from a parsing error
+      if (htmlResult.error && htmlResult.error.includes('Salvaged from parsing error')) {
+        console.log(`⚠️ Content salvaged from parsing error: ${htmlResult.error}`);
+      }
+
+      // Get markdown path - handle both cached and fresh results
+      let markdownPath: string;
+      if (htmlResult.markdownPath) {
+        markdownPath = htmlResult.markdownPath;
+      } else if (htmlResult.markdownUrl) {
+        // Convert markdownUrl to file path for cached results
+        markdownPath = path.join('./data', htmlResult.markdownUrl);
+      } else {
+        throw new Error('No markdown path or URL returned');
       }
 
       // Get cache folder
-      const cacheFolder = path.dirname(htmlResult.markdownPath);
+      const cacheFolder = path.dirname(markdownPath);
 
       // Read image map
       const imageMap = this.loadImageMap(cacheFolder);
       const imagePaths = Array.from(imageMap.values());
 
       // Read markdown content for classification
-      const markdownContent = fs.readFileSync(htmlResult.markdownPath, 'utf-8');
+      const markdownContent = fs.readFileSync(markdownPath, 'utf-8');
 
       // Classify article
       const classification = await this.classificationService.classifyArticle(
@@ -1040,7 +1089,7 @@ export class GoogleSearchService {
       // Update article with processed data
       await this.processedArticleService.updateProcessedArticle(articleId, {
         originalContent: `/html/cache/${path.relative('./data/html/cache', path.join(cacheFolder, 'article.html'))}`,
-        processedContent: `/html/cache/${path.relative('./data/html/cache', htmlResult.markdownPath)}`,
+        processedContent: `/html/cache/${path.relative('./data/html/cache', markdownPath)}`,
         imagePaths,
         imageDescriptions: classification.imageDescriptions,
         keywords: classification.keywords,
@@ -1059,7 +1108,7 @@ export class GoogleSearchService {
         feedUrl: item.feedUrl,
         publishedAt: item.pubDate || new Date().toISOString(),
         originalContent: `/html/cache/${path.relative('./data/html/cache', path.join(cacheFolder, 'article.html'))}`,
-        processedContent: `/html/cache/${path.relative('./data/html/cache', htmlResult.markdownPath)}`,
+        processedContent: `/html/cache/${path.relative('./data/html/cache', markdownPath)}`,
         imagePaths,
         imageDescriptions: classification.imageDescriptions,
         keywords: classification.keywords,
@@ -1240,7 +1289,7 @@ export class GoogleSearchService {
           errorMessage: undefined,
         });
 
-        // Re-process the article
+        // Re-process the article (skip existing check)
         const item: SearchResult = {
           title: article.title,
           link: article.url,
@@ -1267,10 +1316,10 @@ export class GoogleSearchService {
       try {
         console.log(`🔄 Retrying stuck processing article: ${article.title}`);
 
-        // Set to processing (retry count stays the same)
+        // Mark as failed first (stuck for > 30 minutes)
         await this.processedArticleService.updateProcessedArticle(article.id, {
-          processingStatus: 'processing',
-          errorMessage: undefined,
+          processingStatus: 'failed',
+          errorMessage: 'Processing timeout - marked as failed before retry',
         });
 
         // Re-process the article
