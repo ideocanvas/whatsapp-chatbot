@@ -139,6 +139,7 @@ export class HtmlToMarkdownService {
     }
 
     // Step 4: Save HTML to file
+    console.log(`[DEBUG] Saving HTML to file: ${htmlPath}`);
     fs.writeFileSync(htmlPath, readResult.text, 'utf-8');
   }
 
