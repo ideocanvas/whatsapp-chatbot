@@ -1020,14 +1020,10 @@ export class GoogleSearchService {
     });
 
     try {
-      // Use the actual article URL (from source field) for processing
-      // The url field might be a Google News redirect URL which won't work
-      const actualUrl = existing?.source || item.originalLink || url;
-      console.log(`📄 Processing article URL: ${actualUrl}`);
+      console.log(`📄 Processing article URL: ${url}`);
       
       // Process URL with HtmlToMarkdownService
-      const htmlResult = await this.htmlToMarkdownService.processUrl(actualUrl);
-
+      const htmlResult = await this.htmlToMarkdownService.processUrl(url);
       if (!htmlResult.success) {
         const errorMsg = htmlResult.error || 'Failed to process URL';
         console.log(`❌ HtmlToMarkdownService failed: ${errorMsg}`);
@@ -1294,6 +1290,7 @@ export class GoogleSearchService {
           title: article.title,
           link: article.url,
           snippet: '',
+          originalLink: article.source, // Use source as the actual article URL
         };
 
         const result = await this.processArticle(item);
@@ -1327,6 +1324,7 @@ export class GoogleSearchService {
           title: article.title,
           link: article.url,
           snippet: '',
+          originalLink: article.source, // Use source as the actual article URL
         };
 
         const result = await this.processArticle(item);
