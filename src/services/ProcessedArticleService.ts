@@ -316,8 +316,8 @@ export class ProcessedArticleService {
     failedCooldownMs?: number;
     processingTimeoutMs?: number;
   } = {}): Promise<{
-    failedArticles: Array<{ id: string; url: string; title: string; retryCount: number; updatedAt: Date }>;
-    stuckProcessingArticles: Array<{ id: string; url: string; title: string; updatedAt: Date }>;
+    failedArticles: Array<{ id: string; url: string; title: string; source: string; retryCount: number; updatedAt: Date }>;
+    stuckProcessingArticles: Array<{ id: string; url: string; title: string; source: string; updatedAt: Date }>;
   }> {
     const maxRetries = options.maxRetries ?? 5;
     const failedCooldownMs = options.failedCooldownMs ?? (60 * 60 * 1000); // 1 hour default
@@ -339,6 +339,7 @@ export class ProcessedArticleService {
           id: true,
           url: true,
           title: true,
+          source: true,
           retryCount: true,
           updatedAt: true
         },
@@ -355,6 +356,7 @@ export class ProcessedArticleService {
           id: true,
           url: true,
           title: true,
+          source: true,
           updatedAt: true
         },
         orderBy: { updatedAt: 'asc' }
