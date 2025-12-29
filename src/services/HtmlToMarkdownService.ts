@@ -175,29 +175,32 @@ export class HtmlToMarkdownService {
    * Returns the image map for backward compatibility
    */
   private async convertHtmlToMarkdownFile(htmlPath: string, markdownPath: string, cacheFolder: string): Promise<Map<string, string>> {
-    const html = fs.readFileSync(htmlPath, 'utf-8');
-    
+    console.log(`[DEBUG] Reading HTML file: ${htmlPath}`);
+    let html = fs.readFileSync(htmlPath, 'utf-8');
+    console.log(`[DEBUG] HTML file size: ${html.length} bytes`);
+
+    // Clean HTML BEFORE creating JSDOM to speed up parsing
+    console.log(`[DEBUG] Cleaning HTML...`);
+    const originalSize = html.length;
+    html = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
+      .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '');
+    console.log(`[DEBUG] HTML cleaned: ${originalSize} -> ${html.length} bytes (${((1 - html.length / originalSize) * 100).toFixed(1)}% reduction)`);
+
+    console.log(`[DEBUG] Creating JSDOM...`);
     let dom: JSDOM;
     let document: Document;
     
     try {
       dom = new JSDOM(html);
       document = dom.window.document;
+      console.log(`[DEBUG] JSDOM created successfully`);
     } catch (jsdomError) {
-      // JSDOM failed to parse the HTML - try to salvage by cleaning the HTML first
-      // Remove problematic script tags that might contain malformed content
-      const cleanedHtml = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '');
-      
-      try {
-        dom = new JSDOM(cleanedHtml);
-        document = dom.window.document;
-      } catch (secondError) {
-        const secondErrorMsg = secondError instanceof Error ? secondError.message : String(secondError);
-        throw new Error(`Failed to parse HTML: ${secondErrorMsg}`);
-      }
+      const errorMsg = jsdomError instanceof Error ? jsdomError.message : String(jsdomError);
+      throw new Error(`Failed to parse HTML: ${errorMsg}`);
     }
 
     // Remove non-content elements
@@ -283,6 +286,8 @@ export class HtmlToMarkdownService {
 
     // Extract all image URLs from the document and download them
     const images = document.querySelectorAll('img');
+    console.log(`[DEBUG] Found ${images.length} images to process`);
+    let downloadedCount = 0;
     for (const img of images) {
       const src = img.getAttribute('src');
       if (src && !src.startsWith('data:')) {
@@ -309,7 +314,10 @@ export class HtmlToMarkdownService {
             continue;
           } else {
             // Download image using curl (streams directly to disk)
+            console.log(`[DEBUG] Downloading image ${downloadedCount + 1}/${images.length}: ${src}`);
             await this.downloadImageWithCurl(src, filepath);
+            downloadedCount++;
+            console.log(`[DEBUG] Downloaded ${downloadedCount}/${images.length} images`);
           }
           
           // Use relative path (images/filename.jpg) for markdown
@@ -600,6 +608,7 @@ export class HtmlToMarkdownService {
    */
   private async downloadImageWithCurl(imgUrl: string, filepath: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      console.log(`[DEBUG] Starting curl download: ${imgUrl}`);
       const curl = spawn('curl', [
         '-s',           // Silent mode
         '-L',           // Follow redirects
@@ -681,11 +690,14 @@ export class HtmlToMarkdownService {
         };
       }
 
-      // Step 1: Fetch HTML and save to file
-      await this.fetchHtmlToFile(url, htmlPath);
+      // Step 1: Fetch HTML and save to file (skip if already exists)
+      if (!fs.existsSync(htmlPath)) {
+        await this.fetchHtmlToFile(url, htmlPath);
+      }
 
       // Step 2: Convert HTML to markdown and download images in a single pass
       // This avoids creating JSDOM twice and saves memory
+      console.log(`[DEBUG] Converting HTML to markdown: ${htmlPath} -> ${markdownPath}`);
       const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder);
 
       // Step 3: Return markdown URL
@@ -704,36 +716,6 @@ export class HtmlToMarkdownService {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
-      // Check if this is a parsing error from the Python script
-      // If so, try to salvage content from the HTML file if it exists
-      const isParsingError = errorMessage.includes('not found') ||
-                             errorMessage.includes('SyntaxError') ||
-                             errorMessage.includes('ParseError') ||
-                             errorMessage.includes('Unexpected token');
-      
-      if (isParsingError && fs.existsSync(htmlPath)) {
-        try {
-          // Try to parse the HTML with JSDOM (more tolerant than Python script)
-          const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder);
-          
-          const dateFolder = this.getDateFolder();
-          const hash = this.getUrlHash(url);
-          const markdownUrl = `/html/cache/${dateFolder}/${hash}/article.md`;
-          
-          return {
-            success: true,
-            markdownUrl,
-            htmlPath,
-            markdownPath,
-            imagesDownloaded: imageMap.size,
-            cached: false,
-            error: `Salvaged from parsing error: ${errorMessage}` // Include original error for reference
-          };
-        } catch (salvageError) {
-          // Salvage failed, return original error
-        }
-      }
       
       return {
         success: false,
