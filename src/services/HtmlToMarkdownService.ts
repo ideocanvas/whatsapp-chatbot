@@ -612,6 +612,15 @@ export class HtmlToMarkdownService {
    * Returns the markdown URL path
    */
   async processUrl(url: string): Promise<HtmlToMarkdownResult> {
+    // Create cache folder
+    const cacheFolder = this.getCacheFolder(url);
+    if (!fs.existsSync(cacheFolder)) {
+      fs.mkdirSync(cacheFolder, { recursive: true });
+    }
+
+    const htmlPath = path.join(cacheFolder, 'article.html');
+    const markdownPath = path.join(cacheFolder, 'article.md');
+
     try {
       // Check if already cached
       if (this.isCached(url)) {
@@ -621,15 +630,6 @@ export class HtmlToMarkdownService {
           cached: true
         };
       }
-
-      // Create cache folder
-      const cacheFolder = this.getCacheFolder(url);
-      if (!fs.existsSync(cacheFolder)) {
-        fs.mkdirSync(cacheFolder, { recursive: true });
-      }
-
-      const htmlPath = path.join(cacheFolder, 'article.html');
-      const markdownPath = path.join(cacheFolder, 'article.md');
 
       // Step 1: Fetch HTML and save to file
       await this.fetchHtmlToFile(url, htmlPath);
@@ -653,9 +653,45 @@ export class HtmlToMarkdownService {
       };
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check if this is a parsing error from the Python script
+      // If so, try to salvage content from the HTML file if it exists
+      const isParsingError = errorMessage.includes('not found') ||
+                             errorMessage.includes('SyntaxError') ||
+                             errorMessage.includes('ParseError') ||
+                             errorMessage.includes('Unexpected token');
+      
+      if (isParsingError && fs.existsSync(htmlPath)) {
+        console.log(`⚠️ Parsing error detected, attempting to salvage content from HTML file: ${htmlPath}`);
+        
+        try {
+          // Try to parse the HTML with JSDOM (more tolerant than Python script)
+          const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder);
+          
+          const dateFolder = this.getDateFolder();
+          const hash = this.getUrlHash(url);
+          const markdownUrl = `/html/cache/${dateFolder}/${hash}/article.md`;
+          
+          console.log(`✅ Successfully salvaged content from HTML file`);
+          
+          return {
+            success: true,
+            markdownUrl,
+            htmlPath,
+            markdownPath,
+            imagesDownloaded: imageMap.size,
+            cached: false,
+            error: `Salvaged from parsing error: ${errorMessage}` // Include original error for reference
+          };
+        } catch (salvageError) {
+          console.log(`❌ Failed to salvage content: ${salvageError instanceof Error ? salvageError.message : String(salvageError)}`);
+        }
+      }
+      
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage
       };
     }
   }
