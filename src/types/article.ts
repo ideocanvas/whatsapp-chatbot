@@ -1,4 +1,5 @@
 export interface ProcessedArticle {
+  id?: string; // UUID from database
   title: string;
   url: string;
   source: string;

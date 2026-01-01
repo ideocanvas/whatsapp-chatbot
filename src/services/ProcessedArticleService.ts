@@ -399,6 +399,7 @@ export class ProcessedArticleService {
     });
 
     return {
+      id: dbArticle.id,
       title: dbArticle.title,
       url: dbArticle.url,
       source: dbArticle.source,
