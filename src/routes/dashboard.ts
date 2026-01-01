@@ -820,6 +820,115 @@ export class DashboardRoutes {
       }
     });
 
+    // Get downloaded articles (alias for processed articles)
+    this.router.get('/api/news/articles', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const processedArticleService = createProcessedArticleService();
+        const {
+          q: query,
+          page = '1',
+          limit = '12',
+          category,
+          source,
+          status = 'completed', // Default to completed articles
+          dateFrom,
+          dateTo,
+          orderBy = 'publishedAt',
+          orderDirection = 'desc'
+        } = req.query;
+
+        const result = await processedArticleService.searchProcessedArticles(query as string, {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          category: category as string,
+          source: source as string,
+          status: status as any,
+          dateFrom: dateFrom as string,
+          dateTo: dateTo as string,
+          orderBy: orderBy as 'publishedAt' | 'createdAt' | 'title' | 'source',
+          orderDirection: orderDirection as 'asc' | 'desc'
+        });
+
+        this.logActivity(`Loaded ${result.articles.length} processed articles`);
+        res.json(result);
+      } catch (error) {
+        console.error('Error loading processed articles:', error);
+        res.status(500).json({ error: 'Failed to load articles' });
+      }
+    });
+
+    // Get processed article content with markdown
+    this.router.get('/api/news/articles/:id/content', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const processedArticleService = createProcessedArticleService();
+        const { id } = req.params;
+
+        const article = await processedArticleService.getProcessedArticle(id);
+        if (!article) {
+          return res.status(404).json({ error: 'Article not found' });
+        }
+
+        // Read the markdown content from file
+        const contentPath = path.join(process.cwd(), 'data', article.processedContent);
+        if (!fs.existsSync(contentPath)) {
+          return res.status(404).json({ error: 'Article content not found' });
+        }
+
+        const markdownContent = fs.readFileSync(contentPath, 'utf8');
+
+        res.json({
+          ...article,
+          markdownContent
+        });
+      } catch (error) {
+        console.error('Error loading article content:', error);
+        res.status(500).json({ error: 'Failed to load article content' });
+      }
+    });
+
+    // Serve article images
+    this.router.get('/api/news/articles/images/*', this.requireAuth.bind(this), (req: Request, res: Response) => {
+      try {
+        // Extract the image path after /api/news/articles/images/
+        const imagePath = req.params[0];
+        const fullPath = path.join(process.cwd(), 'data', imagePath);
+
+        // Security check: ensure the path is within the data directory
+        const normalizedPath = path.normalize(fullPath);
+        const dataDir = path.join(process.cwd(), 'data');
+        if (!normalizedPath.startsWith(dataDir)) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Check if file exists
+        if (!fs.existsSync(fullPath)) {
+          return res.status(404).json({ error: 'Image not found' });
+        }
+
+        // Determine content type from file extension
+        const ext = path.extname(fullPath).toLowerCase();
+        const contentTypes: { [key: string]: string } = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.svg': 'image/svg+xml'
+        };
+
+        const contentType = contentTypes[ext] || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+
+        // Stream the file
+        const fileStream = fs.createReadStream(fullPath);
+        fileStream.pipe(res);
+      } catch (error) {
+        console.error('Error serving image:', error);
+        res.status(500).json({ error: 'Failed to serve image' });
+      }
+    });
+
     // --- Processed Articles Routes ---
 
     // Search processed articles with comprehensive filtering, pagination, and ordering

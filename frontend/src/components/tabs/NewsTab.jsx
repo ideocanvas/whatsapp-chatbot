@@ -4,10 +4,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 const NewsTab = ({ showToast }) => {
-  const [activeSubTab, setActiveSubTab] = useState('blog-posts')
+  const [activeSubTab, setActiveSubTab] = useState('articles')
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
   const [selectedPost, setSelectedPost] = useState(null)
+  const [selectedArticle, setSelectedArticle] = useState(null)
   const [isViewerOpen, setIsViewerOpen] = useState(false)
+  const [isArticleViewerOpen, setIsArticleViewerOpen] = useState(false)
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
   const [newSource, setNewSource] = useState({ url: '', name: '', region: '', language: '', priority: 5 })
   const [favorites, setFavorites] = useState([])
@@ -87,9 +89,11 @@ const NewsTab = ({ showToast }) => {
   const { data: weeklyDigests, loading: weeklyLoading, error: weeklyError, refetch: refetchWeekly } = useApi('/api/news/weekly-digests')
   const { data: newsSources, loading: sourcesLoading, error: sourcesError, refetch: refetchSources } = useApi('/api/news/sources')
   const { data: newsKeywords, loading: keywordsLoading, error: keywordsError, refetch: refetchKeywords } = useApi('/api/news/keywords')
+  const { data: articles, loading: articlesLoading, error: articlesError, refetch: refetchArticles } = useApi('/api/news/articles')
 
   // Sub-tabs for news system
   const subTabs = [
+    { id: 'articles', label: 'Downloaded Articles', icon: '📰' },
     { id: 'blog-posts', label: 'Blog Posts', icon: '📝' },
     { id: 'daily-digests', label: 'Daily Digests', icon: '📅' },
     { id: 'weekly-digests', label: 'Weekly Digests', icon: '📊' },
@@ -102,6 +106,22 @@ const NewsTab = ({ showToast }) => {
   const handleViewPost = (post) => {
     setSelectedPost(post)
     setIsViewerOpen(true)
+  }
+
+  // Handle article selection
+  const handleViewArticle = async (article) => {
+    try {
+      const response = await fetch(`/api/news/articles/${article.id}/content`, { credentials: 'include' })
+      if (response.ok) {
+        const data = await response.json()
+        setSelectedArticle(data)
+        setIsArticleViewerOpen(true)
+      } else {
+        showToast('Failed to load article content', 'error')
+      }
+    } catch (error) {
+      showToast('Error loading article content', 'error')
+    }
   }
 
   // Download digest as markdown
@@ -193,6 +213,139 @@ const NewsTab = ({ showToast }) => {
     } catch (error) {
       showToast('Error starting blog generation', 'error')
     }
+  }
+
+  // Render downloaded articles
+  const renderDownloadedArticles = () => {
+    if (articlesLoading) return <div className="text-center py-8">Loading downloaded articles...</div>
+    if (articlesError) return <div className="text-center py-8 text-red-500">Error loading articles</div>
+
+    return (
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <h3 className="text-lg font-semibold">Downloaded Articles</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              {articles?.total || 0} articles downloaded and processed
+            </p>
+          </div>
+          <button
+            onClick={refetchArticles}
+            className="bg-wa-teal text-white px-4 py-2 rounded-md hover:bg-green-600 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {articles?.articles?.map(article => (
+            <div key={article.id} className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow overflow-hidden">
+              {article.imagePaths && article.imagePaths.length > 0 && (
+                <div className="h-40 bg-gray-200 overflow-hidden relative">
+                  <img
+                    src={`/api/news/articles/images/${article.imagePaths[0]}`}
+                    alt={article.title}
+                    className="w-full h-full object-cover"
+                    onError={(e) => { e.target.style.display = 'none' }}
+                  />
+                </div>
+              )}
+              <div className="p-4">
+                <div className="flex justify-between items-start mb-2">
+                  <h4 className="font-semibold text-gray-800 line-clamp-2 flex-1 mr-2">{article.title}</h4>
+                  <button
+                    onClick={() => toggleFavorite(article)}
+                    className={`p-1 rounded-full transition-colors flex-shrink-0 ${
+                      isFavorited(article)
+                        ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200'
+                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                    }`}
+                    title={isFavorited(article) ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    {isFavorited(article) ? '⭐' : '☆'}
+                  </button>
+                </div>
+                
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {article.tags && article.tags.slice(0, 3).map((tag, idx) => (
+                    <span key={idx} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex justify-between items-center text-xs text-gray-500 mb-2">
+                  <span className={`px-2 py-1 rounded-full ${
+                    article.processingStatus === 'completed' ? 'bg-green-100 text-green-800' :
+                    article.processingStatus === 'processing' ? 'bg-yellow-100 text-yellow-800' :
+                    article.processingStatus === 'failed' ? 'bg-red-100 text-red-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {article.processingStatus}
+                  </span>
+                  {article.category && <span className="text-gray-600">{article.category}</span>}
+                </div>
+
+                <div className="flex justify-between items-center text-xs text-gray-500 mb-3">
+                  <span>{new Date(article.publishedAt).toLocaleDateString()}</span>
+                  <span className="truncate max-w-[150px]" title={article.source}>{article.source}</span>
+                </div>
+
+                {article.keywords && article.keywords.length > 0 && (
+                  <div className="text-xs text-gray-600 mb-3">
+                    <span className="font-medium">Keywords: </span>
+                    <span>{article.keywords.slice(0, 3).join(', ')}</span>
+                  </div>
+                )}
+
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => handleViewArticle(article)}
+                    className="flex-1 bg-blue-50 text-blue-600 py-1 rounded text-sm hover:bg-blue-100 transition-colors"
+                  >
+                    View Content
+                  </button>
+                  <a
+                    href={article.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 bg-gray-50 text-gray-600 py-1 rounded text-sm hover:bg-gray-100 transition-colors text-center"
+                  >
+                    Original
+                  </a>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {(!articles?.articles || articles.articles.length === 0) && (
+          <div className="text-center py-8 text-gray-500">
+            No downloaded articles yet. Articles will appear here after running the news:cli sync.
+          </div>
+        )}
+
+        {articles?.pagination && articles.pagination.pages > 1 && (
+          <div className="flex justify-center items-center space-x-2 mt-6">
+            <button
+              disabled={articles.pagination.page === 1}
+              className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-600">
+              Page {articles.pagination.page} of {articles.pagination.pages}
+            </span>
+            <button
+              disabled={articles.pagination.page === articles.pagination.pages}
+              className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+    )
   }
 
   // Render blog post cards
@@ -548,6 +701,7 @@ const NewsTab = ({ showToast }) => {
 
       {/* Content Area */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        {activeSubTab === 'articles' && renderDownloadedArticles()}
         {activeSubTab === 'blog-posts' && renderBlogPosts()}
         {activeSubTab === 'daily-digests' && renderDailyDigests()}
         {activeSubTab === 'weekly-digests' && renderDailyDigests()} {/* Similar to daily for now */}
@@ -683,6 +837,84 @@ const NewsTab = ({ showToast }) => {
 
       {/* Modals */}
       {isViewerOpen && <BlogPostViewer />}
+      {isArticleViewerOpen && selectedArticle && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-200 flex justify-between items-center">
+              <div className="flex-1 pr-4">
+                <h3 className="text-lg sm:text-xl font-semibold mb-1">{selectedArticle.title}</h3>
+                <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+                  <span>{new Date(selectedArticle.publishedAt).toLocaleDateString()}</span>
+                  <span>•</span>
+                  <span>{selectedArticle.source}</span>
+                  {selectedArticle.category && (
+                    <>
+                      <span>•</span>
+                      <span className="text-blue-600">{selectedArticle.category}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsArticleViewerOpen(false)
+                  setSelectedArticle(null)
+                }}
+                className="text-gray-500 hover:text-gray-700 text-2xl flex-shrink-0"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1">
+              <div className="prose max-w-none text-sm sm:text-base">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {selectedArticle.markdownContent || 'No content available'}
+                </ReactMarkdown>
+              </div>
+              
+              {selectedArticle.tags && selectedArticle.tags.length > 0 && (
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                  <div className="flex flex-wrap gap-2">
+                    {selectedArticle.tags.map((tag, idx) => (
+                      <span key={idx} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {selectedArticle.keywords && selectedArticle.keywords.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <p className="text-xs text-gray-600">
+                    <span className="font-medium">Keywords: </span>
+                    {selectedArticle.keywords.join(', ')}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-200 flex justify-between items-center">
+              <a
+                href={selectedArticle.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-700 text-sm"
+              >
+                View Original Article →
+              </a>
+              <button
+                onClick={() => {
+                  setIsArticleViewerOpen(false)
+                  setSelectedArticle(null)
+                }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <AddSourceModal />
     </div>
   )
