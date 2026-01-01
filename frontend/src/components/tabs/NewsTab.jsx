@@ -778,6 +778,7 @@ const NewsTab = ({ showToast }) => {
               </div>
             </div>
 
+            {/* Hidden: Discovery System - Not used since GoogleSearchService uses hardcoded RSS feeds
             <div>
               <h3 className="text-lg font-semibold mb-4">Discovery System</h3>
               <div className="bg-gray-50 rounded-lg p-4">
@@ -806,6 +807,7 @@ const NewsTab = ({ showToast }) => {
                 </button>
               </div>
             </div>
+            */}
 
             <div>
               <h3 className="text-lg font-semibold mb-4">Blog Generation Settings</h3>
