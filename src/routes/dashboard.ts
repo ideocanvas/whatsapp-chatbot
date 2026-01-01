@@ -681,6 +681,86 @@ export class DashboardRoutes {
       }
     });
 
+    // Create news keyword
+    this.router.post('/api/news/keywords', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { keyword, relevance = 0.5, category } = req.body;
+
+        if (!keyword) {
+          return res.status(400).json({ error: 'Keyword is required' });
+        }
+
+        // Check if keyword already exists
+        const existing = await prisma.newsKeyword.findFirst({
+          where: { keyword: keyword.toLowerCase() }
+        });
+
+        if (existing) {
+          return res.status(400).json({ error: 'Keyword already exists' });
+        }
+
+        const newKeyword = await prisma.newsKeyword.create({
+          data: {
+            keyword: keyword.toLowerCase(),
+            relevance: Math.max(0, Math.min(1, relevance)), // Clamp between 0-1
+            category: category || null,
+            lastUsed: new Date()
+          }
+        });
+
+        this.logActivity(`Created news keyword: ${keyword}`);
+        res.json({ success: true, keyword: newKeyword });
+      } catch (error) {
+        console.error('Error creating news keyword:', error);
+        res.status(500).json({ error: 'Failed to create news keyword' });
+      }
+    });
+
+    // Update news keyword
+    this.router.put('/api/news/keywords/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { relevance, category } = req.body;
+
+        const updates: any = {};
+        if (relevance !== undefined) {
+          updates.relevance = Math.max(0, Math.min(1, relevance)); // Clamp between 0-1
+        }
+        if (category !== undefined) {
+          updates.category = category || null;
+        }
+        updates.lastUsed = new Date();
+
+        const updated = await prisma.newsKeyword.update({
+          where: { id },
+          data: updates
+        });
+
+        this.logActivity(`Updated news keyword: ${updated.keyword}`);
+        res.json({ success: true, keyword: updated });
+      } catch (error) {
+        console.error('Error updating news keyword:', error);
+        res.status(500).json({ error: 'Failed to update news keyword' });
+      }
+    });
+
+    // Delete news keyword
+    this.router.delete('/api/news/keywords/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+
+        const deleted = await prisma.newsKeyword.delete({
+          where: { id }
+        });
+
+        this.logActivity(`Deleted news keyword: ${deleted.keyword}`);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error deleting news keyword:', error);
+        res.status(500).json({ error: 'Failed to delete news keyword' });
+      }
+    });
+
     // Download daily digest as markdown
     this.router.get('/api/news/daily-digest/:date/download', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {

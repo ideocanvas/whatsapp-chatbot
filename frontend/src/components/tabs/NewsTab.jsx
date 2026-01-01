@@ -13,6 +13,9 @@ const NewsTab = ({ showToast }) => {
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false)
   const [newSource, setNewSource] = useState({ url: '', name: '', region: '', language: '', priority: 5 })
   const [favorites, setFavorites] = useState([])
+  const [isKeywordModalOpen, setIsKeywordModalOpen] = useState(false)
+  const [editingKeyword, setEditingKeyword] = useState(null)
+  const [newKeyword, setNewKeyword] = useState({ keyword: '', relevance: 0.5, category: '' })
 
   // Load favorites on component mount
   useEffect(() => {
@@ -195,6 +198,77 @@ const NewsTab = ({ showToast }) => {
     } catch (error) {
       showToast('Error adding news source', 'error')
     }
+  }
+
+  // Add or update keyword
+  const saveKeyword = async () => {
+    try {
+      if (!newKeyword.keyword.trim()) {
+        showToast('Keyword is required', 'error')
+        return
+      }
+
+      const url = editingKeyword 
+        ? `/api/news/keywords/${editingKeyword.id}` 
+        : '/api/news/keywords'
+      const method = editingKeyword ? 'PUT' : 'POST'
+
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          keyword: newKeyword.keyword.toLowerCase(),
+          relevance: parseFloat(newKeyword.relevance) || 0.5,
+          category: newKeyword.category || null
+        })
+      })
+
+      if (response.ok) {
+        showToast(editingKeyword ? 'Keyword updated' : 'Keyword added', 'success')
+        setIsKeywordModalOpen(false)
+        setNewKeyword({ keyword: '', relevance: 0.5, category: '' })
+        setEditingKeyword(null)
+        refetchKeywords()
+      } else {
+        const data = await response.json()
+        showToast(data.error || 'Failed to save keyword', 'error')
+      }
+    } catch (error) {
+      showToast('Error saving keyword', 'error')
+    }
+  }
+
+  // Delete keyword
+  const deleteKeyword = async (keywordId) => {
+    if (!window.confirm('Delete this keyword?')) return
+
+    try {
+      const response = await fetch(`/api/news/keywords/${keywordId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+
+      if (response.ok) {
+        showToast('Keyword deleted', 'success')
+        refetchKeywords()
+      } else {
+        showToast('Failed to delete keyword', 'error')
+      }
+    } catch (error) {
+      showToast('Error deleting keyword', 'error')
+    }
+  }
+
+  // Open keyword editor
+  const editKeyword = (keyword) => {
+    setEditingKeyword(keyword)
+    setNewKeyword({
+      keyword: keyword.keyword,
+      relevance: keyword.relevance,
+      category: keyword.category || ''
+    })
+    setIsKeywordModalOpen(true)
   }
 
   // Trigger manual blog generation
@@ -708,16 +782,31 @@ const NewsTab = ({ showToast }) => {
         {activeSubTab === 'news-sources' && renderNewsSources()}
         {activeSubTab === 'keywords' && (
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold">Tracked Keywords</h3>
+            <h3 className="text-lg font-semibold mb-4">Tracked Keywords & Categories</h3>
+            <button
+              onClick={() => {
+                setEditingKeyword(null)
+                setNewKeyword({ keyword: '', relevance: 0.5, category: '' })
+                setIsKeywordModalOpen(true)
+              }}
+              className="mb-4 bg-wa-teal text-white px-4 py-2 rounded-md hover:bg-green-600 transition-colors"
+            >
+              + Add Keyword
+            </button>
             {keywordsLoading && <div className="text-center py-8">Loading keywords...</div>}
             {keywordsError && <div className="text-center py-8 text-red-500">Error loading keywords</div>}
             {newsKeywords && newsKeywords.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {newsKeywords.map(keyword => (
-                  <div key={keyword.id} className="bg-gray-50 rounded-lg p-4">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="font-semibold">{keyword.keyword}</span>
-                      <span className={`px-2 py-1 rounded-full text-xs ${
+                  <div key={keyword.id} className="bg-gray-50 rounded-lg p-4 flex flex-col">
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1">
+                        <span className="font-semibold text-gray-900">{keyword.keyword}</span>
+                        <div className="text-sm text-gray-600 mt-1">
+                          Category: {keyword.category || 'General'}
+                        </div>
+                      </div>
+                      <span className={`px-2 py-1 rounded-full text-xs whitespace-nowrap ml-2 ${
                         keyword.relevance > 0.7 ? 'bg-green-100 text-green-800' :
                         keyword.relevance > 0.4 ? 'bg-yellow-100 text-yellow-800' :
                         'bg-red-100 text-red-800'
@@ -725,18 +814,29 @@ const NewsTab = ({ showToast }) => {
                         {Math.round(keyword.relevance * 100)}%
                       </span>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      Category: {keyword.category || 'General'}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
+                    <div className="text-xs text-gray-500 mb-3">
                       Last used: {keyword.lastUsed ? new Date(keyword.lastUsed).toLocaleDateString() : 'Never'}
+                    </div>
+                    <div className="flex gap-2 mt-auto">
+                      <button
+                        onClick={() => editKeyword(keyword)}
+                        className="flex-1 text-sm bg-blue-50 text-blue-600 px-3 py-1 rounded hover:bg-blue-100 transition-colors"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteKeyword(keyword.id)}
+                        className="flex-1 text-sm bg-red-50 text-red-600 px-3 py-1 rounded hover:bg-red-100 transition-colors"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">
-                No keywords tracked yet. Keywords will be automatically discovered during news browsing.
+                No keywords added yet. Click "Add Keyword" to create categories for article classification.
               </div>
             )}
           </div>
@@ -947,6 +1047,82 @@ const NewsTab = ({ showToast }) => {
         </div>
       )}
       <AddSourceModal />
+
+      {/* Keyword Modal */}
+      {isKeywordModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold">
+                {editingKeyword ? 'Edit Keyword' : 'Add New Keyword'}
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Keyword *
+                </label>
+                <input
+                  type="text"
+                  value={newKeyword.keyword}
+                  onChange={(e) => setNewKeyword({ ...newKeyword, keyword: e.target.value })}
+                  placeholder="e.g., artificial intelligence, machine learning"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Relevance Score (0-1)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    value={newKeyword.relevance}
+                    onChange={(e) => setNewKeyword({ ...newKeyword, relevance: parseFloat(e.target.value) })}
+                    className="flex-1"
+                  />
+                  <span className="w-12 text-right text-sm font-medium">
+                    {Math.round(parseFloat(newKeyword.relevance) * 100)}%
+                  </span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Category (optional)
+                </label>
+                <input
+                  type="text"
+                  value={newKeyword.category}
+                  onChange={(e) => setNewKeyword({ ...newKeyword, category: e.target.value })}
+                  placeholder="e.g., Technology, Business, Science"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setIsKeywordModalOpen(false)
+                  setEditingKeyword(null)
+                  setNewKeyword({ keyword: '', relevance: 0.5, category: '' })
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveKeyword}
+                className="px-4 py-2 bg-wa-teal text-white rounded-md hover:bg-green-600 transition-colors"
+              >
+                {editingKeyword ? 'Update' : 'Add'} Keyword
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
