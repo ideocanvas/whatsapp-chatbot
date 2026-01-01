@@ -870,9 +870,17 @@ const NewsTab = ({ showToast }) => {
                 <ReactMarkdown 
                   remarkPlugins={[remarkGfm]}
                   components={{
-                    img: ({node, ...props}) => (
-                      <img {...props} className="rounded-lg shadow-sm my-4" loading="lazy" />
-                    ),
+                    img: ({node, src, ...props}) => {
+                      // Transform relative image paths to use the API endpoint
+                      // src is like "images/img_xxx.jpg"
+                      // selectedArticle.processedContent is like "html/cache/YYYY-MM-DD/hash/article.md"
+                      let imageSrc = src;
+                      if (src && !src.startsWith('http') && !src.startsWith('/api/')) {
+                        const baseDir = selectedArticle.processedContent.substring(0, selectedArticle.processedContent.lastIndexOf('/'));
+                        imageSrc = `/api/news/articles/images/${baseDir}/${src}`;
+                      }
+                      return <img {...props} src={imageSrc} className="rounded-lg shadow-sm my-4" loading="lazy" />
+                    },
                     a: ({node, ...props}) => (
                       <a {...props} className="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer" />
                     ),
