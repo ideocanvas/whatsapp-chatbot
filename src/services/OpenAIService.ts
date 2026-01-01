@@ -101,8 +101,11 @@ export class OpenAIService {
 
       return cleanLLMResponse(rawResponse);
     } catch (error) {
-      console.error('Error generating text response:', error);
-      throw new Error('Failed to generate response from OpenAI');
+      console.error('[DEBUG] Error generating text response:');
+      console.error('  Base URL:', this.config.baseURL || 'https://api.openai.com/v1 (default)');
+      console.error('  Model attempted:', this.config.model);
+      console.error('  Error details:', error);
+      throw error;
     }
   }
 
