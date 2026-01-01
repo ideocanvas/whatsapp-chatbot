@@ -866,8 +866,29 @@ const NewsTab = ({ showToast }) => {
               </button>
             </div>
             <div className="p-4 sm:p-6 overflow-y-auto flex-1">
-              <div className="prose max-w-none text-sm sm:text-base">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <div className="prose prose-sm sm:prose-base lg:prose-lg max-w-none prose-headings:font-bold prose-a:text-blue-600 prose-img:rounded-lg prose-code:bg-gray-100 prose-code:px-1 prose-code:py-0.5 prose-pre:bg-gray-800 prose-pre:text-white">
+                <ReactMarkdown 
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    img: ({node, ...props}) => (
+                      <img {...props} className="rounded-lg shadow-sm my-4" loading="lazy" />
+                    ),
+                    a: ({node, ...props}) => (
+                      <a {...props} className="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer" />
+                    ),
+                    h1: ({node, ...props}) => <h1 {...props} className="text-2xl font-bold mt-6 mb-4" />,
+                    h2: ({node, ...props}) => <h2 {...props} className="text-xl font-bold mt-5 mb-3" />,
+                    h3: ({node, ...props}) => <h3 {...props} className="text-lg font-bold mt-4 mb-2" />,
+                    p: ({node, ...props}) => <p {...props} className="mb-4 leading-relaxed" />,
+                    ul: ({node, ...props}) => <ul {...props} className="list-disc list-inside mb-4 space-y-2" />,
+                    ol: ({node, ...props}) => <ol {...props} className="list-decimal list-inside mb-4 space-y-2" />,
+                    blockquote: ({node, ...props}) => <blockquote {...props} className="border-l-4 border-gray-300 pl-4 italic my-4" />,
+                    code: ({node, inline, ...props}) => 
+                      inline 
+                        ? <code {...props} className="bg-gray-100 px-1 py-0.5 rounded text-sm" />
+                        : <code {...props} className="block bg-gray-800 text-white p-4 rounded-lg overflow-x-auto" />
+                  }}
+                >
                   {selectedArticle.markdownContent || 'No content available'}
                 </ReactMarkdown>
               </div>
