@@ -4,6 +4,9 @@ FROM node:20-bookworm AS builder
 # Set working directory
 WORKDIR /app
 
+# Non-interactive installs (pnpm aborts without TTY unless CI is true)
+ENV CI=true
+
 # Copy package files
 COPY package*.json ./
 
@@ -58,6 +61,9 @@ RUN npm run build || { echo 'Build failed'; exit 1; }
 
 # Production stage
 FROM node:20-bookworm-slim AS production
+
+# Non-interactive installs in production stage
+ENV CI=true
 
 # Install dumb-init and all required system dependencies for Playwright and FFmpeg
 RUN apt-get update && apt-get install -y \
