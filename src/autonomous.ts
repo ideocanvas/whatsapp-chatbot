@@ -88,8 +88,8 @@ class AutonomousWhatsAppAgent {
       const scraper = createWebScrapeService();
       this.browser = new BrowserService(scraper, this.kb);
 
-      // Initialize Google Search Service (with OpenAI for article processing)
-      this.googleSearchService = createGoogleSearchServiceFromEnv(this.openai);
+      // Initialize Google Search Service (with OpenAI for article processing and KB for knowledge)
+      this.googleSearchService = createGoogleSearchServiceFromEnv(this.openai, this.kb);
 
       // 3. Initialize Tool Registry
       this.tools = new ToolRegistry();

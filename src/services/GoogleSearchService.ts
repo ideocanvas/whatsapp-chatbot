@@ -4,6 +4,7 @@ import { HtmlToMarkdownService, createHtmlToMarkdownServiceFromEnv } from './Htm
 import { ProcessedArticleService } from './ProcessedArticleService';
 import { ArticleClassificationService, createArticleClassificationService } from './ArticleClassificationService';
 import { OpenAIService } from './OpenAIService';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -61,13 +62,16 @@ export class GoogleSearchService {
   private htmlToMarkdownService?: HtmlToMarkdownService;
   private processedArticleService?: ProcessedArticleService;
   private classificationService?: ArticleClassificationService;
+  private kb?: KnowledgeBasePostgres;
   private desktopLock: Promise<void> = Promise.resolve(); // Mutex for desktop service operations
 
   constructor(
     config: GoogleSearchConfig,
-    openaiService?: OpenAIService
+    openaiService?: OpenAIService,
+    knowledgeBase?: KnowledgeBasePostgres
   ) {
     this.config = config;
+    this.kb = knowledgeBase;
     if (config.useDesktopService) {
       try {
         this.desktopService = createDesktopToWebServiceFromEnv();
@@ -1096,6 +1100,46 @@ export class GoogleSearchService {
 
       console.log(`✅ Article processed: ${item.title}`);
 
+      // Add to knowledge base (same pattern as BrowserService)
+      if (this.kb) {
+        try {
+          // Truncate content to 4000 chars (KB limit)
+          const truncatedContent = markdownContent.substring(0, 4000);
+          
+          // Compute content hash for deduplication
+          const contentHash = crypto.createHash('md5').update(truncatedContent).digest('hex');
+          
+          // Check if content already exists (avoid duplicate knowledge)
+          const exists = await this.kb.hasContentHash(contentHash);
+          
+          if (!exists) {
+            // Add tags: news_article, category, feed source
+            const kbTags = [
+              'news_article',
+              ...(classification.tags || []),
+              ...(classification.category ? [`category:${classification.category}`] : []),
+              ...(item.feedUrl ? [`feed:${new URL(item.feedUrl).hostname}`] : [])
+            ];
+            
+            await this.kb.learnDocument({
+              content: truncatedContent,
+              source: url,
+              tags: kbTags,
+              timestamp: new Date(item.pubDate || new Date()),
+              category: classification.category || 'news',
+              contentHash: contentHash
+            });
+            
+            console.log(`💾 Added to knowledge base: ${item.title.substring(0, 50)}...`);
+          } else {
+            console.log(`⏭️ Article already in KB (hash match): ${item.title.substring(0, 50)}...`);
+          }
+        } catch (kbError) {
+          console.error(`⚠️ Failed to add article to KB: ${kbError}`);
+          // Don't fail the entire processing if KB addition fails
+        }
+      }
+
       return {
         id: articleId,
         title: item.title,
@@ -1363,7 +1407,7 @@ export class GoogleSearchService {
 }
 
 // Helper function to create GoogleSearchService instance from environment variables
-export function createGoogleSearchServiceFromEnv(openaiService?: OpenAIService): GoogleSearchService {
+export function createGoogleSearchServiceFromEnv(openaiService?: OpenAIService, knowledgeBase?: KnowledgeBasePostgres): GoogleSearchService {
   const apiKey = process.env.GOOGLE_SEARCH_API_KEY;
   const searchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID;
 
@@ -1374,5 +1418,5 @@ export function createGoogleSearchServiceFromEnv(openaiService?: OpenAIService):
   return new GoogleSearchService({
     apiKey,
     searchEngineId,
-  }, openaiService);
+  }, openaiService, knowledgeBase);
 }

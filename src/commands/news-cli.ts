@@ -3,9 +3,11 @@ dotenv.config();
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../services/GoogleSearchService';
 import { createOpenAIServiceFromConfig } from '../services/OpenAIService';
 import { ProcessedArticleService } from '../services/ProcessedArticleService';
+import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { prisma } from '../config/prisma';
 
 async function main() {
@@ -19,14 +21,19 @@ async function main() {
   const forceReprocessIndex = args.indexOf('--force-reprocess');
   const forceReprocess = forceReprocessIndex !== -1;
   
-  // Filter out flags for argument parsing
-  const filteredArgs = args.filter(arg => arg !== '--retry-only' && arg !== '--force-reprocess');
+  // Check for --sync-to-kb flag
+  const syncToKbIndex = args.indexOf('--sync-to-kb');
+  const syncToKb = syncToKbIndex !== -1;
   
-  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess) {
+  // Filter out flags for argument parsing
+  const filteredArgs = args.filter(arg => arg !== '--retry-only' && arg !== '--force-reprocess' && arg !== '--sync-to-kb');
+  
+  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb) {
     console.error('Usage: pnpm run news:cli [numResults] [output.json]');
     console.error('  numResults: Number of news articles to fetch (default: 100)');
     console.error('  --retry-only: Only retry failed and stuck processing articles, do not fetch new articles');
     console.error('  --force-reprocess: Force reprocess all articles in "processing" status');
+    console.error('  --sync-to-kb: Sync all completed articles to knowledge base (deduplicates by content hash)');
     process.exit(2);
   }
 
@@ -36,11 +43,108 @@ async function main() {
   // Initialize OpenAIService from config (required for fetchLatestNews)
   const openaiService = await createOpenAIServiceFromConfig();
 
-  // Initialize GoogleSearchService from env with OpenAI service
-  const svc = createGoogleSearchServiceFromEnv(openaiService);
+  // Initialize KnowledgeBase for --sync-to-kb mode
+  const kb = new KnowledgeBasePostgres(openaiService);
+
+  // Initialize GoogleSearchService from env with OpenAI service and KB
+  const svc = createGoogleSearchServiceFromEnv(openaiService, kb);
 
   try {
-    if (forceReprocess) {
+    if (syncToKb) {
+      // Sync all completed articles to knowledge base
+      console.log('🔄 Sync-to-KB mode: Syncing all completed articles to knowledge base...');
+      
+      // Get all completed articles
+      const completedArticles = await prisma.processedArticle.findMany({
+        where: { processingStatus: 'completed' },
+        select: {
+          id: true,
+          title: true,
+          url: true,
+          source: true,
+          feedUrl: true,
+          publishedAt: true,
+          processedContent: true,
+          tags: true,
+          category: true,
+        },
+        orderBy: { publishedAt: 'desc' }
+      });
+      
+      console.log(`📊 Found ${completedArticles.length} completed articles`);
+      
+      let added = 0;
+      let skipped = 0;
+      let errors = 0;
+      
+      for (const article of completedArticles) {
+        try {
+          // Read markdown content
+          const markdownPath = path.join('./data', article.processedContent);
+          
+          if (!await fs.access(markdownPath).then(() => true).catch(() => false)) {
+            console.log(`⚠️ Markdown file not found: ${article.title}`);
+            errors++;
+            continue;
+          }
+          
+          const markdownContent = await fs.readFile(markdownPath, 'utf-8');
+          
+          // Truncate to 4000 chars (KB limit)
+          const truncatedContent = markdownContent.substring(0, 4000);
+          
+          // Compute content hash
+          const contentHash = crypto.createHash('md5').update(truncatedContent).digest('hex');
+          
+          // Check if already in KB
+          const exists = await kb.hasContentHash(contentHash);
+          
+          if (exists) {
+            console.log(`⏭️ Already in KB: ${article.title.substring(0, 50)}...`);
+            skipped++;
+            continue;
+          }
+          
+          // Add tags
+          const kbTags = [
+            'news_article',
+            ...(article.tags || []),
+            ...(article.category ? [`category:${article.category}`] : []),
+            ...(article.feedUrl ? [`feed:${new URL(article.feedUrl).hostname}`] : [])
+          ];
+          
+          // Add to KB
+          await kb.learnDocument({
+            content: truncatedContent,
+            source: article.url,
+            tags: kbTags,
+            timestamp: new Date(article.publishedAt),
+            category: article.category || 'news',
+            contentHash: contentHash
+          });
+          
+          added++;
+          console.log(`✅ Added to KB [${added}/${completedArticles.length}]: ${article.title.substring(0, 50)}...`);
+        } catch (error) {
+          errors++;
+          console.error(`❌ Error syncing article: ${article.title}`, error);
+        }
+      }
+      
+      console.log(`\n📊 Sync complete:`);
+      console.log(`   - Added: ${added}`);
+      console.log(`   - Skipped (duplicates): ${skipped}`);
+      console.log(`   - Errors: ${errors}`);
+      console.log(`   - Total: ${completedArticles.length}`);
+      
+      const abs = path.resolve(process.cwd(), outPath);
+      await fs.writeFile(abs, JSON.stringify({
+        mode: 'sync-to-kb',
+        timestamp: new Date().toISOString(),
+        stats: { added, skipped, errors, total: completedArticles.length }
+      }, null, 2), 'utf-8');
+      console.log(`📝 Wrote sync stats to ${abs}`);
+    } else if (forceReprocess) {
       // Force reprocess all articles in "processing" status
       console.log('🔄 Force reprocess mode: Reprocessing all articles in "processing" status...');
       
