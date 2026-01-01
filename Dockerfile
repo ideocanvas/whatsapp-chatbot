@@ -41,11 +41,20 @@ RUN npx playwright install chromium --with-deps
 # Copy source code
 COPY . .
 
+# Install pnpm
+RUN npm install -g pnpm
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Build frontend
+RUN cd frontend && npm run build
+
 # Generate Prisma client
 RUN npx prisma generate
 
 # Build the application
-RUN npm run build
+RUN npm run build || { echo 'Build failed'; exit 1; }
 
 # Production stage
 FROM node:20-bookworm-slim AS production
@@ -88,22 +97,27 @@ RUN groupadd -g 1001 nodejs && \
 # Set working directory
 WORKDIR /app
 
+# Copy built application from builder stage
+COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist
+COPY --from=builder --chown=whatsapp-bot:nodejs /app/frontend/dist ./frontend/dist
+
 # Copy package files
 COPY package*.json ./
 COPY pnpm-lock.yaml ./
 
-# Install production dependencies including all Playwright browsers
-RUN npx playwright install chromium --with-deps && npm cache clean --force
+# Install pnpm globally
+RUN npm install -g pnpm
 
-# Copy built application from builder stage
-COPY --from=builder --chown=whatsapp-bot:nodejs /app/dist ./dist
+# Install production dependencies including all Playwright browsers
+RUN pnpm install --frozen-lockfile --prod && npm cache clean --force
+RUN npx playwright install chromium --with-deps
 
 # Copy other necessary files
 COPY --chown=whatsapp-bot:nodejs .env.example ./
 COPY --chown=whatsapp-bot:nodejs data/ ./data/
 COPY --chown=whatsapp-bot:nodejs config/ ./config/
 COPY --chown=whatsapp-bot:nodejs prisma/ ./prisma/
-COPY --chown=whatsapp-bot:nodejs web/ ./web/
+COPY --chown=whatsapp-bot:nodejs frontend/package.json ./frontend/
 COPY --chown=whatsapp-bot:nodejs entrypoint.sh ./
 
 # Create data directory if it doesn't exist
@@ -118,13 +132,8 @@ ENV CHROME_BIN=/usr/bin/chromium-browser
 
 RUN chown -R whatsapp-bot:nodejs /app/
 
-RUN npm install -g pnpm
 # Switch to non-root user
 USER whatsapp-bot
-
-RUN pnpm install --frozen-lockfile
-COPY pnpm-workspace.yaml ./
-RUN pnpm rebuild better-sqlite3
 
 # Expose the port the app runs on
 EXPOSE 3000
