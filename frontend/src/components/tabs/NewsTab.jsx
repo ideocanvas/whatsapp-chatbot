@@ -99,7 +99,7 @@ const NewsTab = ({ showToast }) => {
     { id: 'weekly-digests', label: 'Weekly Digests', icon: '📊' },
     // { id: 'news-sources', label: 'News Sources', icon: '🌐' }, // Hidden: Not used by GoogleSearchService (uses hardcoded RSS feeds)
     { id: 'keywords', label: 'Keywords', icon: '🔑' },
-    { id: 'configuration', label: 'Configuration', icon: '⚙️' }
+    // { id: 'configuration', label: 'Configuration', icon: '⚙️' } // Hidden: Settings not implemented (system uses environment variables)
   ]
 
   // Handle blog post selection
