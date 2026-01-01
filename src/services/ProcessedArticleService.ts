@@ -388,6 +388,16 @@ export class ProcessedArticleService {
    * Map database model to ProcessedArticle interface
    */
   private mapToProcessedArticle(dbArticle: any): ProcessedArticle {
+    // Extract base path from processedContent to construct full image paths
+    // processedContent is like: html/cache/YYYY-MM-DD/hash/article.md
+    // imagePaths are like: images/img_xxx.jpg
+    // We need: html/cache/YYYY-MM-DD/hash/images/img_xxx.jpg
+    const fullImagePaths = dbArticle.imagePaths.map((relativePath: string) => {
+      // Get the directory of the processedContent
+      const baseDir = dbArticle.processedContent.substring(0, dbArticle.processedContent.lastIndexOf('/'));
+      return `${baseDir}/${relativePath}`;
+    });
+
     return {
       title: dbArticle.title,
       url: dbArticle.url,
@@ -398,7 +408,7 @@ export class ProcessedArticleService {
       keywords: dbArticle.keywords,
       tags: dbArticle.tags || [],
       category: dbArticle.category || undefined,
-      imagePaths: dbArticle.imagePaths,
+      imagePaths: fullImagePaths,
       imageDescriptions: dbArticle.imageDescriptions || undefined,
       processingStatus: dbArticle.processingStatus,
       errorMessage: dbArticle.errorMessage,
