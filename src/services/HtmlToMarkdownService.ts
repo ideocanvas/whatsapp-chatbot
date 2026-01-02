@@ -113,29 +113,130 @@ export class HtmlToMarkdownService {
   }
 
   /**
+   * Verify that the expected content is actually in the clipboard
+   * This catches cases where sendToClipboard returns success but the clipboard wasn't updated
+   *
+   * @param expectedContent - The expected content in clipboard
+   * @param maxRetries - Maximum number of retry attempts (default: 3)
+   * @returns true if verified, false if failed after all retries
+   */
+  private async verifyClipboardContent(
+    expectedContent: string,
+    maxRetries: number = 3
+  ): Promise<boolean> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const readResult = await this.desktopService.readFromClipboard();
+      
+      if (readResult.status === 'success' && readResult.text) {
+        const actualContent = readResult.text.trim();
+        const expectedTrimmed = expectedContent.trim();
+        
+        if (actualContent === expectedTrimmed) {
+          console.log(`[DEBUG] Clipboard verified on attempt ${attempt}/${maxRetries}`);
+          return true;
+        }
+        
+        console.warn(
+          `[DEBUG] Clipboard mismatch on attempt ${attempt}/${maxRetries}: ` +
+          `expected "${expectedTrimmed.substring(0, 50)}${expectedTrimmed.length > 50 ? '...' : ''}", ` +
+          `got "${actualContent.substring(0, 50)}${actualContent.length > 50 ? '...' : ''}"`
+        );
+      } else {
+        console.warn(`[DEBUG] Failed to read clipboard on attempt ${attempt}/${maxRetries}: ${readResult.message}`);
+      }
+      
+      // Wait before retry (exponential backoff: 500ms, 1000ms, 2000ms)
+      if (attempt < maxRetries) {
+        const delay = 500 * Math.pow(2, attempt - 1);
+        console.log(`[DEBUG] Retrying clipboard verification in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    console.error(`[ERROR] Failed to verify clipboard content after ${maxRetries} attempts`);
+    return false;
+  }
+
+  /**
+   * Check if HTML content is a browser error page
+   * This prevents error pages from being processed as valid content
+   *
+   * @param html - The HTML content to check
+   * @returns true if the HTML is an error page
+   */
+  private isErrorPage(html: string): boolean {
+    const errorPatterns = [
+      // Chrome error messages
+      /This site can(?:’|')t be reached/i,
+      /ERR_CONNECTION_REFUSED/i,
+      /ERR_NAME_NOT_RESOLVED/i,
+      /ERR_CONNECTION_TIMED_OUT/i,
+      /DNS_PROBE_FINISHED_NXDOMAIN/i,
+      /ERR_CONNECTION_RESET/i,
+      /ERR_INTERNET_DISCONNECTED/i,
+      // Firefox error messages
+      /err_connection_refused/i,
+      /Server not found/i,
+      // General error indicators
+      /no internet/i,
+      /Unable to connect/i,
+      /Connection refused/i,
+      // The error snippet from handleFailedArticles.ts
+      /<span>This site can(?:’|')t be reached<\/span>/i,
+    ];
+    
+    return errorPatterns.some(pattern => pattern.test(html));
+  }
+
+  /**
    * Fetch HTML from URL using DesktopToWebService and save to file
    * Creates a fresh DesktopToWebService instance for each request to prevent connection issues
+   * Now includes clipboard verification and error page detection
    */
   private async fetchHtmlToFile(url: string, htmlPath: string): Promise<void> {
     // Create a fresh service instance for this request to prevent connection reuse issues
     const desktopService = createDesktopToWebServiceFromEnv();
     
     // Step 1: Send URL to clipboard
+    console.log(`[DEBUG] Sending URL to clipboard: ${url}`);
     const sendResult = await desktopService.sendToClipboard(url);
     if (sendResult.status !== 'success') {
       throw new Error(`Failed to send URL to clipboard: ${sendResult.message}`);
     }
 
+    // Step 1.5: Verify URL is actually in clipboard (prevents silent clipboard failures)
+    console.log(`[DEBUG] Verifying clipboard content...`);
+    const verified = await this.verifyClipboardContent(url, 3);
+    if (!verified) {
+      throw new Error(
+        `Failed to verify URL in clipboard after 3 attempts. ` +
+        `This indicates a clipboard service issue. ` +
+        `URL: ${url}`
+      );
+    }
+
     // Step 2: Execute get_page_content script
+    console.log(`[DEBUG] Executing get_page_content script...`);
     const executeResult = await desktopService.executeScript('get_page_content', {}, 300);
     if (executeResult.status !== 'success') {
       throw new Error(`Failed to execute script: ${executeResult.message}`);
     }
 
     // Step 3: Read HTML content from clipboard
+    console.log(`[DEBUG] Reading HTML from clipboard...`);
     const readResult = await desktopService.readFromClipboard();
     if (readResult.status !== 'success' || !readResult.text) {
       throw new Error(`Failed to read from clipboard: ${readResult.message}`);
+    }
+
+    // Step 3.5: Validate HTML is not an error page
+    console.log(`[DEBUG] Checking if returned content is an error page...`);
+    if (this.isErrorPage(readResult.text)) {
+      throw new Error(
+        `Browser returned an error page. ` +
+        `This may indicate the URL was not properly sent to clipboard or the site is unreachable. ` +
+        `URL: ${url}`
+      );
     }
 
     // Step 4: Save HTML to file
