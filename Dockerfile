@@ -21,10 +21,10 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build frontend
-RUN cd frontend && npm run build
+RUN cd frontend && pnpm run build
 
 # Generate Prisma client
-RUN npx prisma generate
+RUN pnpm exec prisma generate
 
 # Build the application
 RUN npm run build || { echo 'Build failed'; exit 1; }
@@ -45,7 +45,6 @@ COPY --chown=whatsapp-bot:nodejs --from=builder /app/node_modules/.prisma ./node
 
 # Copy other necessary files
 COPY --chown=whatsapp-bot:nodejs .env.example ./
-COPY --chown=whatsapp-bot:nodejs data/ ./data/
 COPY --chown=whatsapp-bot:nodejs config/ ./config/
 COPY --chown=whatsapp-bot:nodejs prisma/ ./prisma/
 COPY --chown=whatsapp-bot:nodejs frontend/package.json ./frontend/
