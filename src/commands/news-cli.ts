@@ -9,6 +9,7 @@ import { createOpenAIServiceFromConfig } from '../services/OpenAIService';
 import { ProcessedArticleService } from '../services/ProcessedArticleService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { prisma } from '../config/prisma';
+import { handleFailedArticles } from '../utils/handleFailedArticles';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -24,17 +25,63 @@ async function main() {
   // Check for --sync-to-kb flag
   const syncToKbIndex = args.indexOf('--sync-to-kb');
   const syncToKb = syncToKbIndex !== -1;
+
+  // Check for --handle-failed flag
+  const handleFailedIndex = args.indexOf('--handle-failed');
+  const handleFailed = handleFailedIndex !== -1;
+
+  const failedActionIdx = args.indexOf('--failed-action');
+  const failedAction = failedActionIdx !== -1 && args[failedActionIdx + 1] && !args[failedActionIdx + 1].startsWith('--')
+    ? args[failedActionIdx + 1]
+    : 'delete';
+
+  const failedApply = args.indexOf('--failed-apply') !== -1;
+  const failedDryRun = !failedApply; // default dry-run unless explicitly applied
+  const failedSkipDb = args.indexOf('--failed-skip-db') !== -1;
   
   // Filter out flags for argument parsing
-  const filteredArgs = args.filter(arg => arg !== '--retry-only' && arg !== '--force-reprocess' && arg !== '--sync-to-kb');
+  const filteredArgs = args.filter((arg, idx) => {
+    if (arg === '--retry-only' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db') {
+      return false;
+    }
+    if (arg === '--failed-action') {
+      // Skip the flag and its value
+      return false;
+    }
+    if (args[idx - 1] === '--failed-action') {
+      return false;
+    }
+    return true;
+  });
   
-  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb) {
+  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb && !handleFailed) {
     console.error('Usage: pnpm run news:cli [numResults] [output.json]');
     console.error('  numResults: Number of news articles to fetch (default: 100)');
     console.error('  --retry-only: Only retry failed and stuck processing articles, do not fetch new articles');
     console.error('  --force-reprocess: Force reprocess all articles in "processing" status');
     console.error('  --sync-to-kb: Sync all completed articles to knowledge base (deduplicates by content hash)');
+    console.error('  --handle-failed: Mark/cache files with "This site can\'t be reached" as failed and remove or move them');
+    console.error('     --failed-action [delete|move] (default delete)');
+    console.error('     --failed-apply  (required to actually modify files/DB; default is dry-run)');
+    console.error('     --failed-skip-db');
     process.exit(2);
+  }
+
+  if (handleFailed) {
+    console.log('🛠 Handling failed article downloads...');
+    const result = await handleFailedArticles({
+      action: failedAction === 'move' ? 'move' : 'delete',
+      dryRun: failedDryRun,
+      skipDb: failedSkipDb,
+    });
+
+    console.log(`📊 ${result.message}`);
+    console.log(`   - total: ${result.stats.total}`);
+    console.log(`   - processed: ${result.stats.processed}`);
+    console.log(`   - failed: ${result.stats.failed}`);
+    console.log(`   - skipped: ${result.stats.skipped}`);
+
+    process.exit(result.success ? 0 : 1);
   }
 
   const numResults = filteredArgs[0] && !filteredArgs[0].startsWith('--') ? Math.max(1, parseInt(filteredArgs[0], 10)) : 100;

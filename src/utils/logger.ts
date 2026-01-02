@@ -4,7 +4,7 @@
 
 export interface LogEntry {
   timestamp: string;
-  type: 'ai_response' | 'tool_call' | 'search' | 'decision' | 'error';
+  type: 'ai_response' | 'tool_call' | 'search' | 'decision' | 'error' | 'warn';
   message: string;
   data?: any;
 }
@@ -49,7 +49,8 @@ export class Logger {
       'tool_call': '🛠️',
       'search': '🔍',
       'decision': '🧠',
-      'error': '❌'
+      'error': '❌',
+      'warn': '⚠️'
     };
     return emojis[type] || '📝';
   }
@@ -91,6 +92,10 @@ export class Logger {
 
   logError(message: string, data?: any): void {
     this.log('error', message, data);
+  }
+
+  logWarn(message: string, data?: any): void {
+    this.log('warn', message, data);
   }
 }
 
