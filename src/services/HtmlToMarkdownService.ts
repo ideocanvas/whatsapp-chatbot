@@ -196,6 +196,73 @@ export class HtmlToMarkdownService {
   }
 
   /**
+   * Check if the content starts with a valid HTML tag
+   * This helps detect when clipboard contains unexpected content
+   *
+   * @param content - The content to check
+   * @returns true if content appears to be valid HTML
+   */
+  private isValidHtmlContent(content: string): boolean {
+    const trimmed = content.trim().toLowerCase();
+    
+    // Check for valid HTML starts
+    return trimmed.startsWith('<!doctype html') ||
+           trimmed.startsWith('<html') ||
+           trimmed.startsWith('<?xml');
+  }
+
+  /**
+   * Read and validate HTML content from clipboard with retry logic
+   * Retries if content doesn't appear to be valid HTML
+   *
+   * @param desktopService - The desktop service instance
+   * @param url - The original URL (for error messages)
+   * @param maxRetries - Maximum number of retry attempts (default: 3)
+   * @returns The validated HTML content
+   * @throws Error if failed to read valid HTML after all retries
+   */
+  private async readValidHtmlFromClipboard(
+    desktopService: DesktopToWebService,
+    url: string,
+    maxRetries: number = 3
+  ): Promise<string> {
+    let htmlContent: string | undefined;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const readResult = await desktopService.readFromClipboard();
+      
+      if (readResult.status === 'success' && readResult.text) {
+        htmlContent = readResult.text;
+        
+        // Check if content starts with valid HTML
+        if (this.isValidHtmlContent(htmlContent)) {
+          console.log(`[DEBUG] Valid HTML content read on attempt ${attempt}/${maxRetries}`);
+          return htmlContent;
+        }
+        
+        const preview = htmlContent.trim().substring(0, 100);
+        console.warn(
+          `[DEBUG] HTML validation failed on attempt ${attempt}/${maxRetries}: ` +
+          `content does not start with valid HTML tag. Preview: "${preview}..."`
+        );
+      } else {
+        console.warn(`[DEBUG] Failed to read from clipboard on attempt ${attempt}/${maxRetries}: ${readResult.message}`);
+      }
+      
+      // Wait before retry (1 second between retries)
+      if (attempt < maxRetries) {
+        console.log(`[DEBUG] Waiting 1000ms before retrying clipboard read...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    throw new Error(
+      `Failed to read valid HTML from clipboard after ${maxRetries} attempts. ` +
+      `URL: ${url}`
+    );
+  }
+
+  /**
    * Fetch HTML from URL using DesktopToWebService and save to file
    * Creates a fresh DesktopToWebService instance for each request to prevent connection issues
    * Now includes clipboard verification and error page detection
@@ -229,16 +296,13 @@ export class HtmlToMarkdownService {
       throw new Error(`Failed to execute script: ${executeResult.message}`);
     }
 
-    // Step 3: Read HTML content from clipboard
+    // Step 3: Read HTML content from clipboard with validation and retry
     console.log(`[DEBUG] Reading HTML from clipboard...`);
-    const readResult = await desktopService.readFromClipboard();
-    if (readResult.status !== 'success' || !readResult.text) {
-      throw new Error(`Failed to read from clipboard: ${readResult.message}`);
-    }
+    const htmlContent = await this.readValidHtmlFromClipboard(desktopService, url, 3);
 
     // Step 3.5: Validate HTML is not an error page
     console.log(`[DEBUG] Checking if returned content is an error page...`);
-    if (this.isErrorPage(readResult.text)) {
+    if (this.isErrorPage(htmlContent)) {
       throw new Error(
         `Browser returned an error page. ` +
         `This may indicate the URL was not properly sent to clipboard or the site is unreachable. ` +
@@ -248,7 +312,7 @@ export class HtmlToMarkdownService {
 
     // Step 4: Save HTML to file
     console.log(`[DEBUG] Saving HTML to file: ${htmlPath}`);
-    fs.writeFileSync(htmlPath, readResult.text, 'utf-8');
+    fs.writeFileSync(htmlPath, htmlContent, 'utf-8');
   }
 
   /**
