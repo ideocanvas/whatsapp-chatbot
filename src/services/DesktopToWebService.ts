@@ -139,6 +139,16 @@ export class DesktopToWebService {
     data: any | undefined,
     timeoutMs: number
   ): Promise<T> {
+    // Debug logging
+    console.log(`🔍 [DesktopToWebService] Making ${method} request`);
+    console.log(`   URL: ${url}`);
+    console.log(`   Base URL: ${this.config.baseUrl}`);
+    console.log(`   API Key: ${this.config.apiKey ? '***' + this.config.apiKey.slice(-4) : 'NOT SET'}`);
+    console.log(`   Timeout: ${timeoutMs}ms`);
+    if (data) {
+      console.log(`   Data:`, JSON.stringify(data, null, 2));
+    }
+    
     return new Promise((resolve, reject) => {
       const args: string[] = [
         '-s',           // Silent mode
