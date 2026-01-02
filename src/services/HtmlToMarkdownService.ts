@@ -116,16 +116,18 @@ export class HtmlToMarkdownService {
    * Verify that the expected content is actually in the clipboard
    * This catches cases where sendToClipboard returns success but the clipboard wasn't updated
    *
+   * @param desktopService - The desktop service instance to use for clipboard operations
    * @param expectedContent - The expected content in clipboard
    * @param maxRetries - Maximum number of retry attempts (default: 3)
    * @returns true if verified, false if failed after all retries
    */
   private async verifyClipboardContent(
+    desktopService: DesktopToWebService,
     expectedContent: string,
     maxRetries: number = 3
   ): Promise<boolean> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const readResult = await this.desktopService.readFromClipboard();
+      const readResult = await desktopService.readFromClipboard();
       
       if (readResult.status === 'success' && readResult.text) {
         const actualContent = readResult.text.trim();
@@ -145,10 +147,15 @@ export class HtmlToMarkdownService {
         console.warn(`[DEBUG] Failed to read clipboard on attempt ${attempt}/${maxRetries}: ${readResult.message}`);
       }
       
-      // Wait before retry (exponential backoff: 500ms, 1000ms, 2000ms)
+      // If not verified and not last attempt, resend URL and wait before retry
       if (attempt < maxRetries) {
-        const delay = 500 * Math.pow(2, attempt - 1);
-        console.log(`[DEBUG] Retrying clipboard verification in ${delay}ms...`);
+        console.log(`[DEBUG] Resending URL to clipboard and retrying...`);
+        const resendResult = await desktopService.sendToClipboard(expectedContent);
+        if (resendResult.status !== 'success') {
+          console.warn(`[DEBUG] Failed to resend URL to clipboard: ${resendResult.message}`);
+        }
+        const delay = 1000; // Wait 1 second before retry
+        console.log(`[DEBUG] Waiting ${delay}ms before retrying clipboard verification...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -206,7 +213,7 @@ export class HtmlToMarkdownService {
 
     // Step 1.5: Verify URL is actually in clipboard (prevents silent clipboard failures)
     console.log(`[DEBUG] Verifying clipboard content...`);
-    const verified = await this.verifyClipboardContent(url, 3);
+    const verified = await this.verifyClipboardContent(desktopService, url, 3);
     if (!verified) {
       throw new Error(
         `Failed to verify URL in clipboard after 3 attempts. ` +
