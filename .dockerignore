@@ -1,0 +1,81 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Node modules
+node_modules
+*/node_modules
+frontend/node_modules
+
+# Build outputs
+dist
+*/dist
+frontend/dist
+
+# Development files
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Testing
+coverage
+.nyc_output
+test
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Documentation
+README.md
+*.md
+docs
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Scripts
+scripts
+
+# Temporary files
+tmp
+temp
+*.tmp
+
+# Plans and documentation
+plans
+NEWS_SYSTEM_REDESIGN.md
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data
+
+# Logs
+logs
+*.log

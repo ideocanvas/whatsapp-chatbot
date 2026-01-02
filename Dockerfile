@@ -13,6 +13,8 @@ RUN npm install -g pnpm
 # Copy package files
 COPY package*.json ./
 COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
+COPY frontend/package.json ./frontend/
 
 # Install all dependencies (including dev dependencies for building)
 RUN pnpm install --frozen-lockfile
@@ -23,8 +25,8 @@ COPY . .
 # Build frontend
 RUN cd frontend && pnpm run build
 
-# Generate Prisma client
-RUN pnpm exec prisma generate
+# Generate Prisma client (with placeholder DATABASE_URL for build)
+RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" pnpm exec prisma generate
 
 # Build the application
 RUN npm run build || { echo 'Build failed'; exit 1; }
@@ -41,7 +43,6 @@ USER root
 # Copy built application from builder stage
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/dist ./dist
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/frontend/dist ./frontend/dist
-COPY --chown=whatsapp-bot:nodejs --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 # Copy other necessary files
 COPY --chown=whatsapp-bot:nodejs .env.example ./
