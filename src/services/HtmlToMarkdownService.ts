@@ -18,10 +18,12 @@ export interface HtmlToMarkdownResult {
 export class HtmlToMarkdownService {
   private desktopService: DesktopToWebService;
   private cacheDir: string;
+  private getPageContentScriptName: string;
 
   constructor(cacheDir: string = './data/html/cache') {
     this.desktopService = createDesktopToWebServiceFromEnv();
     this.cacheDir = cacheDir;
+    this.getPageContentScriptName = process.env.DESKTOP_TO_WEB_GET_PAGE_CONTENT_SCRIPT || 'get_page_content';
     
     // Ensure cache directory exists
     this.ensureCacheDir();
@@ -290,8 +292,8 @@ export class HtmlToMarkdownService {
     }
 
     // Step 2: Execute get_page_content script
-    console.log(`[DEBUG] Executing get_page_content script...`);
-    const executeResult = await desktopService.executeScript('get_page_content', {}, 300);
+    console.log(`[DEBUG] Executing ${this.getPageContentScriptName} script...`);
+    const executeResult = await desktopService.executeScript(this.getPageContentScriptName, {}, 300);
     if (executeResult.status !== 'success') {
       throw new Error(`Failed to execute script: ${executeResult.message}`);
     }
