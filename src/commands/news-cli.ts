@@ -39,9 +39,13 @@ async function main() {
   const failedDryRun = !failedApply; // default dry-run unless explicitly applied
   const failedSkipDb = args.indexOf('--failed-skip-db') !== -1;
   
+  // Check for --reclassify-null flag
+  const reclassifyNullIndex = args.indexOf('--reclassify-null');
+  const reclassifyNull = reclassifyNullIndex !== -1;
+  
   // Filter out flags for argument parsing
   const filteredArgs = args.filter((arg, idx) => {
-    if (arg === '--retry-only' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db') {
+    if (arg === '--retry-only' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db' || arg === '--reclassify-null') {
       return false;
     }
     if (arg === '--failed-action') {
@@ -54,7 +58,7 @@ async function main() {
     return true;
   });
   
-  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb && !handleFailed) {
+  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb && !handleFailed && !reclassifyNull) {
     console.error('Usage: pnpm run news:cli [numResults] [output.json]');
     console.error('  numResults: Number of news articles to fetch (default: 100)');
     console.error('  --retry-only: Only retry failed and stuck processing articles, do not fetch new articles');
@@ -64,8 +68,21 @@ async function main() {
     console.error('     --failed-action [delete|move] (default delete)');
     console.error('     --failed-apply  (required to actually modify files/DB; default is dry-run)');
     console.error('     --failed-skip-db');
+    console.error('  --reclassify-null: Re-process category for completed articles with NULL category');
     process.exit(2);
   }
+
+  const numResults = filteredArgs[0] && !filteredArgs[0].startsWith('--') ? Math.max(1, parseInt(filteredArgs[0], 10)) : 100;
+  const outPath = filteredArgs[1] && !filteredArgs[1].startsWith('--') ? filteredArgs[1] : filteredArgs[0] && !filteredArgs[0].startsWith('--') ? `news_results_${Date.now()}.json` : `news_results_${Date.now()}.json`;
+
+  // Initialize OpenAIService from config (required for fetchLatestNews)
+  const openaiService = await createOpenAIServiceFromConfig();
+
+  // Initialize KnowledgeBase for --sync-to-kb mode
+  const kb = new KnowledgeBasePostgres(openaiService);
+
+  // Initialize GoogleSearchService from env with OpenAI service and KB
+  const svc = createGoogleSearchServiceFromEnv(openaiService, kb);
 
   if (handleFailed) {
     console.log('🛠 Handling failed article downloads...');
@@ -84,17 +101,136 @@ async function main() {
     process.exit(result.success ? 0 : 1);
   }
 
-  const numResults = filteredArgs[0] && !filteredArgs[0].startsWith('--') ? Math.max(1, parseInt(filteredArgs[0], 10)) : 100;
-  const outPath = filteredArgs[1] && !filteredArgs[1].startsWith('--') ? filteredArgs[1] : filteredArgs[0] && !filteredArgs[0].startsWith('--') ? `news_results_${Date.now()}.json` : `news_results_${Date.now()}.json`;
+  if (reclassifyNull) {
+    console.log('🔄 Reclassify-null mode: Re-processing category for completed articles with NULL category...');
+    
+    // Import ArticleClassificationService for reclassification
+    const { createArticleClassificationService } = await import('../services/ArticleClassificationService');
+    const articleClassificationService = createArticleClassificationService(openaiService);
+    
+    // Get all completed articles with NULL category
+    const articlesToReclassify = await prisma.processedArticle.findMany({
+      where: {
+        processingStatus: 'completed',
+        category: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        url: true,
+        source: true,
+        processedContent: true,
+      },
+      orderBy: { publishedAt: 'desc' }
+    });
+    
+    console.log(`📊 Found ${articlesToReclassify.length} completed articles with NULL category`);
+    
+    if (articlesToReclassify.length === 0) {
+      console.log('✅ No articles to reclassify. All completed articles have a category.');
+      process.exit(0);
+    }
+    
+    let succeeded = 0;
+    let failed = 0;
+    
+    for (const article of articlesToReclassify) {
+      try {
+        console.log(`🔄 Reclassifying: ${article.title}`);
+        
+        // Read markdown content
+        const markdownPath = path.join('./data', article.processedContent);
+        const markdownContent = await fs.readFile(markdownPath, 'utf-8');
+        
+        // Re-classify category
+        const category = await articleClassificationService.classifyCategory(
+          article.title,
+          markdownContent
+        );
+        
+        // Update article with new category
+        await prisma.processedArticle.update({
+          where: { id: article.id },
+          data: { category: category || null }
+        });
+        
+        if (category) {
+          succeeded++;
+          console.log(`✅ Reclassified with category: ${category}`);
+        } else {
+          console.log(`⚠️ Could not classify, category remains NULL`);
+          succeeded++; // Count as success even if category is null (we tried)
+        }
+      } catch (error) {
+        failed++;
+        console.error(`❌ Reclassify error: ${article.title}`, error);
+      }
+    }
+    
+    console.log(`\n📊 Reclassification complete: ${succeeded}/${articlesToReclassify.length} processed, ${failed} failed`);
+    
+    // Get updated article data
+    const detailedArticles = await prisma.processedArticle.findMany({
+      select: {
+        id: true,
+        title: true,
+        url: true,
+        source: true,
+        publishedAt: true,
+        originalContent: true,
+        processedContent: true,
+        imagePaths: true,
+        imageDescriptions: true,
+        keywords: true,
+        tags: true,
+        category: true,
+        processingStatus: true,
+        errorMessage: true,
+        retryCount: true,
+        updatedAt: true,
+      },
+      orderBy: { publishedAt: 'desc' }
+    });
+    
+    // Normalize output
+    const out = detailedArticles.map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      url: r.url,
+      source: r.source,
+      feedUrl: null,
+      publishedAt: r.publishedAt,
+      originalContent: r.originalContent,
+      processedContent: r.processedContent,
+      imagePaths: r.imagePaths,
+      imageDescriptions: r.imageDescriptions || {},
+      keywords: r.keywords,
+      tags: r.tags || [],
+      category: r.category || null,
+      processingStatus: r.processingStatus,
+      errorMessage: r.errorMessage || null,
+      retryCount: r.retryCount || 0,
+      updatedAt: r.updatedAt,
+    }));
 
-  // Initialize OpenAIService from config (required for fetchLatestNews)
-  const openaiService = await createOpenAIServiceFromConfig();
+    const abs = path.resolve(process.cwd(), outPath);
+    await fs.writeFile(abs, JSON.stringify(out, null, 2), 'utf-8');
+    console.log(`📝 Wrote ${out.length} articles to ${abs}`);
+    
+    // Show category distribution
+    const categoryCounts = out.reduce((acc: Record<string, number>, a: any) => {
+      const cat = a.category || 'NULL';
+      acc[cat] = (acc[cat] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    console.log(`📊 Category distribution:`);
+    Object.entries(categoryCounts).forEach(([cat, count]) => {
+      console.log(`   - ${cat}: ${count}`);
+    });
+    
+    process.exit(failed > 0 ? 1 : 0);
+  }
 
-  // Initialize KnowledgeBase for --sync-to-kb mode
-  const kb = new KnowledgeBasePostgres(openaiService);
-
-  // Initialize GoogleSearchService from env with OpenAI service and KB
-  const svc = createGoogleSearchServiceFromEnv(openaiService, kb);
 
   try {
     if (syncToKb) {
