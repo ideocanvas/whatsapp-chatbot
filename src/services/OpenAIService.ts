@@ -23,6 +23,41 @@ export class OpenAIService {
   private config: OpenAIConfig;
   private chatbotName: string;
   private prompts: AIConfig['prompts'];
+  private readonly MAX_RETRIES = 3;
+  private readonly RETRY_DELAY_MS = 2000; // 2 seconds base delay
+
+
+  /**
+   * Helper function for retrying async operations with exponential backoff
+   */
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    shouldRetry: (error: any) => boolean = () => true
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const isBadRequest = error instanceof Error && error.constructor.name === 'BadRequestError';
+        const isModelNotFoundError = isBadRequest && error.message.includes('Model does not exist');
+        
+        if (attempt === this.MAX_RETRIES || !shouldRetry(error)) {
+          // Last attempt or error should not be retried
+          console.error(`[DEBUG] ${operationName} failed after ${attempt} attempt(s):`, error);
+          throw error;
+        }
+
+        // Log retry attempt
+        console.log(`[RETRY] ${operationName} failed (attempt ${attempt}/${this.MAX_RETRIES}). Retrying in ${this.RETRY_DELAY_MS * attempt}ms...`);
+        console.log(`  Error: ${error instanceof Error ? error.message : error}`);
+
+        // Exponential backoff: 2s, 4s, 6s...
+        await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY_MS * attempt));
+      }
+    }
+    throw new Error(`${operationName} failed after all retry attempts`);
+  }
 
   constructor(config: AIConfig, chatbotName?: string) {
     this.config = {
@@ -53,7 +88,8 @@ export class OpenAIService {
     tools?: ChatCompletionTool[],
     toolChoice?: 'auto' | 'none' | 'required'
   ): Promise<string> {
-    try {
+    return this.retryWithBackoff(
+      async () => {
       // Use custom prompt from config if available, otherwise use default
       const textPrompt = this.prompts?.textResponse || `You are {chatbotName}, a helpful WhatsApp assistant. Keep responses very short and conversational - like a real WhatsApp message. Maximum 2-3 sentences. NEVER include URLs, links, or clickable references in your responses. Provide all information directly in the message.`;
 
@@ -99,14 +135,21 @@ export class OpenAIService {
         model: this.config.model
       });
 
-      return cleanLLMResponse(rawResponse);
-    } catch (error) {
+        return cleanLLMResponse(rawResponse);
+      },
+      'generateTextResponse',
+      (error) => {
+        // Retry on BadRequestError (400) - includes model not found errors
+        return error instanceof Error && error.constructor.name === 'BadRequestError';
+      }
+    ).catch((error) => {
+      // Final error logging after all retries
       console.error('[DEBUG] Error generating text response:');
       console.error('  Base URL:', this.config.baseURL || 'https://api.openai.com/v1 (default)');
       console.error('  Model attempted:', this.config.model);
       console.error('  Error details:', error);
       throw error;
-    }
+    });
   }
 
   /**
@@ -118,6 +161,16 @@ export class OpenAIService {
     maxToolRounds: number = 15, // Increased from 5 to 15 as requested
     toolRegistry?: ToolRegistry // Optional ToolRegistry for new BaseTool system
   ): Promise<string> {
+    const createCompletion = async (msgs: typeof messages) => {
+      return await this.openai.chat.completions.create({
+        model: this.config.model!,
+        messages: msgs,
+        tools,
+        tool_choice: 'auto', // Let LLM decide when to use tools
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+      });
+    };
     if (!this.config.enableToolCalling || !tools || tools.length === 0) {
       // Fall back to regular response generation without tools
       const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
@@ -135,14 +188,14 @@ export class OpenAIService {
     while (toolCallRound < maxToolRounds) {
       toolCallRound++;
 
-      const response = await this.openai.chat.completions.create({
-        model: this.config.model!,
-        messages: currentMessages,
-        tools,
-        tool_choice: 'auto', // Let LLM decide when to use tools
-        temperature: this.config.temperature,
-        max_tokens: this.config.maxTokens,
-      });
+      const response = await this.retryWithBackoff(
+        () => createCompletion(currentMessages),
+        'generateResponseWithTools',
+        (error) => {
+          // Retry on BadRequestError (400) - includes model not found errors
+          return error instanceof Error && error.constructor.name === 'BadRequestError';
+        }
+      );
 
       const message = response.choices[0]?.message;
       if (!message) {
@@ -275,7 +328,8 @@ export class OpenAIService {
    * Analyze image content using OpenAI's vision capabilities
    */
   async analyzeImage(imagePath: string, prompt?: string): Promise<string> {
-    try {
+    return this.retryWithBackoff(
+      async () => {
       // Read the image file
       const imageBuffer = fs.readFileSync(imagePath);
       const base64Image = imageBuffer.toString('base64');
@@ -321,30 +375,43 @@ Include any text content exactly as it appears. Provide specific details that wo
         max_tokens: this.config.maxTokens,
       });
 
-      const rawResponse = response.choices[0]?.message?.content?.trim() || 'I could not analyze this image. Please try again.';
-      return cleanLLMResponse(rawResponse);
-    } catch (error) {
+        const rawResponse = response.choices[0]?.message?.content?.trim() || 'I could not analyze this image. Please try again.';
+        return cleanLLMResponse(rawResponse);
+      },
+      'analyzeImage',
+      (error) => {
+        // Retry on BadRequestError (400) - includes model not found errors
+        return error instanceof Error && error.constructor.name === 'BadRequestError';
+      }
+    ).catch((error) => {
       console.error('Error analyzing image:', error);
       throw new Error('Failed to analyze image with OpenAI');
-    }
+    });
   }
 
   /**
    * Create embeddings for text content
    */
   async createEmbedding(text: string): Promise<number[]> {
-    try {
-      const response = await this.openai.embeddings.create({
+    return this.retryWithBackoff(
+      async () => {
+        const response = await this.openai.embeddings.create({
         model: this.config.embeddingModel!,
         input: text,
         encoding_format: 'float',
       });
 
-      return response.data[0].embedding;
-    } catch (error) {
+        return response.data[0].embedding;
+      },
+      'createEmbedding',
+      (error) => {
+        // Retry on BadRequestError (400) - includes model not found errors
+        return error instanceof Error && error.constructor.name === 'BadRequestError';
+      }
+    ).catch((error) => {
       console.error('Error creating embedding:', error);
       throw new Error('Failed to create embedding with OpenAI');
-    }
+    });
   }
 
   /**
