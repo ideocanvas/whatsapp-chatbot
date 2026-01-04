@@ -43,6 +43,11 @@ fi
 # Generate Prisma client if not already generated
 echo "Checking Prisma client..."
 if [ ! -d "node_modules/.prisma" ] || [ ! -f "node_modules/.prisma/client/index.js" ]; then
+    if [ -z "$DATABASE_URL" ]; then
+        echo "Error: Prisma client not found and DATABASE_URL is not set"
+        echo "Cannot generate Prisma client without database configuration"
+        exit 1
+    fi
     echo "Prisma client not found, generating..."
     npx prisma generate
     if [ $? -ne 0 ]; then

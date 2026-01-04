@@ -31,6 +31,9 @@ RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" pnpm exec prism
 # Build the application
 RUN npm run build || { echo 'Build failed'; exit 1; }
 
+# Copy Prisma client to a separate location to preserve it
+RUN cp -r node_modules/.prisma /tmp/prisma-client
+
 # Production stage - use pre-built base image with all dependencies
 FROM ideocanvas/whatsapp-chatbot-base:latest AS production
 
@@ -51,6 +54,9 @@ RUN pnpm install --frozen-lockfile --prod && npm cache clean --force
 # Copy built application from builder stage
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/dist ./dist
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/frontend/dist ./frontend/dist
+
+# Copy Prisma client from builder stage
+COPY --chown=whatsapp-bot:nodejs --from=builder /tmp/prisma-client ./node_modules/.prisma
 
 # Copy other necessary files
 COPY --chown=whatsapp-bot:nodejs .env.example ./
