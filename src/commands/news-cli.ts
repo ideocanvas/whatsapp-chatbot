@@ -4,6 +4,7 @@ dotenv.config();
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import pgvector from 'pgvector';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from '../services/GoogleSearchService';
 import { createOpenAIServiceFromConfig } from '../services/OpenAIService';
 import { ProcessedArticleService } from '../services/ProcessedArticleService';
@@ -42,10 +43,14 @@ async function main() {
   // Check for --reclassify-null flag
   const reclassifyNullIndex = args.indexOf('--reclassify-null');
   const reclassifyNull = reclassifyNullIndex !== -1;
+
+  // Check for --rebuild-embeddings flag
+  const rebuildEmbeddingsIndex = args.indexOf('--rebuild-embeddings');
+  const rebuildEmbeddings = rebuildEmbeddingsIndex !== -1;
   
   // Filter out flags for argument parsing
   const filteredArgs = args.filter((arg, idx) => {
-    if (arg === '--retry-only' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db' || arg === '--reclassify-null') {
+    if (arg === '--retry-only' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db' || arg === '--reclassify-null' || arg === '--rebuild-embeddings') {
       return false;
     }
     if (arg === '--failed-action') {
@@ -58,7 +63,7 @@ async function main() {
     return true;
   });
   
-  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb && !handleFailed && !reclassifyNull) {
+  if (filteredArgs.length === 0 && !retryOnly && !forceReprocess && !syncToKb && !handleFailed && !reclassifyNull && !rebuildEmbeddings) {
     console.error('Usage: pnpm run news:cli [numResults] [output.json]');
     console.error('  numResults: Number of news articles to fetch (default: 100)');
     console.error('  --retry-only: Only retry failed and stuck processing articles, do not fetch new articles');
@@ -69,6 +74,7 @@ async function main() {
     console.error('     --failed-apply  (required to actually modify files/DB; default is dry-run)');
     console.error('     --failed-skip-db');
     console.error('  --reclassify-null: Re-process category for completed articles with NULL category');
+    console.error('  --rebuild-embeddings: Rebuild all embeddings in Knowledge table using current embedding model');
     process.exit(2);
   }
 
@@ -231,6 +237,58 @@ async function main() {
     process.exit(failed > 0 ? 1 : 0);
   }
 
+  if (rebuildEmbeddings) {
+    console.log('🔄 Rebuild-embeddings mode: Rebuilding all embeddings in Knowledge table...');
+    
+    // Get all knowledge entries
+    const allKnowledge = await prisma.knowledge.findMany({
+      select: {
+        id: true,
+        content: true,
+        source: true,
+        category: true,
+        tags: true,
+        timestamp: true,
+      },
+      orderBy: { timestamp: 'desc' }
+    });
+    
+    console.log(`📊 Found ${allKnowledge.length} knowledge entries to rebuild`);
+    
+    if (allKnowledge.length === 0) {
+      console.log('✅ No knowledge entries to rebuild.');
+      process.exit(0);
+    }
+    
+    let succeeded = 0;
+    let failed = 0;
+    
+    for (const knowledge of allKnowledge) {
+      try {
+        console.log(`🔄 Rebuilding embedding: ${knowledge.source?.substring(0, 50)}...`);
+        
+        // Create new embedding using current model
+        const newEmbedding = await openaiService.createEmbedding(knowledge.content);
+        const embeddingSql = pgvector.toSql(newEmbedding);
+        
+        // Update knowledge with new embedding (using pgvector format)
+        await prisma.$executeRaw`
+          UPDATE "Knowledge"
+          SET "embedding" = ${embeddingSql}::vector
+          WHERE id = ${knowledge.id}
+        `;
+        
+        succeeded++;
+        console.log(`✅ Rebuilt embedding [${succeeded}/${allKnowledge.length}]: ${knowledge.source?.substring(0, 50)}...`);
+      } catch (error) {
+        failed++;
+        console.error(`❌ Rebuild error: ${knowledge.source?.substring(0, 50)}...`, error);
+      }
+    }
+    
+    console.log(`\n📊 Rebuild complete: ${succeeded}/${allKnowledge.length} succeeded, ${failed} failed`);
+    process.exit(failed > 0 ? 1 : 0);
+  }
 
   try {
     if (syncToKb) {

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "test:knowledge-search": "ts-node src/test-knowledge-search.ts",
     "news:cli": "ts-node src/commands/news-cli.ts",
     "news:cli:prod": "node dist/commands/news-cli.js",
     "web:scrape": "ts-node src/commands/web-scrape-cli.ts",
@@ -52,6 +53,7 @@
     "jsdom": "^27.3.0",
     "openai": "^4.20.1",
     "pg": "^8.11.3",
+    "pgvector": "^0.2.1",
     "playwright": "^1.55.0",
     "uuid": "^13.0.0"
   },

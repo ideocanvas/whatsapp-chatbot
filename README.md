@@ -381,6 +381,11 @@ npx prisma generate          # Generate database client
 npx prisma db push          # Push schema to database
 npx prisma studio           # Open database GUI
 
+# Migrate to pgvector (for vector similarity search)
+# See: prisma/PGVECTOR_MIGRATION.md
+npx prisma migrate resolve --applied "20260104145343_add_pgvector_embedding"
+npm run prisma:migrate
+
 ## 🗃️ Database Tables
 
 The system uses PostgreSQL with Prisma ORM to manage persistent storage. Here's a breakdown of each table's purpose:
@@ -394,8 +399,9 @@ The system uses PostgreSQL with Prisma ORM to manage persistent storage. Here's 
 
 **Knowledge** - Stores facts learned from autonomous browsing using vector embeddings
 - **Purpose**: Three-tier memory system (long-term/cold storage)
-- **Key Fields**: content, vector (BYTEA embeddings), source, category, tags, relevanceScore
+- **Key Fields**: content, vector (BYTEA - deprecated), embedding (pgvector), source, category, tags, relevanceScore
 - **Service**: [`KnowledgeBasePostgres`](src/memory/KnowledgeBasePostgres.ts)
+- **Migration**: See [pgvector migration guide](prisma/PGVECTOR_MIGRATION.md) for migrating from BYTEA to pgvector
 
 **ConversationSummary** - Stores AI-generated summaries of conversations for efficient recall
 - **Purpose**: Compressed conversation memory with deduplication
@@ -508,6 +514,7 @@ DEV_MODE=false
 - **[WEB_INTERFACE.md](WEB_INTERFACE.md)** - Web dashboard features and API documentation
 - **[POSTGRES_MIGRATION.md](POSTGRES_MIGRATION.md)** - Database setup and migration guide
 - **[DEV_MODE_GUIDE.md](DEV_MODE_GUIDE.md)** - Development mode usage and testing
+- **[pgvector Migration Guide](prisma/PGVECTOR_MIGRATION.md)** - Migrate vector storage from BYTEA to pgvector for efficient database-side similarity search
 
 ## 🎯 Future Enhancements
 

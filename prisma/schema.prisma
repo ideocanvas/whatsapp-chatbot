@@ -1,6 +1,3 @@
-// Prisma schema for WhatsApp Chatbot
-// This schema supports both PostgreSQL and SQLite for migration
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,60 +6,183 @@ datasource db {
   provider = "postgresql"
 }
 
-// Conversation logs for long-term conversation history
 model ConversationLog {
-  id          String   @id @default(uuid())
+  id          String      @id @default(uuid())
   userId      String
   message     String
   role        Role
   timestamp   DateTime
   messageType MessageType
   metadata    Json?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime    @default(now())
 
   @@index([userId])
   @@index([timestamp])
   @@index([role])
 }
 
-// Knowledge base for storing facts learned from autonomous browsing
 model Knowledge {
-  id             String   @id @default(uuid())
+  id             String                 @id @default(uuid())
   content        String
-  vector         Bytes    // BLOB storage for embeddings
+  vector         Bytes
   source         String?
   category       String?
-  tags           Json?    // JSON array of tags
+  tags           Json?
   timestamp      DateTime
-  relevanceScore Float?   @default(0.0)
+  relevanceScore Float?                 @default(0.0)
+  embedding      Unsupported("vector(768)")?  // pgvector for efficient similarity search (768 dimensions)
 
   @@index([category])
   @@index([timestamp])
   @@index([relevanceScore])
 }
 
-// Processed messages to prevent duplicate processing
 model ProcessedMessage {
-  messageId     String   @id
-  processedAt   DateTime @default(now())
+  messageId    String   @id
+  processedAt  DateTime @default(now())
   senderNumber String?
-  messageType   String?
+  messageType  String?
 
   @@index([processedAt])
 }
 
-// Vector store documents for RAG searches
-model Document {
-  id       String   @id @default(uuid())
-  content  String
-  vector   Bytes    // BLOB storage for embeddings
-  source   String?
-  date     String?
-  category String?
-  title    String?
-  createdAt DateTime @default(now())
+model ConversationSummary {
+  id          String   @id @default(uuid())
+  userId      String
+  summary     String
+  timestamp   DateTime
+  contextHash String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, contextHash])
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model UserProfile {
+  userId       String    @id
+  name         String?
+  location     String?
+  language     String?   @default("en")
+  facts        Json      @default("{}")
+  completeness Int       @default(0)
+  lastAsked    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model BlogPost {
+  id            String         @id @default(uuid())
+  title         String
+  content       String
+  excerpt       String?
+  sourceUrl     String?
+  sourceTitle   String?
+  featuredImage String?
+  imageAlt      String?
+  imageCaption  String?
+  tags          String[]
+  category      String?
+  author        String?        @default("AI Assistant")
+  status        BlogPostStatus @default(draft)
+  publishedAt   DateTime?
+  dailyDigestId String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  dailyDigest   DailyDigest?   @relation(fields: [dailyDigestId], references: [id])
 
   @@index([category])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([createdAt])
+  @@index([dailyDigestId])
+}
+
+model DailyDigest {
+  id             String        @id @default(uuid())
+  date           DateTime      @unique
+  title          String
+  content        String
+  weeklyDigestId String?
+  createdAt      DateTime      @default(now())
+  blogPosts      BlogPost[]
+  weeklyDigest   WeeklyDigest? @relation(fields: [weeklyDigestId], references: [id])
+
+  @@index([date])
+  @@index([weeklyDigestId])
+}
+
+model WeeklyDigest {
+  id           String        @id @default(uuid())
+  startDate    DateTime
+  endDate      DateTime
+  title        String
+  content      String
+  createdAt    DateTime      @default(now())
+  dailyDigests DailyDigest[]
+
+  @@index([startDate])
+  @@index([endDate])
+}
+
+model NewsSource {
+  id          String         @id @default(uuid())
+  url         String         @unique
+  name        String?
+  region      String?
+  language    String?
+  priority    Int            @default(0)
+  isActive    Boolean        @default(true)
+  sourceType  NewsSourceType @default(google_news)
+  lastScraped DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([region])
+  @@index([language])
+  @@index([priority])
+  @@index([isActive])
+}
+
+model NewsKeyword {
+  id        String    @id @default(uuid())
+  keyword   String
+  relevance Float     @default(0.0)
+  category  String?
+  lastUsed  DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([keyword])
+  @@index([relevance])
+  @@index([category])
+}
+
+model ProcessedArticle {
+  id                String                 @id @default(uuid())
+  title             String
+  url               String                 @unique
+  source            String
+  publishedAt       String
+  originalContent   String
+  processedContent  String
+  imagePaths        String[]
+  imageDescriptions Json?
+  keywords          String[]
+  category          String?
+  processingStatus  ProcessedArticleStatus @default(pending)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  errorMessage      String?
+  feedUrl           String?
+  retryCount        Int                    @default(0)
+  tags              String[]
+
+  @@index([url])
+  @@index([source])
+  @@index([feedUrl])
+  @@index([publishedAt])
+  @@index([category])
+  @@index([processingStatus])
   @@index([createdAt])
 }
 
@@ -77,138 +197,12 @@ enum MessageType {
   audio
 }
 
-// Conversation summaries for long-term memory
-model ConversationSummary {
-  id          String   @id @default(uuid())
-  userId      String
-  summary     String
-  timestamp   DateTime
-  contextHash String   // Hash of the conversation context for deduplication
-  createdAt   DateTime @default(now())
-
-  @@index([userId])
-  @@index([timestamp])
-  @@unique([userId, contextHash])
-}
-
-// User profiles for structured personal information storage
-model UserProfile {
-  userId        String   @id
-  name          String?
-  location      String?
-  language      String?  @default("en")
-
-  // Structured facts (JSONB in Postgres)
-  // Example: { "job": "Engineer", "hobby": "Hiking", "pet": "Dog named Rex" }
-  facts         Json     @default("{}")
-
-  // Metadata for proactivity
-  completeness  Int      @default(0) // 0-100 score of how much we know
-  lastAsked     DateTime? // When did we last ask a personal question?
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-}
-
-// Blog posts generated from news content
-model BlogPost {
-  id          String   @id @default(uuid())
-  title       String
-  content     String   // Markdown formatted content
-  excerpt     String?
-  sourceUrl   String?  // Original article URL
-  sourceTitle String?  // Original article title
-  featuredImage String?
-  imageAlt    String?
-  imageCaption String?
-  tags        String[] // Array of tags
-  category    String?
-  author      String?  @default("AI Assistant")
-  status      BlogPostStatus @default(draft)
-  publishedAt DateTime?
-  dailyDigestId String? // Reference to daily digest
-  dailyDigest DailyDigest? @relation(fields: [dailyDigestId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([category])
-  @@index([status])
-  @@index([publishedAt])
-  @@index([createdAt])
-  @@index([dailyDigestId])
-}
-
-// Daily digests containing multiple blog posts
-model DailyDigest {
-  id          String   @id @default(uuid())
-  date        DateTime @unique // Date of the digest (YYYY-MM-DD)
-  title       String
-  content     String   // Markdown formatted digest
-  blogPosts   BlogPost[] // Posts included in this digest
-  weeklyDigestId String? // Reference to weekly digest
-  weeklyDigest WeeklyDigest? @relation(fields: [weeklyDigestId], references: [id])
-  createdAt   DateTime @default(now())
-
-  @@index([date])
-  @@index([weeklyDigestId])
-}
-
-// Weekly digests containing daily digests
-model WeeklyDigest {
-  id          String   @id @default(uuid())
-  startDate   DateTime // Start of the week (Sunday)
-  endDate     DateTime // End of the week (Saturday)
-  title       String
-  content     String   // Markdown formatted digest
-  dailyDigests DailyDigest[] // Daily digests included
-  createdAt   DateTime @default(now())
-
-  @@index([startDate])
-  @@index([endDate])
-}
-
-// News sources configuration
-model NewsSource {
-  id          String   @id @default(uuid())
-  url         String   @unique // Google News URL or direct news site
-  name        String?  // Human-readable name
-  region      String?  // Region code (e.g., HK, US)
-  language    String?  // Language code (e.g., en, zh-Hant)
-  priority    Int      @default(0) // Priority for processing (0-10)
-  isActive    Boolean  @default(true)
-  sourceType  NewsSourceType @default(google_news)
-  lastScraped DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([region])
-  @@index([language])
-  @@index([priority])
-  @@index([isActive])
-}
-
-// Keyword tracking for news focus
-model NewsKeyword {
-  id          String   @id @default(uuid())
-  keyword     String
-  relevance   Float    @default(0.0) // 0.0-1.0 relevance score
-  category    String?
-  lastUsed    DateTime?
-  createdAt   DateTime @default(now())
-
-  @@index([keyword])
-  @@index([relevance])
-  @@index([category])
-}
-
-// Blog post status enum
 enum BlogPostStatus {
   draft
   published
   archived
 }
 
-// News source type enum
 enum NewsSourceType {
   google_news
   direct_site
@@ -216,37 +210,6 @@ enum NewsSourceType {
   discovered
 }
 
-// Processed articles with LLM-converted markdown content and image analysis
-model ProcessedArticle {
-  id                String   @id @default(uuid())
-  title             String
-  url               String   @unique
-  source            String   // Original link from RSS
-  feedUrl           String?  // Normalized RSS feed URL (without locale params)
-  publishedAt       String
-  originalContent   String   // Path to HTML file: /html/cache/YYYY-MM-DD/hash/article.html
-  processedContent  String   // Path to Markdown file: /html/cache/YYYY-MM-DD/hash/article.md
-  imagePaths        String[] // Array of relative image paths: [images/img_xxx.jpg, ...]
-  imageDescriptions Json?    // { "img_xxx.jpg": "description", ... }
-  keywords          String[] // Extracted keywords
-  tags              String[] // Hashtag-style tags: ["#technology", "#ai"]
-  category          String?  // Classified category
-  processingStatus  ProcessedArticleStatus @default(pending)
-  errorMessage      String?  // Error details if failed
-  retryCount        Int      @default(0) // Number of retry attempts
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@index([url])
-  @@index([source])
-  @@index([feedUrl])
-  @@index([publishedAt])
-  @@index([category])
-  @@index([processingStatus])
-  @@index([createdAt])
-}
-
-// Processed article status enum
 enum ProcessedArticleStatus {
   pending
   processing

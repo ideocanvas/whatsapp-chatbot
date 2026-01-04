@@ -1,15 +1,17 @@
 import { prisma } from '../config/prisma';
 import { OpenAIService } from '../services/OpenAIService';
 import { v4 as uuidv4 } from 'uuid';
+import pgvector from 'pgvector';
 
 /**
  * PostgreSQL-based Knowledge Base for storing facts learned from autonomous browsing.
- * Uses PostgreSQL with BYTEA storage for efficient RAG searches.
+ * Uses PostgreSQL with pgvector for efficient RAG searches.
  */
 export interface KnowledgeDocument {
   id: string;
   content: string;
-  vector: Buffer; // BYTEA storage for embeddings
+  embedding?: number[] | null; // pgvector storage for embeddings
+  vector?: Buffer; // Legacy BYTEA storage (deprecated)
   source: string;
   category: string;
   tags: string[];
@@ -81,19 +83,24 @@ export class KnowledgeBasePostgres {
 
     try {
       const embedding = await this.openaiService.createEmbedding(document.content);
+      const embeddingSql = pgvector.toSql(embedding);
       const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
+      const id = uuidv4();
 
-      await prisma.knowledge.create({
-        data: {
-          id: uuidv4(),
-          content: document.content.substring(0, 4000),
-          vector: vectorBuffer,
-          source: document.source,
-          category: document.category || 'general',
-          tags: finalTags,
-          timestamp: document.timestamp,
-        },
-      });
+      // Use raw SQL to insert with pgvector embedding
+      await prisma.$executeRaw`
+        INSERT INTO "Knowledge" (id, content, vector, embedding, source, category, tags, timestamp)
+        VALUES (
+          ${id}::uuid,
+          ${document.content.substring(0, 4000)}::text,
+          ${vectorBuffer}::bytea,
+          ${embeddingSql}::vector,
+          ${document.source}::text,
+          ${document.category || 'general'}::text,
+          ${JSON.stringify(finalTags)}::jsonb,
+          ${document.timestamp}::timestamp
+        )
+      `;
 
       console.log(`💾 Learned: [${document.category}] ${document.source.substring(0, 40)}...`);
     } catch (error) {
@@ -102,12 +109,12 @@ export class KnowledgeBasePostgres {
   }
 
   /**
-   * Search for relevant knowledge using RAG with recency prioritization
+   * Search for relevant knowledge using RAG with pgvector similarity search
    */
   async search(query: string, limit: number = 3, category?: string): Promise<string> {
     try {
       const queryEmbedding = await this.openaiService.createEmbedding(query);
-      const queryVec = new Float64Array(queryEmbedding);
+      const embeddingSql = pgvector.toSql(queryEmbedding);
 
       // Prioritize recent content: only search documents from last 7 days by default
       const sevenDaysAgo = new Date();
@@ -122,70 +129,85 @@ export class KnowledgeBasePostgres {
       if (category) {
         where.category = category;
       }
-      
-      // Order by timestamp descending to prioritize recent content
-      const rows = await prisma.knowledge.findMany({
-        where,
-        orderBy: {
-          timestamp: 'desc',
-        },
-      });
 
-      // If no recent results, expand search to all time but with stronger recency penalty
-      let expandedSearch = false;
-      if (rows.length === 0) {
-        expandedSearch = true;
-        const fallbackWhere: any = {};
+      // Use pgvector's <=> operator for cosine distance search on the new embedding column
+      // Cosine distance = 1 - cosine similarity, so we order by distance ASC
+      let results: any[];
+      
+      try {
+        const rawQuery = `
+          SELECT
+            id,
+            content,
+            source,
+            category,
+            tags,
+            timestamp,
+            1 - (embedding <=> $1::vector) as similarity
+          FROM "Knowledge"
+          WHERE embedding IS NOT NULL
+          AND ${category ? '"category" = $2 AND ' : ''}"timestamp" > $${category ? 3 : 2}::timestamp
+          ORDER BY embedding <=> $1::vector ASC
+          LIMIT $${category ? 4 : 3}::int
+        `;
+
+        const params: (string | number)[] = [embeddingSql];
         if (category) {
-          fallbackWhere.category = category;
+          params.push(category, sevenDaysAgo.toISOString(), limit);
+        } else {
+          params.push(sevenDaysAgo.toISOString(), limit);
         }
-        rows.push(...await prisma.knowledge.findMany({
-          where: fallbackWhere,
-        }));
+
+        results = await prisma.$queryRawUnsafe(rawQuery, ...params);
+      } catch (dbError) {
+        // Fallback to expanded search if no recent results
+        const rawQuery = `
+          SELECT
+            id,
+            content,
+            source,
+            category,
+            tags,
+            timestamp,
+            1 - (embedding <=> $1::vector) as similarity
+          FROM "Knowledge"
+          WHERE embedding IS NOT NULL
+          AND ${category ? '"category" = $2' : '1=1'}
+          ORDER BY embedding <=> $1::vector ASC
+          LIMIT $2::int
+        `;
+
+        const params: (string | number)[] = category ? [embeddingSql, category, limit] : [embeddingSql, limit];
+        results = await prisma.$queryRawUnsafe(rawQuery, ...params);
       }
 
-      // Calculate relevance scores with enhanced recency weighting
-      const results = rows.map(row => {
-        // Convert BYTEA back to Float64Array
-        const docVec = new Float64Array(
-          row.vector.buffer,
-          row.vector.byteOffset,
-          row.vector.byteLength / 8
-        );
+      // Filter by similarity threshold and apply recency weighting
+      const filteredResults = results
+        .filter((result: any) => result.similarity >= 0.6)
+        .map((result: any) => {
+          const recencyScore = this.calculateRecencyScore(result.timestamp);
+          const hoursAgo = (Date.now() - new Date(result.timestamp).getTime()) / (1000 * 60 * 60);
+          const freshnessBoost = hoursAgo < 24 ? 1.5 : 1.0;
+          
+          const relevance = result.similarity * recencyScore * freshnessBoost;
+          
+          return {
+            ...result,
+            tags: result.tags as string[] || [],
+            recencyScore,
+            relevance,
+            hoursAgo
+          };
+        })
+        .sort((a: any, b: any) => b.relevance - a.relevance)
+        .slice(0, limit);
 
-        const similarity = this.cosineSimilarity(queryVec, docVec);
-        const recencyScore = this.calculateRecencyScore(row.timestamp.toISOString());
-        
-        // Enhanced relevance calculation: give more weight to recency
-        // Recent content (last 24 hours) gets significant boost
-        const hoursAgo = (Date.now() - row.timestamp.getTime()) / (1000 * 60 * 60);
-        const freshnessBoost = hoursAgo < 24 ? 1.5 : 1.0; // 50% boost for content < 24h old
-        
-        // If we expanded search, penalize older content more heavily
-        const agePenalty = expandedSearch ? Math.max(0.1, recencyScore) : 1.0;
-        
-        const relevance = similarity * recencyScore * freshnessBoost * agePenalty;
-        
-        return {
-          ...row,
-          tags: row.tags as string[] || [],
-          similarity,
-          recencyScore,
-          relevance,
-          hoursAgo,
-          expandedSearch
-        };
-      })
-      .filter(result => result.similarity >= 0.6) // Slightly lower threshold for expanded search
-      .sort((a, b) => b.relevance - a.relevance)
-      .slice(0, limit);
-
-      if (results.length === 0) {
+      if (filteredResults.length === 0) {
         return "No relevant knowledge found in my memory.";
       }
 
       // Format results with freshness indicators
-      return results.map(result => {
+      return filteredResults.map(result => {
         const date = new Date(result.timestamp);
         const freshness = result.hoursAgo < 24 ? '🆕 ' : (result.hoursAgo < 168 ? '📅 ' : '📜 ');
         const sourceInfo = `[${freshness}Source: ${result.source} | Category: ${result.category} | ${date.toLocaleDateString()}]`;
@@ -200,7 +222,8 @@ export class KnowledgeBasePostgres {
   }
 
   /**
-   * Calculate cosine similarity between two vectors
+   * Calculate cosine similarity between two vectors (deprecated - now using pgvector)
+   * This method is kept for reference but no longer used
    */
   private cosineSimilarity(vecA: Float64Array, vecB: Float64Array): number {
     let dot = 0;
@@ -254,7 +277,7 @@ export class KnowledgeBasePostgres {
 
       return {
         totalDocuments: total,
-        categories: categories.map(c => c.category || 'unknown'),
+        categories: categories.map((c: { category?: string | null }) => c.category || 'unknown'),
         oldestDocument: oldest?.timestamp.toISOString() || 'No documents'
       };
     } catch (error) {
@@ -311,10 +334,11 @@ export class KnowledgeBasePostgres {
         take: limit,
       });
       
-      return rows.map(row => ({
+      return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: Buffer.from(row.vector),
+        vector: row.vector as Buffer,
+        embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
@@ -338,10 +362,11 @@ export class KnowledgeBasePostgres {
         take: limit,
       });
       
-      return rows.map(row => ({
+      return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: Buffer.from(row.vector),
+        vector: row.vector as Buffer,
+        embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
@@ -368,10 +393,11 @@ export class KnowledgeBasePostgres {
         take: limit,
       });
       
-      return rows.map(row => ({
+      return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: Buffer.from(row.vector),
+        vector: row.vector as Buffer,
+        embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],
@@ -401,10 +427,11 @@ export class KnowledgeBasePostgres {
         take: limit,
       });
       
-      return rows.map(row => ({
+      return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: Buffer.from(row.vector),
+        vector: row.vector as Buffer,
+        embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
         tags: row.tags as string[] || [],

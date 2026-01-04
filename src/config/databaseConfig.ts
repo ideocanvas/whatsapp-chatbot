@@ -44,13 +44,11 @@ export class DatabaseConfig {
     conversationLogs: number;
     knowledgeDocuments: number;
     processedMessages: number;
-    vectorDocuments: number;
   }> {
-    const [conversationLogs, knowledgeDocuments, processedMessages, vectorDocuments] = await Promise.all([
+    const [conversationLogs, knowledgeDocuments, processedMessages] = await Promise.all([
       prisma.conversationLog.count(),
       prisma.knowledge.count(),
       prisma.processedMessage.count(),
-      prisma.document.count(),
     ]);
 
     return {
@@ -58,7 +56,6 @@ export class DatabaseConfig {
       conversationLogs,
       knowledgeDocuments,
       processedMessages,
-      vectorDocuments,
     };
   }
 
@@ -95,7 +92,6 @@ export class DatabaseConfig {
     oldConversations: number;
     oldKnowledge: number;
     oldProcessedMessages: number;
-    oldVectorDocuments: number;
   }> {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -128,7 +124,6 @@ export class DatabaseConfig {
       oldConversations: oldConversations.count,
       oldKnowledge: oldKnowledge.count,
       oldProcessedMessages: oldProcessedMessages.count,
-      oldVectorDocuments: 0, // Vector documents cleanup not implemented yet
     };
   }
 }
