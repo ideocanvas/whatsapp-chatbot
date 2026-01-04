@@ -11,7 +11,6 @@ export interface KnowledgeDocument {
   id: string;
   content: string;
   embedding?: number[] | null; // pgvector storage for embeddings
-  vector?: Buffer; // Legacy BYTEA storage (deprecated)
   source: string;
   category: string;
   tags: string[];
@@ -84,16 +83,14 @@ export class KnowledgeBasePostgres {
     try {
       const embedding = await this.openaiService.createEmbedding(document.content);
       const embeddingSql = pgvector.toSql(embedding);
-      const vectorBuffer = Buffer.from(new Float64Array(embedding).buffer);
       const id = uuidv4();
 
       // Use raw SQL to insert with pgvector embedding
       await prisma.$executeRaw`
-        INSERT INTO "Knowledge" (id, content, vector, embedding, source, category, tags, timestamp)
+        INSERT INTO "Knowledge" (id, content, embedding, source, category, tags, timestamp)
         VALUES (
           ${id}::uuid,
           ${document.content.substring(0, 4000)}::text,
-          ${vectorBuffer}::bytea,
           ${embeddingSql}::vector,
           ${document.source}::text,
           ${document.category || 'general'}::text,
@@ -222,24 +219,6 @@ export class KnowledgeBasePostgres {
   }
 
   /**
-   * Calculate cosine similarity between two vectors (deprecated - now using pgvector)
-   * This method is kept for reference but no longer used
-   */
-  private cosineSimilarity(vecA: Float64Array, vecB: Float64Array): number {
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-    
-    for (let i = 0; i < vecA.length; i++) {
-      dot += vecA[i] * vecB[i];
-      normA += vecA[i] * vecA[i];
-      normB += vecB[i] * vecB[i];
-    }
-    
-    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-  }
-
-  /**
    * Calculate recency score with stronger emphasis on recent content
    */
   private calculateRecencyScore(timestamp: string): number {
@@ -337,7 +316,6 @@ export class KnowledgeBasePostgres {
       return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: row.vector as Buffer,
         embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
@@ -365,7 +343,6 @@ export class KnowledgeBasePostgres {
       return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: row.vector as Buffer,
         embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
@@ -396,7 +373,6 @@ export class KnowledgeBasePostgres {
       return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: row.vector as Buffer,
         embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',
@@ -430,7 +406,6 @@ export class KnowledgeBasePostgres {
       return rows.map((row: any) => ({
         id: row.id,
         content: row.content,
-        vector: row.vector as Buffer,
         embedding: row.embedding as number[] | null | undefined,
         source: row.source || '',
         category: row.category || '',

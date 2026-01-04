@@ -24,7 +24,6 @@ model ConversationLog {
 model Knowledge {
   id             String                 @id @default(uuid())
   content        String
-  vector         Bytes
   source         String?
   category       String?
   tags           Json?

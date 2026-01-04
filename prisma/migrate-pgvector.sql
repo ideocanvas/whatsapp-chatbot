@@ -53,10 +53,18 @@ WHERE "embedding" IS NULL AND "vector" IS NOT NULL;
 -- Create index for faster vector search
 CREATE INDEX IF NOT EXISTS "Knowledge_embedding_idx" ON "Knowledge" USING hnsw ("embedding" vector_cosine_ops);
 
+-- Drop the legacy vector column after migration is complete
+-- Uncomment the following lines after verifying the migration is successful
+-- ALTER TABLE "Knowledge" DROP COLUMN IF EXISTS "vector";
+
+-- Drop helper functions (optional, only after verifying migration is complete)
+-- DROP FUNCTION IF EXISTS bytea_to_vector_array(bytea);
+-- DROP FUNCTION IF EXISTS get_float8(bytea, int);
+
 -- ============================================================================
 -- Verification Query
 -- ============================================================================
--- SELECT 
+-- SELECT
 --     COUNT(*) as total,
 --     COUNT("embedding") as with_embedding
 -- FROM "Knowledge";
