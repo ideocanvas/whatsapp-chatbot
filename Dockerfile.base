@@ -51,8 +51,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY pnpm-lock.yaml ./
 
-# Install production dependencies and Playwright browsers
-RUN pnpm install --frozen-lockfile --prod && npm cache clean --force
+# Install all dependencies (including dev for Prisma CLI) and Playwright browsers
+RUN pnpm install --frozen-lockfile && npm cache clean --force
 RUN npx playwright install chromium --with-deps
 
 # Set environment variables for Playwright

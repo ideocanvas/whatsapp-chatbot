@@ -25,14 +25,11 @@ COPY . .
 # Build frontend
 RUN cd frontend && pnpm run build
 
-# Generate Prisma client (with placeholder DATABASE_URL for build)
+# Generate Prisma client (required for TypeScript compilation)
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" pnpm exec prisma generate
 
 # Build the application
 RUN npm run build || { echo 'Build failed'; exit 1; }
-
-# Copy Prisma client to a separate location to preserve it
-RUN cp -r node_modules/.prisma /tmp/prisma-client
 
 # Production stage - use pre-built base image with all dependencies
 FROM ideocanvas/whatsapp-chatbot-base:latest AS production
@@ -48,15 +45,12 @@ COPY --chown=whatsapp-bot:nodejs --from=builder /app/package*.json ./
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/pnpm-lock.yaml ./
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/pnpm-workspace.yaml ./
 
-# Reinstall production dependencies to ensure they match updated packages
-RUN pnpm install --frozen-lockfile --prod && npm cache clean --force
+# Reinstall all dependencies (including dev for Prisma CLI) to ensure they match updated packages
+RUN pnpm install --frozen-lockfile && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/dist ./dist
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/frontend/dist ./frontend/dist
-
-# Copy Prisma client from builder stage
-COPY --chown=whatsapp-bot:nodejs --from=builder /tmp/prisma-client ./node_modules/.prisma
 
 # Copy other necessary files
 COPY --chown=whatsapp-bot:nodejs .env.example ./
@@ -64,6 +58,9 @@ COPY --chown=whatsapp-bot:nodejs config/ ./config/
 COPY --chown=whatsapp-bot:nodejs prisma/ ./prisma/
 COPY --chown=whatsapp-bot:nodejs frontend/package.json ./frontend/
 COPY --chown=whatsapp-bot:nodejs entrypoint.sh ./
+
+# Generate Prisma client in production stage (needed for runtime use)
+RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" pnpm exec prisma generate
 
 # Create data directory if it doesn't exist
 RUN mkdir -p data/conversations && chown -R whatsapp-bot:nodejs data/
