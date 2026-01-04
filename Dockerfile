@@ -40,6 +40,14 @@ WORKDIR /app
 # Switch to root to copy files, then switch back
 USER root
 
+# Copy package files from builder to ensure dependencies are up-to-date
+COPY --chown=whatsapp-bot:nodejs --from=builder /app/package*.json ./
+COPY --chown=whatsapp-bot:nodejs --from=builder /app/pnpm-lock.yaml ./
+COPY --chown=whatsapp-bot:nodejs --from=builder /app/pnpm-workspace.yaml ./
+
+# Reinstall production dependencies to ensure they match updated packages
+RUN pnpm install --frozen-lockfile --prod && npm cache clean --force
+
 # Copy built application from builder stage
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/dist ./dist
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/frontend/dist ./frontend/dist
