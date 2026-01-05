@@ -40,14 +40,14 @@ if [ ! -f "prisma/schema.prisma" ]; then
     exit 1
 fi
 
-# Verify Prisma client exists (should be pre-generated in Docker build)
+# Generate Prisma client (works now that node_modules has correct ownership)
 echo "Checking Prisma client..."
-if [ ! -d "node_modules/.prisma" ] || [ ! -f "node_modules/.prisma/client/index.js" ]; then
-    echo "Error: Prisma client not found"
-    echo "This should have been generated during the Docker build"
+npx prisma generate
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to generate Prisma client"
     exit 1
 fi
-echo "✅ Prisma client verified"
+echo "✅ Prisma client ready"
 
 # Install Playwright browsers if not already installed
 echo "Checking Playwright browser installation..."
