@@ -40,24 +40,14 @@ if [ ! -f "prisma/schema.prisma" ]; then
     exit 1
 fi
 
-# Generate Prisma client if not already generated
+# Verify Prisma client exists (should be pre-generated in Docker build)
 echo "Checking Prisma client..."
 if [ ! -d "node_modules/.prisma" ] || [ ! -f "node_modules/.prisma/client/index.js" ]; then
-    if [ -z "$DATABASE_URL" ]; then
-        echo "Error: Prisma client not found and DATABASE_URL is not set"
-        echo "Cannot generate Prisma client without database configuration"
-        exit 1
-    fi
-    echo "Prisma client not found, generating..."
-    npx prisma generate
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to generate Prisma client"
-        exit 1
-    fi
-    echo "✅ Prisma client generated successfully"
-else
-    echo "Prisma client already generated"
+    echo "Error: Prisma client not found"
+    echo "This should have been generated during the Docker build"
+    exit 1
 fi
+echo "✅ Prisma client verified"
 
 # Install Playwright browsers if not already installed
 echo "Checking Playwright browser installation..."

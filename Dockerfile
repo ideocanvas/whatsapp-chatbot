@@ -46,7 +46,7 @@ COPY --chown=whatsapp-bot:nodejs --from=builder /app/pnpm-lock.yaml ./
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/pnpm-workspace.yaml ./
 
 # Reinstall all dependencies (including dev for Prisma CLI) to ensure they match updated packages
-RUN pnpm install --frozen-lockfile && npm cache clean --force
+RUN pnpm install --frozen-lockfile && npm cache clean --force && chown -R whatsapp-bot:nodejs node_modules node_modules/.pnpm
 
 # Copy built application from builder stage
 COPY --chown=whatsapp-bot:nodejs --from=builder /app/dist ./dist
@@ -59,8 +59,12 @@ COPY --chown=whatsapp-bot:nodejs prisma/ ./prisma/
 COPY --chown=whatsapp-bot:nodejs frontend/package.json ./frontend/
 COPY --chown=whatsapp-bot:nodejs entrypoint.sh ./
 
-# Generate Prisma client in production stage (needed for runtime use)
+# Switch to non-root user for Prisma generation to ensure correct file ownership
+USER whatsapp-bot
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" pnpm exec prisma generate
+
+# Switch back to root for remaining setup
+USER root
 
 # Create data directory if it doesn't exist
 RUN mkdir -p data/conversations && chown -R whatsapp-bot:nodejs data/
