@@ -17,6 +17,19 @@ const NewsTab = ({ showToast }) => {
   const [editingKeyword, setEditingKeyword] = useState(null)
   const [newKeyword, setNewKeyword] = useState({ keyword: '', relevance: 0.5, category: '' })
 
+  // Search and pagination state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(12)
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCurrentPage(1) // Reset to first page on search
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
   // Load favorites on component mount
   useEffect(() => {
     const loadFavorites = async () => {
@@ -92,7 +105,12 @@ const NewsTab = ({ showToast }) => {
   const { data: weeklyDigests, loading: weeklyLoading, error: weeklyError, refetch: refetchWeekly } = useApi('/api/news/weekly-digests')
   const { data: newsSources, loading: sourcesLoading, error: sourcesError, refetch: refetchSources } = useApi('/api/news/sources')
   const { data: newsKeywords, loading: keywordsLoading, error: keywordsError, refetch: refetchKeywords } = useApi('/api/news/keywords')
-  const { data: articles, loading: articlesLoading, error: articlesError, refetch: refetchArticles } = useApi('/api/news/articles')
+  
+  // Articles with search and pagination
+  const articlesQuery = searchQuery
+    ? `/api/news/articles?q=${encodeURIComponent(searchQuery)}&page=${currentPage}&limit=${pageSize}`
+    : `/api/news/articles?page=${currentPage}&limit=${pageSize}`
+  const { data: articles, loading: articlesLoading, error: articlesError, refetch: refetchArticles } = useApi(articlesQuery)
 
   // Sub-tabs for news system
   const subTabs = [
@@ -294,21 +312,35 @@ const NewsTab = ({ showToast }) => {
     if (articlesLoading) return <div className="text-center py-8">Loading downloaded articles...</div>
     if (articlesError) return <div className="text-center py-8 text-red-500">Error loading articles</div>
 
+    const totalPages = articles?.pagination?.pages || 1
+
     return (
       <div className="space-y-4">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h3 className="text-lg font-semibold">Downloaded Articles</h3>
             <p className="text-sm text-gray-500 mt-1">
               {articles?.total || 0} articles downloaded and processed
             </p>
           </div>
-          <button
-            onClick={refetchArticles}
-            className="bg-wa-teal text-white px-4 py-2 rounded-md hover:bg-green-600 transition-colors"
-          >
-            Refresh
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search articles..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal w-full sm:w-64"
+              />
+              <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">🔍</span>
+            </div>
+            <button
+              onClick={() => refetchArticles()}
+              className="bg-wa-teal text-white px-4 py-2 rounded-md hover:bg-green-600 transition-colors whitespace-nowrap"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -399,23 +431,40 @@ const NewsTab = ({ showToast }) => {
           </div>
         )}
 
-        {articles?.pagination && articles.pagination.pages > 1 && (
-          <div className="flex justify-center items-center space-x-2 mt-6">
-            <button
-              disabled={articles.pagination.page === 1}
-              className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+        {totalPages > 1 && (
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-6">
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1 || articlesLoading}
+                className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Previous
+              </button>
+              <span className="text-sm text-gray-600 px-2">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || articlesLoading}
+                className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-3 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal text-sm"
             >
-              Previous
-            </button>
-            <span className="text-sm text-gray-600">
-              Page {articles.pagination.page} of {articles.pagination.pages}
-            </span>
-            <button
-              disabled={articles.pagination.page === articles.pagination.pages}
-              className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
-            >
-              Next
-            </button>
+              <option value="6">6 per page</option>
+              <option value="12">12 per page</option>
+              <option value="24">24 per page</option>
+              <option value="48">48 per page</option>
+            </select>
           </div>
         )}
       </div>
