@@ -325,6 +325,8 @@ const MemoryTab = ({ showToast }) => {
               onKeyPress={(e) => e.key === 'Enter' && searchKnowledge()}
               placeholder="Search stored knowledge..."
               className="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-wa-teal focus:ring-wa-teal px-4 py-2"
+              data-1p-ignore
+              autoComplete="off"
             />
             <button
               onClick={searchKnowledge}

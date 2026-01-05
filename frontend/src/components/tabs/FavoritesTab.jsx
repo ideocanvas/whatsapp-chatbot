@@ -174,6 +174,8 @@ const FavoritesTab = ({ showToast }) => {
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search favorites..."
           className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:border-wa-teal focus:ring-wa-teal"
+          data-1p-ignore
+          autoComplete="off"
         />
       </div>
 
@@ -281,6 +283,8 @@ const FavoritesTab = ({ showToast }) => {
                   onChange={(e) => setNewFavorite({ ...newFavorite, url: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                   placeholder="https://example.com"
+                  data-1p-ignore
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -291,6 +295,8 @@ const FavoritesTab = ({ showToast }) => {
                   onChange={(e) => setNewFavorite({ ...newFavorite, title: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                   placeholder="Favorite Title (optional)"
+                  data-1p-ignore
+                  autoComplete="off"
                 />
               </div>
               <div>

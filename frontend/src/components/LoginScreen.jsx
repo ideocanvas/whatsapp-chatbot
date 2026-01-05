@@ -45,6 +45,8 @@ const LoginScreen = ({ onLogin, showToast }) => {
                 placeholder="Enter dashboard password"
                 disabled={isLoading}
                 autoFocus
+                data-1p-ignore
+                autoComplete="off"
               />
             </div>
 

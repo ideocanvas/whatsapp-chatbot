@@ -684,6 +684,8 @@ const NewsTab = ({ showToast }) => {
                 onKeyDown={handleKeyDown}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                 placeholder="https://news.google.com/..."
+                data-1p-ignore
+                autoComplete="off"
               />
             </div>
             <div>
@@ -695,6 +697,8 @@ const NewsTab = ({ showToast }) => {
                 onKeyDown={handleKeyDown}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                 placeholder="Google News HK"
+                data-1p-ignore
+                autoComplete="off"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -707,6 +711,8 @@ const NewsTab = ({ showToast }) => {
                   onKeyDown={handleKeyDown}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                   placeholder="HK"
+                  data-1p-ignore
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -718,6 +724,8 @@ const NewsTab = ({ showToast }) => {
                   onKeyDown={handleKeyDown}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
                   placeholder="en"
+                  data-1p-ignore
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -1068,6 +1076,8 @@ const NewsTab = ({ showToast }) => {
                   onChange={(e) => setNewKeyword({ ...newKeyword, keyword: e.target.value })}
                   placeholder="e.g., artificial intelligence, machine learning"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
+                  data-1p-ignore
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -1099,6 +1109,8 @@ const NewsTab = ({ showToast }) => {
                   onChange={(e) => setNewKeyword({ ...newKeyword, category: e.target.value })}
                   placeholder="e.g., Technology, Business, Science"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-wa-teal"
+                  data-1p-ignore
+                  autoComplete="off"
                 />
               </div>
             </div>

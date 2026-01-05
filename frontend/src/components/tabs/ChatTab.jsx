@@ -231,6 +231,8 @@ const ChatTab = ({ botInfo, showToast }) => {
           onKeyDown={handleKeyPress}
           className="flex-1 bg-white border-none rounded-lg py-2 px-4 focus:ring-0 focus:outline-none placeholder-gray-500"
           placeholder="Type a message (press Enter to send)"
+          data-1p-ignore
+          autoComplete="off"
         />
         <button
           onClick={sendMessage}
