@@ -1,4 +1,18 @@
-import React, { useState, useEffect } from 'react'
+// Custom debounce hook
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value)
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value)
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [value, delay])
+  
+  return debouncedValue
+}
+
+import React, { useState, useEffect, useCallback } from 'react'
 import { useApi } from '../../hooks/useApi'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -17,18 +31,55 @@ const NewsTab = ({ showToast }) => {
   const [editingKeyword, setEditingKeyword] = useState(null)
   const [newKeyword, setNewKeyword] = useState({ keyword: '', relevance: 0.5, category: '' })
 
-  // Search and pagination state
+  // Articles state with search and pagination
+  const [articles, setArticles] = useState(null)
+  const [articlesLoading, setArticlesLoading] = useState(true)
+  const [articlesError, setArticlesError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
+  
+  // Debounce the search query with 500ms delay
+  const debouncedSearchQuery = useDebounce(searchQuery, 500)
 
-  // Debounced search
+  // Reset page when debounced search changes
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setCurrentPage(1) // Reset to first page on search
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [searchQuery])
+    setCurrentPage(1)
+  }, [debouncedSearchQuery])
+
+  // Fetch articles when page, pageSize, or debouncedSearchQuery changes
+  useEffect(() => {
+    const fetchArticles = async () => {
+      try {
+        setArticlesLoading(true)
+        setArticlesError(null)
+        const params = new URLSearchParams({
+          page: currentPage.toString(),
+          limit: pageSize.toString()
+        })
+        if (debouncedSearchQuery) {
+          params.set('q', debouncedSearchQuery)
+        }
+        
+        const response = await fetch(`/api/news/articles?${params}`, { credentials: 'include' })
+        if (!response.ok) {
+          throw new Error('Failed to fetch articles')
+        }
+        const data = await response.json()
+        setArticles(data)
+      } catch (err) {
+        setArticlesError(err instanceof Error ? err.message : 'Error loading articles')
+      } finally {
+        setArticlesLoading(false)
+      }
+    }
+    
+    fetchArticles()
+  }, [currentPage, pageSize, debouncedSearchQuery])
+
+  const refetchArticles = () => {
+    setCurrentPage(1)
+  }
 
   // Load favorites on component mount
   useEffect(() => {
@@ -99,18 +150,12 @@ const NewsTab = ({ showToast }) => {
     return favorites.some(fav => fav.url === (post.sourceUrl || post.url || post.id))
   }
 
-  // API hooks for news data
+  // API hooks for other data
   const { data: blogPosts, loading: postsLoading, error: postsError, refetch: refetchPosts } = useApi('/api/news/blog-posts')
   const { data: dailyDigests, loading: digestsLoading, error: digestsError, refetch: refetchDigests } = useApi('/api/news/daily-digests')
   const { data: weeklyDigests, loading: weeklyLoading, error: weeklyError, refetch: refetchWeekly } = useApi('/api/news/weekly-digests')
   const { data: newsSources, loading: sourcesLoading, error: sourcesError, refetch: refetchSources } = useApi('/api/news/sources')
   const { data: newsKeywords, loading: keywordsLoading, error: keywordsError, refetch: refetchKeywords } = useApi('/api/news/keywords')
-  
-  // Articles with search and pagination
-  const articlesQuery = searchQuery
-    ? `/api/news/articles?q=${encodeURIComponent(searchQuery)}&page=${currentPage}&limit=${pageSize}`
-    : `/api/news/articles?page=${currentPage}&limit=${pageSize}`
-  const { data: articles, loading: articlesLoading, error: articlesError, refetch: refetchArticles } = useApi(articlesQuery)
 
   // Sub-tabs for news system
   const subTabs = [
@@ -335,7 +380,10 @@ const NewsTab = ({ showToast }) => {
               <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">🔍</span>
             </div>
             <button
-              onClick={() => refetchArticles()}
+              onClick={() => {
+                // Force refetch by resetting page to trigger the useEffect
+                setCurrentPage(1)
+              }}
               className="bg-wa-teal text-white px-4 py-2 rounded-md hover:bg-green-600 transition-colors whitespace-nowrap"
             >
               Refresh
