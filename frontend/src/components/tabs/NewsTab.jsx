@@ -66,8 +66,10 @@ const NewsTab = ({ showToast }) => {
           throw new Error('Failed to fetch articles')
         }
         const data = await response.json()
+        console.log('Fetched articles data:', data) // Debug: log the response
         setArticles(data)
       } catch (err) {
+        console.error('Error fetching articles:', err)
         setArticlesError(err instanceof Error ? err.message : 'Error loading articles')
       } finally {
         setArticlesLoading(false)
@@ -355,9 +357,10 @@ const NewsTab = ({ showToast }) => {
   // Render downloaded articles
   const renderDownloadedArticles = () => {
     if (articlesLoading) return <div className="text-center py-8">Loading downloaded articles...</div>
-    if (articlesError) return <div className="text-center py-8 text-red-500">Error loading articles</div>
+    if (articlesError) return <div className="text-center py-8 text-red-500">Error loading articles: {articlesError}</div>
 
-    const totalPages = articles?.pagination?.pages || 1
+    const articlesList = articles?.articles || []
+    const totalPages = articles?.pages || 1
 
     return (
       <div className="space-y-4">
@@ -366,6 +369,7 @@ const NewsTab = ({ showToast }) => {
             <h3 className="text-lg font-semibold">Downloaded Articles</h3>
             <p className="text-sm text-gray-500 mt-1">
               {articles?.total || 0} articles downloaded and processed
+              {totalPages > 1 && ` (Page ${currentPage} of ${totalPages})`}
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
@@ -392,7 +396,7 @@ const NewsTab = ({ showToast }) => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {articles?.articles?.map(article => (
+          {articlesList.map(article => (
             <div key={article.id} className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow overflow-hidden">
               {article.imagePaths && article.imagePaths.length > 0 && (
                 <div className="h-40 bg-gray-200 overflow-hidden relative">
@@ -473,13 +477,13 @@ const NewsTab = ({ showToast }) => {
           ))}
         </div>
 
-        {(!articles?.articles || articles.articles.length === 0) && (
+        {articlesList.length === 0 && (
           <div className="text-center py-8 text-gray-500">
             No downloaded articles yet. Articles will appear here after running the news:cli sync.
           </div>
         )}
 
-        {totalPages > 1 && (
+        {totalPages > 1 && articlesList.length > 0 && (
           <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-6">
             <div className="flex items-center space-x-2">
               <button
