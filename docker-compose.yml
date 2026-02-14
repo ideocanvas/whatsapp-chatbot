@@ -23,7 +23,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ideocanvas/whatsapp-chatbot:v4
+    image: ideocanvas/whatsapp-chatbot:v5
     container_name: whatsapp-chatbot
     restart: unless-stopped
     ports:
