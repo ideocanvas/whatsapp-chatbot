@@ -1,28 +1,35 @@
 # WhatsApp Chatbot - News Fetch Cron Job
 #
 # This cron job fetches news articles every 6 hours (at 0:00, 6:00, 12:00, 18:00)
-# The news fetching has been moved from the autonomous bot's scheduler to this
-# standalone job for better separation of concerns.
+# The news fetching runs inside the Docker container, triggered from the host crontab.
 #
-# Installation:
+# Installation (on host machine):
 #   1. Copy this file to /etc/cron.d/whatsapp-news-fetch
-#   2. Edit the paths below to match your installation
-#   3. Ensure the user has proper permissions to run pnpm and access the project
+#   2. Ensure the user has proper Docker permissions
+#   3. Or add to user crontab: crontab -e
 #
-# Or add to user crontab:
-#   crontab -e
-#   Add: 0 */6 * * * cd /path/to/whatsapp-chatbot && /usr/bin/pnpm run news:cli 100 >> /var/log/news-fetch.log 2>&1
-#
-# Environment variables are loaded from .env file in the project directory
+# Requirements:
+#   - Docker must be installed and running
+#   - The whatsapp-chatbot container must be running
+#   - The user running cron must have docker permissions (or use sudo)
 
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
 # Run every 6 hours at minute 0
-# Adjust the path below to match your installation directory
-0 */6 * * * ubuntu cd /home/ubuntu/workspace/ideocanvas/whatsapp-chatbot && /usr/bin/pnpm run news:cli 100 >> /var/log/whatsapp-news-fetch.log 2>&1
+# Uses docker exec to run the news CLI inside the container
+# Adjust CONTAINER_NAME if your container has a different name
+0 */6 * * * docker exec whatsapp-chatbot node dist/commands/news-cli.js 100 >> /var/log/whatsapp-news-fetch.log 2>&1
 
 # Alternative: Run at specific times (6am, 12pm, 6pm, 12am)
-# 0 0,6,12,18 * * * ubuntu cd /path/to/whatsapp-chatbot && /usr/bin/pnpm run news:cli 100 >> /var/log/whatsapp-news-fetch.log 2>&1
+# 0 0,6,12,18 * * * docker exec whatsapp-chatbot node dist/commands/news-cli.js 100 >> /var/log/whatsapp-news-fetch.log 2>&1
+
+# If your cron user doesn't have Docker permissions, use sudo:
+# 0 */6 * * * sudo docker exec whatsapp-chatbot node dist/commands/news-cli.js 100 >> /var/log/whatsapp-news-fetch.log 2>&1
+
+# Create log directory if it doesn't exist (run once manually)
+# sudo mkdir -p /var/log && sudo touch /var/log/whatsapp-news-fetch.log && sudo chmod 666 /var/log/whatsapp-news-fetch.log
+
+# To test manually: docker exec whatsapp-chatbot node dist/commands/news-cli.js 10
 
 # Empty line required at end of cron file
