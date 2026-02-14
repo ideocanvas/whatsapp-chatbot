@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { DesktopToWebService, createDesktopToWebServiceFromEnv } from './DesktopToWebService';
 import { HtmlToMarkdownService, createHtmlToMarkdownServiceFromEnv } from './HtmlToMarkdownService';
 import { ProcessedArticleService } from './ProcessedArticleService';
 import { ArticleClassificationService, createArticleClassificationService } from './ArticleClassificationService';
@@ -12,7 +11,7 @@ import * as crypto from 'crypto';
 export interface GoogleSearchConfig {
   apiKey: string;
   searchEngineId: string;
-  useDesktopService?: boolean; // Enable desktop service for page content fetching
+  useChromeRemoteDebug?: boolean; // Enable Chrome Remote Debug for page content fetching
 }
 
 export interface SearchResult {
@@ -58,12 +57,10 @@ export interface NewsSourceGroup {
 
 export class GoogleSearchService {
   private config: GoogleSearchConfig;
-  private desktopService?: DesktopToWebService;
   private htmlToMarkdownService?: HtmlToMarkdownService;
   private processedArticleService?: ProcessedArticleService;
   private classificationService?: ArticleClassificationService;
   private kb?: KnowledgeBasePostgres;
-  private desktopLock: Promise<void> = Promise.resolve(); // Mutex for desktop service operations
 
   constructor(
     config: GoogleSearchConfig,
@@ -72,55 +69,18 @@ export class GoogleSearchService {
   ) {
     this.config = config;
     this.kb = knowledgeBase;
-    if (config.useDesktopService) {
-      try {
-        this.desktopService = createDesktopToWebServiceFromEnv();
-        this.htmlToMarkdownService = createHtmlToMarkdownServiceFromEnv();
-      } catch (e) {
-        console.warn('⚠️ DesktopToWebService not configured, falling back to direct HTTP requests');
-      }
+    
+    // Initialize HtmlToMarkdownService (uses ChromeRemoteDebugService internally)
+    try {
+      this.htmlToMarkdownService = createHtmlToMarkdownServiceFromEnv();
+    } catch (e) {
+      console.warn('⚠️ HtmlToMarkdownService not configured, article processing will be limited');
     }
     
     // Initialize services for article processing
     if (openaiService) {
       this.processedArticleService = new ProcessedArticleService();
       this.classificationService = createArticleClassificationService(openaiService);
-      // HtmlToMarkdownService is required for article processing
-      if (!this.htmlToMarkdownService) {
-        try {
-          this.htmlToMarkdownService = createHtmlToMarkdownServiceFromEnv();
-        } catch (e) {
-          console.warn('⚠️ HtmlToMarkdownService not configured, article processing will be limited');
-        }
-      }
-    }
-  }
-
-  /**
-   * Acquire lock for desktop service operations to prevent concurrent access
-   */
-  private async withDesktopLock<T>(fn: () => Promise<T>): Promise<T> {
-    // Wait for the current lock to resolve
-    await this.desktopLock;
-    
-    // Create a new lock that resolves when our operation completes
-    let resolveLock: (() => void) | undefined;
-    const newLock = new Promise<void>(resolve => {
-      resolveLock = resolve;
-    });
-    
-    // Set the new lock before starting our operation
-    const oldLock = this.desktopLock;
-    this.desktopLock = newLock;
-    
-    try {
-      // Execute the operation
-      return await fn();
-    } finally {
-      // Release the lock
-      if (resolveLock) {
-        resolveLock();
-      }
     }
   }
 
@@ -594,11 +554,11 @@ export class GoogleSearchService {
 
   /**
    * Fetch full article text for a given URL using HtmlToMarkdownService if available.
-   * Falls back to direct HTTP requests if desktop service is not configured.
+   * Falls back to direct HTTP requests if the service is not configured.
    *
    * HtmlToMarkdownService workflow:
    * 1. Check cache for existing markdown
-   * 2. Fetch HTML using DesktopToWebService
+   * 2. Fetch HTML using ChromeRemoteDebugService
    * 3. Convert HTML to markdown with image downloads
    * 4. Return the markdown content
    *
@@ -715,42 +675,40 @@ export class GoogleSearchService {
    *
    * Workflow:
    * 1. Check cache for existing markdown
-   * 2. Fetch HTML using DesktopToWebService
+   * 2. Fetch HTML using ChromeRemoteDebugService
    * 3. Convert HTML to markdown with image downloads
    * 4. Return the markdown content
    */
   private async fetchFullArticleViaHtmlToMarkdown(url: string): Promise<string> {
-    return this.withDesktopLock(async () => {
-      console.log(`📄 Fetching article via HtmlToMarkdownService: ${url}`);
+    console.log(`📄 Fetching article via HtmlToMarkdownService: ${url}`);
 
-      // Process the URL using HtmlToMarkdownService
-      const result = await this.htmlToMarkdownService!.processUrl(url);
+    // Process the URL using HtmlToMarkdownService
+    const result = await this.htmlToMarkdownService!.processUrl(url);
 
-      if (!result.success) {
-        throw new Error(`Failed to process URL: ${result.error}`);
-      }
+    if (!result.success) {
+      throw new Error(`Failed to process URL: ${result.error}`);
+    }
 
-      // Read the markdown file content
-      if (result.markdownPath && fs.existsSync(result.markdownPath)) {
-        const markdownContent = fs.readFileSync(result.markdownPath, 'utf-8');
-        console.log(`✅ Article fetched via HtmlToMarkdownService: ${markdownContent.length} characters, ${result.imagesDownloaded || 0} images downloaded`);
+    // Read the markdown file content
+    if (result.markdownPath && fs.existsSync(result.markdownPath)) {
+      const markdownContent = fs.readFileSync(result.markdownPath, 'utf-8');
+      console.log(`✅ Article fetched via HtmlToMarkdownService: ${markdownContent.length} characters, ${result.imagesDownloaded || 0} images downloaded`);
+      return markdownContent;
+    }
+
+    // If cached, we need to find the markdown file
+    if (result.cached && result.markdownUrl) {
+      // Convert markdownUrl to file path
+      const cacheDir = './data/html/cache';
+      const markdownPath = path.join(cacheDir, result.markdownUrl.replace('/html/cache/', ''));
+      if (fs.existsSync(markdownPath)) {
+        const markdownContent = fs.readFileSync(markdownPath, 'utf-8');
+        console.log(`✅ Article loaded from cache: ${markdownContent.length} characters`);
         return markdownContent;
       }
+    }
 
-      // If cached, we need to find the markdown file
-      if (result.cached && result.markdownUrl) {
-        // Convert markdownUrl to file path
-        const cacheDir = './data/html/cache';
-        const markdownPath = path.join(cacheDir, result.markdownUrl.replace('/html/cache/', ''));
-        if (fs.existsSync(markdownPath)) {
-          const markdownContent = fs.readFileSync(markdownPath, 'utf-8');
-          console.log(`✅ Article loaded from cache: ${markdownContent.length} characters`);
-          return markdownContent;
-        }
-      }
-
-      throw new Error('Failed to read markdown content');
-    });
+    throw new Error('Failed to read markdown content');
   }
 
   /**

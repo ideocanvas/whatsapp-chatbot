@@ -1,8 +1,7 @@
-import { createDesktopToWebServiceFromEnv, DesktopToWebService } from './DesktopToWebService';
+import { ChromeRemoteDebugService, createChromeRemoteDebugServiceFromEnv } from './ChromeRemoteDebugService';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { spawn } from 'child_process';
 import { JSDOM } from 'jsdom';
 
 export interface HtmlToMarkdownResult {
@@ -15,18 +14,35 @@ export interface HtmlToMarkdownResult {
   cached?: boolean;
 }
 
+/**
+ * HtmlToMarkdownService
+ * 
+ * Fetches HTML content from URLs using ChromeRemoteDebugService (CDP)
+ * and converts it to Markdown with image downloading support.
+ * 
+ * This service uses a remote Chrome browser via CDP, which allows:
+ * - Preserving user sessions (cookies, logins)
+ * - Rendering JavaScript-heavy pages
+ * - Accessing authenticated content
+ */
 export class HtmlToMarkdownService {
-  private desktopService: DesktopToWebService;
+  private chromeService: ChromeRemoteDebugService;
   private cacheDir: string;
-  private getPageContentScriptName: string;
 
   constructor(cacheDir: string = './data/html/cache') {
-    this.desktopService = createDesktopToWebServiceFromEnv();
+    this.chromeService = createChromeRemoteDebugServiceFromEnv();
     this.cacheDir = cacheDir;
-    this.getPageContentScriptName = process.env.DESKTOP_TO_WEB_GET_PAGE_CONTENT_SCRIPT || 'get_page_content';
     
     // Ensure cache directory exists
     this.ensureCacheDir();
+  }
+
+  /**
+   * Check if the service is properly configured
+   */
+  isConfigured(): boolean {
+    // ChromeRemoteDebugService is always configured with defaults
+    return true;
   }
 
   private ensureCacheDir(): void {
@@ -115,58 +131,6 @@ export class HtmlToMarkdownService {
   }
 
   /**
-   * Verify that the expected content is actually in the clipboard
-   * This catches cases where sendToClipboard returns success but the clipboard wasn't updated
-   *
-   * @param desktopService - The desktop service instance to use for clipboard operations
-   * @param expectedContent - The expected content in clipboard
-   * @param maxRetries - Maximum number of retry attempts (default: 3)
-   * @returns true if verified, false if failed after all retries
-   */
-  private async verifyClipboardContent(
-    desktopService: DesktopToWebService,
-    expectedContent: string,
-    maxRetries: number = 3
-  ): Promise<boolean> {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const readResult = await desktopService.readFromClipboard();
-      
-      if (readResult.status === 'success' && readResult.text) {
-        const actualContent = readResult.text.trim();
-        const expectedTrimmed = expectedContent.trim();
-        
-        if (actualContent === expectedTrimmed) {
-          console.log(`[DEBUG] Clipboard verified on attempt ${attempt}/${maxRetries}`);
-          return true;
-        }
-        
-        console.warn(
-          `[DEBUG] Clipboard mismatch on attempt ${attempt}/${maxRetries}: ` +
-          `expected "${expectedTrimmed.substring(0, 50)}${expectedTrimmed.length > 50 ? '...' : ''}", ` +
-          `got "${actualContent.substring(0, 50)}${actualContent.length > 50 ? '...' : ''}"`
-        );
-      } else {
-        console.warn(`[DEBUG] Failed to read clipboard on attempt ${attempt}/${maxRetries}: ${readResult.message}`);
-      }
-      
-      // If not verified and not last attempt, resend URL and wait before retry
-      if (attempt < maxRetries) {
-        console.log(`[DEBUG] Resending URL to clipboard and retrying...`);
-        const resendResult = await desktopService.sendToClipboard(expectedContent);
-        if (resendResult.status !== 'success') {
-          console.warn(`[DEBUG] Failed to resend URL to clipboard: ${resendResult.message}`);
-        }
-        const delay = 1000; // Wait 1 second before retry
-        console.log(`[DEBUG] Waiting ${delay}ms before retrying clipboard verification...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-    
-    console.error(`[ERROR] Failed to verify clipboard content after ${maxRetries} attempts`);
-    return false;
-  }
-
-  /**
    * Check if HTML content is a browser error page
    * This prevents error pages from being processed as valid content
    *
@@ -176,7 +140,7 @@ export class HtmlToMarkdownService {
   private isErrorPage(html: string): boolean {
     const errorPatterns = [
       // Chrome error messages
-      /This site can(?:’|')t be reached/i,
+      /This site can(?:')?t be reached/i,
       /ERR_CONNECTION_REFUSED/i,
       /ERR_NAME_NOT_RESOLVED/i,
       /ERR_CONNECTION_TIMED_OUT/i,
@@ -191,130 +155,47 @@ export class HtmlToMarkdownService {
       /Unable to connect/i,
       /Connection refused/i,
       // The error snippet from handleFailedArticles.ts
-      /<span>This site can(?:’|')t be reached<\/span>/i,
+      /<span>This site can(?:')?t be reached<\/span>/i,
     ];
     
     return errorPatterns.some(pattern => pattern.test(html));
   }
 
   /**
-   * Check if the content starts with a valid HTML tag
-   * This helps detect when clipboard contains unexpected content
-   *
-   * @param content - The content to check
-   * @returns true if content appears to be valid HTML
-   */
-  private isValidHtmlContent(content: string): boolean {
-    const trimmed = content.trim().toLowerCase();
-    
-    // Check for valid HTML starts
-    return trimmed.startsWith('<!doctype html') ||
-           trimmed.startsWith('<html') ||
-           trimmed.startsWith('<?xml');
-  }
-
-  /**
-   * Read and validate HTML content from clipboard with retry logic
-   * Retries if content doesn't appear to be valid HTML
-   *
-   * @param desktopService - The desktop service instance
-   * @param url - The original URL (for error messages)
-   * @param maxRetries - Maximum number of retry attempts (default: 3)
-   * @returns The validated HTML content
-   * @throws Error if failed to read valid HTML after all retries
-   */
-  private async readValidHtmlFromClipboard(
-    desktopService: DesktopToWebService,
-    url: string,
-    maxRetries: number = 3
-  ): Promise<string> {
-    let htmlContent: string | undefined;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const readResult = await desktopService.readFromClipboard();
-      
-      if (readResult.status === 'success' && readResult.text) {
-        htmlContent = readResult.text;
-        
-        // Check if content starts with valid HTML
-        if (this.isValidHtmlContent(htmlContent)) {
-          console.log(`[DEBUG] Valid HTML content read on attempt ${attempt}/${maxRetries}`);
-          return htmlContent;
-        }
-        
-        const preview = htmlContent.trim().substring(0, 100);
-        console.warn(
-          `[DEBUG] HTML validation failed on attempt ${attempt}/${maxRetries}: ` +
-          `content does not start with valid HTML tag. Preview: "${preview}..."`
-        );
-      } else {
-        console.warn(`[DEBUG] Failed to read from clipboard on attempt ${attempt}/${maxRetries}: ${readResult.message}`);
-      }
-      
-      // Wait before retry (1 second between retries)
-      if (attempt < maxRetries) {
-        console.log(`[DEBUG] Waiting 1000ms before retrying clipboard read...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-    
-    throw new Error(
-      `Failed to read valid HTML from clipboard after ${maxRetries} attempts. ` +
-      `URL: ${url}`
-    );
-  }
-
-  /**
-   * Fetch HTML from URL using DesktopToWebService and save to file
-   * Creates a fresh DesktopToWebService instance for each request to prevent connection issues
-   * Now includes clipboard verification and error page detection
+   * Fetch HTML from URL using ChromeRemoteDebugService and save to file
+   * This replaces the complex clipboard-based workflow with direct CDP navigation
    */
   private async fetchHtmlToFile(url: string, htmlPath: string): Promise<void> {
-    // Create a fresh service instance for this request to prevent connection reuse issues
-    const desktopService = createDesktopToWebServiceFromEnv();
+    console.log(`[HtmlToMarkdown] Fetching HTML via CDP: ${url}`);
     
-    // Step 1: Send URL to clipboard
-    console.log(`[DEBUG] Sending URL to clipboard: ${url}`);
-    const sendResult = await desktopService.sendToClipboard(url);
-    if (sendResult.status !== 'success') {
-      throw new Error(`Failed to send URL to clipboard: ${sendResult.message}`);
+    try {
+      // Connect to remote Chrome if not already connected
+      if (!this.chromeService.isConnected()) {
+        await this.chromeService.connect();
+      }
+      
+      // Navigate and get content
+      const content = await this.chromeService.navigateAndGetContent(url, {
+        timeout: 60000,
+        waitUntil: 'networkidle', // Wait for JavaScript to finish
+      });
+      
+      // Check for error page
+      if (this.isErrorPage(content.html)) {
+        throw new Error(
+          `Browser returned an error page. The site may be unreachable. URL: ${url}`
+        );
+      }
+      
+      // Save HTML to file
+      console.log(`[HtmlToMarkdown] Saving HTML to file: ${htmlPath} (${content.html.length} bytes)`);
+      fs.writeFileSync(htmlPath, content.html, 'utf-8');
+      
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[HtmlToMarkdown] Failed to fetch HTML: ${errorMsg}`);
+      throw error;
     }
-
-    // Step 1.5: Verify URL is actually in clipboard (prevents silent clipboard failures)
-    console.log(`[DEBUG] Verifying clipboard content...`);
-    const verified = await this.verifyClipboardContent(desktopService, url, 3);
-    if (!verified) {
-      throw new Error(
-        `Failed to verify URL in clipboard after 3 attempts. ` +
-        `This indicates a clipboard service issue. ` +
-        `URL: ${url}`
-      );
-    }
-
-    // Step 2: Execute get_page_content script
-    console.log(`[DEBUG] Executing ${this.getPageContentScriptName} script...`);
-    const executeResult = await desktopService.executeScript(this.getPageContentScriptName, {}, 300);
-    if (executeResult.status !== 'success') {
-      throw new Error(`Failed to execute script: ${executeResult.message}`);
-    }
-
-    // Step 3: Read HTML content from clipboard with validation and retry
-    console.log(`[DEBUG] Reading HTML from clipboard...`);
-    const htmlContent = await this.readValidHtmlFromClipboard(desktopService, url, 3);
-
-    // Step 3.5: Validate HTML is not an error page
-    console.log(`[DEBUG] Checking if returned content is an error page...`);
-    if (this.isErrorPage(htmlContent)) {
-      throw new Error(
-        `Browser returned an error page. ` +
-        `This may indicate the URL was not properly sent to clipboard or the site is unreachable. ` +
-        `URL: ${url}`
-      );
-    }
-
-    // Step 4: Save HTML to file
-    console.log(`[DEBUG] Saving HTML to file: ${htmlPath}`);
-    fs.writeFileSync(htmlPath, htmlContent, 'utf-8');
   }
 
   /**
@@ -344,17 +225,68 @@ export class HtmlToMarkdownService {
   }
 
   /**
+   * Get image file extension from URL
+   */
+  private getImageExtension(url: string): string {
+    const urlPath = url.split('?')[0]; // Remove query string
+    const ext = path.extname(urlPath).toLowerCase();
+    
+    // Valid image extensions
+    const validExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
+    if (validExts.includes(ext)) {
+      return ext;
+    }
+    
+    // Default to .jpg
+    return '.jpg';
+  }
+
+  /**
+   * Download image using curl (streams directly to disk)
+   */
+  private async downloadImageWithCurl(url: string, filepath: string): Promise<void> {
+    const { spawn } = await import('child_process');
+    
+    return new Promise((resolve, reject) => {
+      const curl = spawn('curl', [
+        '-s', '-L',           // Silent, follow redirects
+        '--max-time', '30',   // 30 second timeout
+        '--connect-timeout', '10',
+        '-o', filepath,       // Output file
+        url
+      ]);
+
+      curl.on('close', (code) => {
+        if (code === 0) {
+          // Verify file was created and has content
+          if (fs.existsSync(filepath) && fs.statSync(filepath).size > 0) {
+            resolve();
+          } else {
+            reject(new Error('Downloaded file is empty or missing'));
+          }
+        } else {
+          reject(new Error(`curl exited with code ${code}`));
+        }
+      });
+
+      curl.on('error', (err) => {
+        reject(new Error(`curl error: ${err.message}`));
+      });
+    });
+  }
+
+  /**
    * Convert HTML file to markdown file using jsdom
    * Also extracts and downloads images in a single pass (no duplicate JSDOM creation)
    * Returns the image map for backward compatibility
    */
   private async convertHtmlToMarkdownFile(htmlPath: string, markdownPath: string, cacheFolder: string): Promise<Map<string, string>> {
-    console.log(`[DEBUG] Reading HTML file: ${htmlPath}`);
+    console.log(`[HtmlToMarkdown] Reading HTML file: ${htmlPath}`);
     let html = fs.readFileSync(htmlPath, 'utf-8');
-    console.log(`[DEBUG] HTML file size: ${html.length} bytes`);
+    console.log(`[HtmlToMarkdown] HTML file size: ${html.length} bytes`);
 
     // Clean HTML BEFORE creating JSDOM to speed up parsing
-    console.log(`[DEBUG] Cleaning HTML...`);
+    console.log(`[HtmlToMarkdown] Cleaning HTML...`);
     const originalSize = html.length;
     html = html
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -362,16 +294,16 @@ export class HtmlToMarkdownService {
       .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
       .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
       .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '');
-    console.log(`[DEBUG] HTML cleaned: ${originalSize} -> ${html.length} bytes (${((1 - html.length / originalSize) * 100).toFixed(1)}% reduction)`);
+    console.log(`[HtmlToMarkdown] HTML cleaned: ${originalSize} -> ${html.length} bytes (${((1 - html.length / originalSize) * 100).toFixed(1)}% reduction)`);
 
-    console.log(`[DEBUG] Creating JSDOM...`);
+    console.log(`[HtmlToMarkdown] Creating JSDOM...`);
     let dom: JSDOM;
     let document: Document;
     
     try {
       dom = new JSDOM(html);
       document = dom.window.document;
-      console.log(`[DEBUG] JSDOM created successfully`);
+      console.log(`[HtmlToMarkdown] JSDOM created successfully`);
     } catch (jsdomError) {
       const errorMsg = jsdomError instanceof Error ? jsdomError.message : String(jsdomError);
       throw new Error(`Failed to parse HTML: ${errorMsg}`);
@@ -460,7 +392,7 @@ export class HtmlToMarkdownService {
 
     // Extract all image URLs from the document and download them
     const images = document.querySelectorAll('img');
-    console.log(`[DEBUG] Found ${images.length} images to process`);
+    console.log(`[HtmlToMarkdown] Found ${images.length} images to process`);
     let downloadedCount = 0;
     for (const img of images) {
       const src = img.getAttribute('src');
@@ -488,425 +420,261 @@ export class HtmlToMarkdownService {
             continue;
           } else {
             // Download image using curl (streams directly to disk)
-            console.log(`[DEBUG] Downloading image ${downloadedCount + 1}/${images.length}: ${src}`);
+            console.log(`[HtmlToMarkdown] Downloading image ${downloadedCount + 1}/${images.length}: ${src}`);
             await this.downloadImageWithCurl(src, filepath);
             downloadedCount++;
-            console.log(`[DEBUG] Downloaded ${downloadedCount}/${images.length} images`);
+            console.log(`[HtmlToMarkdown] Downloaded ${downloadedCount}/${images.length} images`);
           }
           
           // Use relative path (images/filename.jpg) for markdown
           const relativePath = `images/${filename}`;
           imageMap.set(src, relativePath);
         } catch (e) {
-          // Silently skip failed image downloads
+          // Log but don't fail - images are best-effort
+          console.warn(`[HtmlToMarkdown] Failed to download image ${src}:`, e instanceof Error ? e.message : e);
         }
       }
     }
 
-    // Convert the article element to markdown
-    let markdown = '';
-    if (articleElement) {
-      markdown = this.elementToMarkdown(articleElement, imageMap);
-    }
+    // Convert to markdown
+    const markdown = this.elementToMarkdown(articleElement, imageMap);
 
-    // Save markdown to file
+    // Save markdown file
     fs.writeFileSync(markdownPath, markdown, 'utf-8');
+    console.log(`[HtmlToMarkdown] Saved markdown to: ${markdownPath}`);
 
-    // Save image map to JSON for backward compatibility
+    // Save image map
     this.saveImageMap(cacheFolder, imageMap);
 
     return imageMap;
   }
 
   /**
-   * Convert HTML to markdown using jsdom for proper DOM parsing
+   * Convert an HTML element to Markdown
    */
-  private convertHtmlToMarkdown(html: string, imageMap: Map<string, string>): string {
-    const dom = new JSDOM(html);
-    const document = dom.window.document;
+  private elementToMarkdown(element: Element | null, imageMap: Map<string, string>): string {
+    if (!element) return '';
 
-    // Remove non-content elements
-    const elementsToRemove = [
-      'script', 'style', 'noscript', 'iframe', 'svg', 'nav', 'footer', 
-      'header', 'aside', 'button', 'form', 'input', 'select', 'textarea', 'label'
-    ];
-    
-    elementsToRemove.forEach(tag => {
-      const elements = document.querySelectorAll(tag);
-      elements.forEach(el => el.remove());
-    });
-
-    // Remove comments
-    const comments = document.createNodeIterator(
-      document.body,
-      dom.window.NodeFilter.SHOW_COMMENT
-    );
-    let commentNode;
-    while ((commentNode = comments.nextNode())) {
-      if (commentNode.parentNode) {
-        commentNode.parentNode.removeChild(commentNode);
-      }
-    }
-
-    // Remove ad/tracking elements by class/id patterns
-    const adPatterns = ['ad', 'cookie', 'sidebar', 'promo', 'advertisement', 'tracking'];
-    adPatterns.forEach(pattern => {
-      document.querySelectorAll(`[class*="${pattern}"], [id*="${pattern}"]`).forEach(el => {
-        // Check if the class/id contains the pattern as a whole word
-        const className = el.className || '';
-        const id = el.id || '';
-        const classRegex = new RegExp(`\\b${pattern}\\b`, 'i');
-        const idRegex = new RegExp(`\\b${pattern}\\b`, 'i');
-        if (classRegex.test(className) || idRegex.test(id)) {
-          el.remove();
-        }
-      });
-    });
-
-    // Extract article content using multiple strategies
-    let articleElement: Element | null = null;
-
-    // Strategy 1: Look for <article> tag
-    articleElement = document.querySelector('article');
-
-    // Strategy 2: Look for <main> tag
-    if (!articleElement) {
-      articleElement = document.querySelector('main');
-    }
-
-    // Strategy 3: Look for AP News specific class (RichTextStoryBody)
-    if (!articleElement) {
-      articleElement = document.querySelector('.RichTextStoryBody');
-    }
-
-    // Strategy 4: Look for common article content class names
-    if (!articleElement) {
-      const contentClasses = [
-        'article-body', 'story-body', 'content-body', 'article-content',
-        'post-content', 'entry-content', 'ArticleBody', 'RichTextBody',
-        'article__content', 'story-content', 'post-body'
-      ];
-      for (const className of contentClasses) {
-        articleElement = document.querySelector(`.${className}`);
-        if (articleElement) break;
-      }
-    }
-
-    // Strategy 5: Look for <body> content as fallback
-    if (!articleElement) {
-      articleElement = document.body;
-    }
-
-    // Convert the article element to markdown
-    if (articleElement) {
-      return this.elementToMarkdown(articleElement, imageMap);
-    }
-
-    return '';
-  }
-
-  /**
-   * Convert a DOM element to markdown
-   */
-  private elementToMarkdown(element: Element, imageMap: Map<string, string>): string {
     let markdown = '';
-
-    for (const child of element.childNodes) {
-      if (child.nodeType === 3) { // TEXT_NODE = 3
-        const text = child.textContent || '';
-        if (text.trim()) {
-          markdown += text;
-        }
-      } else if (child.nodeType === 1) { // ELEMENT_NODE = 1
-        const el = child as Element;
-        const tagName = el.tagName.toLowerCase();
-
-        switch (tagName) {
-          case 'h1':
-            markdown += `\n# ${this.elementToMarkdown(el, imageMap).trim()}\n\n`;
-            break;
-          case 'h2':
-            markdown += `\n## ${this.elementToMarkdown(el, imageMap).trim()}\n\n`;
-            break;
-          case 'h3':
-            markdown += `\n### ${this.elementToMarkdown(el, imageMap).trim()}\n\n`;
-            break;
-          case 'h4':
-            markdown += `\n#### ${this.elementToMarkdown(el, imageMap).trim()}\n\n`;
-            break;
-          case 'h5':
-            markdown += `\n##### ${this.elementToMarkdown(el, imageMap).trim()}\n\n`;
-            break;
-          case 'h6':
-            markdown += `\n###### ${this.elementToMarkdown(el, imageMap).trim()}\n\n`;
-            break;
-          case 'strong':
-          case 'b':
-            markdown += `**${this.elementToMarkdown(el, imageMap).trim()}**`;
-            break;
-          case 'em':
-          case 'i':
-            markdown += `*${this.elementToMarkdown(el, imageMap).trim()}*`;
-            break;
-          case 'a':
-            const href = el.getAttribute('href');
-            const linkText = this.elementToMarkdown(el, imageMap).trim();
-            if (href) {
-              markdown += `[${linkText}](${href})`;
-            } else {
-              markdown += linkText;
-            }
-            break;
-          case 'img':
-            const src = el.getAttribute('src');
-            const alt = el.getAttribute('alt') || '';
-            if (src) {
-              const relativePath = imageMap.get(src);
-              if (relativePath) {
-                markdown += `![${alt}](${relativePath})`;
-              } else {
-                markdown += `![${alt}](${src})`;
-              }
-            }
-            break;
-          case 'ul':
-            markdown += '\n';
-            const liItems = el.querySelectorAll(':scope > li');
-            liItems.forEach(li => {
-              markdown += `- ${this.elementToMarkdown(li, imageMap).trim()}\n`;
-            });
-            markdown += '\n';
-            break;
-          case 'ol':
-            markdown += '\n';
-            const olItems = el.querySelectorAll(':scope > li');
-            olItems.forEach((li, index) => {
-              markdown += `${index + 1}. ${this.elementToMarkdown(li, imageMap).trim()}\n`;
-            });
-            markdown += '\n';
-            break;
-          case 'li':
-            markdown += this.elementToMarkdown(el, imageMap).trim();
-            break;
-          case 'blockquote':
-            const quoteText = this.elementToMarkdown(el, imageMap).trim();
-            markdown += `\n> ${quoteText}\n\n`;
-            break;
-          case 'pre':
-            const codeContent = el.textContent || '';
-            markdown += `\n\`\`\`\n${codeContent}\n\`\`\`\n\n`;
-            break;
-          case 'code':
-            if (el.parentElement?.tagName.toLowerCase() !== 'pre') {
-              markdown += `\`${el.textContent || ''}\``;
-            } else {
-              markdown += el.textContent || '';
-            }
-            break;
-          case 'p':
-            const pText = this.elementToMarkdown(el, imageMap).trim();
-            if (pText) {
-              markdown += `${pText}\n\n`;
-            }
-            break;
-          case 'br':
-            markdown += '\n';
-            break;
-          case 'div':
-          case 'section':
-          case 'span':
-            // Process children but don't add extra spacing
-            markdown += this.elementToMarkdown(el, imageMap);
-            break;
-          case 'figure':
-            // Handle figure with image and caption
-            const img = el.querySelector('img');
-            const figcaption = el.querySelector('figcaption');
-            if (img) {
-              const src = img.getAttribute('src');
-              const alt = img.getAttribute('alt') || '';
-              if (src) {
-                const relativePath = imageMap.get(src);
-                const imgPath = relativePath || src;
-                markdown += `![${alt}](${imgPath})\n\n`;
-              }
-            }
-            if (figcaption) {
-              const captionText = this.elementToMarkdown(figcaption, imageMap).trim();
-              markdown += `*${captionText}*\n\n`;
-            }
-            break;
-          case 'figcaption':
-            // Content is handled by figure
-            break;
-          case 'source':
-            // Skip source tags (used for responsive images)
-            break;
-          case 'picture':
-            // Process the img tag inside picture
-            const pictureImg = el.querySelector('img');
-            if (pictureImg) {
-              markdown += this.elementToMarkdown(pictureImg, imageMap);
-            }
-            break;
-          default:
-            // For unknown elements, just process children
-            markdown += this.elementToMarkdown(el, imageMap);
-        }
+    
+    const processNode = (node: Node, depth: number = 0): string => {
+      if (node.nodeType === 3) { // Text node
+        return node.textContent || '';
       }
-    }
-
+      
+      if (node.nodeType !== 1) return ''; // Not an element
+      
+      const el = node as Element;
+      const tagName = el.tagName.toLowerCase();
+      
+      let result = '';
+      
+      switch (tagName) {
+        case 'h1':
+          result = `# ${getTextContent(el)}\n\n`;
+          break;
+        case 'h2':
+          result = `## ${getTextContent(el)}\n\n`;
+          break;
+        case 'h3':
+          result = `### ${getTextContent(el)}\n\n`;
+          break;
+        case 'h4':
+          result = `#### ${getTextContent(el)}\n\n`;
+          break;
+        case 'h5':
+          result = `##### ${getTextContent(el)}\n\n`;
+          break;
+        case 'h6':
+          result = `###### ${getTextContent(el)}\n\n`;
+          break;
+        case 'p':
+          const pContent = processChildren(el, depth);
+          if (pContent.trim()) {
+            result = `${pContent}\n\n`;
+          }
+          break;
+        case 'br':
+          result = '\n';
+          break;
+        case 'hr':
+          result = '\n---\n\n';
+          break;
+        case 'a':
+          const href = el.getAttribute('href');
+          const linkText = getTextContent(el);
+          if (href && linkText) {
+            result = `[${linkText}](${href})`;
+          } else {
+            result = linkText;
+          }
+          break;
+        case 'img':
+          const src = el.getAttribute('src');
+          const alt = el.getAttribute('alt') || 'Image';
+          if (src) {
+            const mappedSrc = imageMap.get(src) || src;
+            result = `![${alt}](${mappedSrc})\n\n`;
+          }
+          break;
+        case 'ul':
+        case 'ol':
+          const listItems: string[] = [];
+          el.querySelectorAll(':scope > li').forEach((li, index) => {
+            const liText = processChildren(li, depth + 1).trim();
+            const prefix = tagName === 'ol' ? `${index + 1}. ` : '- ';
+            listItems.push(`${'  '.repeat(depth)}${prefix}${liText}`);
+          });
+          result = listItems.join('\n') + '\n\n';
+          break;
+        case 'blockquote':
+          const quoteContent = processChildren(el, depth);
+          const quotedLines = quoteContent.split('\n').map(line => `> ${line}`).join('\n');
+          result = `${quotedLines}\n\n`;
+          break;
+        case 'code':
+          if (el.parentElement && el.parentElement.tagName.toLowerCase() === 'pre') {
+            // Code block - already handled by pre
+            result = getTextContent(el);
+          } else {
+            // Inline code
+            result = `\`${getTextContent(el)}\``;
+          }
+          break;
+        case 'pre':
+          const codeEl = el.querySelector('code');
+          const codeContent = codeEl ? getTextContent(codeEl) : getTextContent(el);
+          result = `\`\`\`\n${codeContent}\n\`\`\`\n\n`;
+          break;
+        case 'strong':
+        case 'b':
+          result = `**${getTextContent(el)}**`;
+          break;
+        case 'em':
+        case 'i':
+          result = `*${getTextContent(el)}*`;
+          break;
+        case 'del':
+        case 's':
+          result = `~~${getTextContent(el)}~~`;
+          break;
+        case 'figure':
+          result = processChildren(el, depth) + '\n';
+          break;
+        case 'figcaption':
+          result = `*${getTextContent(el)}*\n\n`;
+          break;
+        case 'div':
+        case 'section':
+        case 'article':
+        case 'main':
+        case 'span':
+          result = processChildren(el, depth);
+          break;
+        default:
+          // For other elements, just process children
+          result = processChildren(el, depth);
+      }
+      
+      return result;
+    };
+    
+    const processChildren = (el: Element, depth: number): string => {
+      let result = '';
+      for (const child of Array.from(el.childNodes)) {
+        result += processNode(child, depth);
+      }
+      return result;
+    };
+    
+    const getTextContent = (el: Element): string => {
+      return (el.textContent || '').trim();
+    };
+    
+    markdown = processNode(element);
+    
+    // Clean up excessive newlines
+    markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
+    
     return markdown;
   }
 
   /**
-   * Decode HTML entities
-   */
-  private decodeHtmlEntities(str: string): string {
-    if (!str) return str;
-    return str
-      .replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/>/g, '>')
-      .replace(/"/g, '"')
-      .replace(/'/g, "'")
-      .replace(/'/g, "'")
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&mdash;/g, '—')
-      .replace(/&ndash;/g, '–')
-      .replace(/&hellip;/g, '...');
-  }
-
-  /**
-   * Download a single image using curl (streams directly to disk, no memory buffering)
-   */
-  private async downloadImageWithCurl(imgUrl: string, filepath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      console.log(`[DEBUG] Starting curl download: ${imgUrl}`);
-      const curl = spawn('curl', [
-        '-s',           // Silent mode
-        '-L',           // Follow redirects
-        '-g',           // Disable globbing (important for URLs with special chars like ')')
-        '-o', filepath, // Output to file
-        '--max-time', '30', // 30 second timeout
-        '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', // User agent
-        imgUrl
-      ]);
-
-      curl.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`curl exited with code ${code}`));
-        }
-      });
-
-      curl.on('error', reject);
-    });
-  }
-
-  /**
-   * Get image extension from URL (no HEAD request needed)
-   */
-  private getImageExtension(url: string): string {
-    try {
-      // Handle malformed URLs by extracting the path manually
-      // Some URLs contain special characters like ')' that break URL parsing
-      let urlPath: string;
-      
-      try {
-        urlPath = new URL(url).pathname;
-      } catch {
-        // If URL parsing fails, try to extract path manually
-        // Remove protocol and domain to get the path
-        const withoutProtocol = url.replace(/^https?:\/\//, '');
-        const firstSlash = withoutProtocol.indexOf('/');
-        if (firstSlash >= 0) {
-          urlPath = withoutProtocol.substring(firstSlash);
-        } else {
-          urlPath = url;
-        }
-      }
-      
-      const ext = path.extname(urlPath);
-      if (ext && ext.length <= 5) {
-        return ext;
-      }
-    } catch {
-      // Invalid URL
-    }
-    // Fallback to .jpg
-    return '.jpg';
-  }
-
-
-  /**
    * Process a URL: fetch HTML, convert to markdown, download images
-   * Returns the markdown URL path
+   * 
+   * @param url - The URL to process
+   * @param forceRefresh - If true, reprocess even if cached
+   * @returns Result with paths to generated files
    */
-  async processUrl(url: string): Promise<HtmlToMarkdownResult> {
-    // Create cache folder
-    const cacheFolder = this.getCacheFolder(url);
-    if (!fs.existsSync(cacheFolder)) {
-      fs.mkdirSync(cacheFolder, { recursive: true });
-    }
-
-    const htmlPath = path.join(cacheFolder, 'article.html');
-    const markdownPath = path.join(cacheFolder, 'article.md');
-
+  async processUrl(url: string, forceRefresh: boolean = false): Promise<HtmlToMarkdownResult> {
     try {
-      // Check if already cached
-      if (this.isCached(url)) {
-        return {
-          success: true,
-          markdownUrl: this.getCachedMarkdownUrl(url),
-          cached: true
-        };
+      // Check cache first
+      if (!forceRefresh && this.isCached(url)) {
+        const cacheFolder = this.findCacheFolder(url);
+        if (cacheFolder) {
+          const markdownPath = path.join(cacheFolder, 'article.md');
+          const htmlPath = path.join(cacheFolder, 'article.html');
+          
+          console.log(`[HtmlToMarkdown] Using cached result for: ${url}`);
+          return {
+            success: true,
+            cached: true,
+            markdownUrl: this.getCachedMarkdownUrl(url),
+            htmlPath: fs.existsSync(htmlPath) ? htmlPath : undefined,
+            markdownPath: fs.existsSync(markdownPath) ? markdownPath : undefined,
+          };
+        }
       }
 
-      // Step 1: Fetch HTML and save to file (skip if already exists)
-      if (!fs.existsSync(htmlPath)) {
-        await this.fetchHtmlToFile(url, htmlPath);
+      // Create cache folder
+      const cacheFolder = this.getCacheFolder(url);
+      if (!fs.existsSync(cacheFolder)) {
+        fs.mkdirSync(cacheFolder, { recursive: true });
       }
 
-      // Step 2: Convert HTML to markdown and download images in a single pass
-      // This avoids creating JSDOM twice and saves memory
-      console.log(`[DEBUG] Converting HTML to markdown: ${htmlPath} -> ${markdownPath}`);
+      const htmlPath = path.join(cacheFolder, 'article.html');
+      const markdownPath = path.join(cacheFolder, 'article.md');
+
+      // Fetch HTML
+      console.log(`[HtmlToMarkdown] Fetching HTML for: ${url}`);
+      await this.fetchHtmlToFile(url, htmlPath);
+
+      // Convert to markdown and download images
+      console.log(`[HtmlToMarkdown] Converting to markdown...`);
       const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder);
 
-      // Step 3: Return markdown URL
-      const dateFolder = this.getDateFolder();
-      const hash = this.getUrlHash(url);
-      const markdownUrl = `/html/cache/${dateFolder}/${hash}/article.md`;
-
+      console.log(`[HtmlToMarkdown] Successfully processed: ${url}`);
       return {
         success: true,
-        markdownUrl,
+        cached: false,
+        markdownUrl: this.getCachedMarkdownUrl(url),
         htmlPath,
         markdownPath,
         imagesDownloaded: imageMap.size,
-        cached: false
       };
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[HtmlToMarkdown] Failed to process URL: ${errorMsg}`);
       return {
         success: false,
-        error: errorMessage
+        error: errorMsg,
       };
     }
   }
 
   /**
-   * Check if the service is properly configured
+   * Disconnect from the Chrome browser
+   * Call this when shutting down the service
    */
-  isConfigured(): boolean {
-    return this.desktopService.isConfigured();
+  async disconnect(): Promise<void> {
+    await this.chromeService.disconnect();
   }
 }
 
-// Helper function to create HtmlToMarkdownService instance from environment variables
+/**
+ * Helper function to create HtmlToMarkdownService instance
+ */
 export function createHtmlToMarkdownServiceFromEnv(cacheDir?: string): HtmlToMarkdownService {
   return new HtmlToMarkdownService(cacheDir);
 }
