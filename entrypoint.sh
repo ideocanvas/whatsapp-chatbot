@@ -63,4 +63,4 @@ echo "Node version: $(node --version)"
 echo "NPM version: $(npm --version)"
 
 # Start the application
-exec node dist/server.js
+exec node dist/src/server.js
