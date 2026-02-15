@@ -56,11 +56,11 @@ export interface NewsSourceGroup {
 }
 
 export class GoogleSearchService {
-  private config: GoogleSearchConfig;
-  private htmlToMarkdownService?: HtmlToMarkdownService;
-  private processedArticleService?: ProcessedArticleService;
-  private classificationService?: ArticleClassificationService;
-  private kb?: KnowledgeBasePostgres;
+  private readonly config: GoogleSearchConfig;
+  private readonly htmlToMarkdownService?: HtmlToMarkdownService;
+  private readonly processedArticleService?: ProcessedArticleService;
+  private readonly classificationService?: ArticleClassificationService;
+  private readonly kb?: KnowledgeBasePostgres;
 
   constructor(
     config: GoogleSearchConfig,
