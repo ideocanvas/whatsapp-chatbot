@@ -23,7 +23,7 @@ describe('ChromeRemoteDebugService', () => {
   let mockPage: any;
 
   const defaultConfig = {
-    endpoint: 'http://192.168.8.24:9222',
+    endpoint: 'http://127.0.0.1:9222',
     timeout: 30000,
     retries: 3,
     retryDelay: 100,

@@ -7,7 +7,7 @@
  * 
  * @example
  * ```typescript
- * const service = new ChromeRemoteDebugService({ endpoint: 'http://192.168.8.24:9222' });
+ * const service = new ChromeRemoteDebugService({ endpoint: 'http://127.0.0.1:9222' });
  * await service.connect();
  * const content = await service.navigateAndGetContent('https://example.com');
  * console.log(content.html);
@@ -462,13 +462,13 @@ export class ChromeRemoteDebugService {
  * Create a ChromeRemoteDebugService from environment variables
  * 
  * Environment variables:
- * - CDP_ENDPOINT: CDP endpoint URL (default: http://192.168.8.24:9222)
+ * - CDP_ENDPOINT: CDP endpoint URL (default: http://127.0.0.1:9222)
  * - CDP_TIMEOUT: Navigation timeout in ms (default: 30000)
  * - CDP_RETRIES: Connection retry count (default: 3)
  */
 export function createChromeRemoteDebugServiceFromEnv(): ChromeRemoteDebugService {
   return new ChromeRemoteDebugService({
-    endpoint: process.env.CDP_ENDPOINT || 'http://192.168.8.24:9222',
+    endpoint: process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222',
     timeout: process.env.CDP_TIMEOUT ? parseInt(process.env.CDP_TIMEOUT, 10) : undefined,
     retries: process.env.CDP_RETRIES ? parseInt(process.env.CDP_RETRIES, 10) : undefined,
   });

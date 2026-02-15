@@ -6,7 +6,7 @@
  * Configuration for ChromeRemoteDebugService
  */
 export interface ChromeRemoteDebugConfig {
-  /** CDP endpoint URL (e.g., http://192.168.8.24:9222) */
+  /** CDP endpoint URL (e.g., http://127.0.0.1:9222) */
   endpoint: string;
   /** Navigation timeout in milliseconds (default: 30000) */
   timeout?: number;

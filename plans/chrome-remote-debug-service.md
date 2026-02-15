@@ -57,7 +57,7 @@ class ChromeRemoteDebugService {
 
 ```typescript
 interface ChromeRemoteDebugConfig {
-  endpoint: string;          // CDP endpoint e.g. http://192.168.8.24:9222
+  endpoint: string;          // CDP endpoint e.g. http://127.0.0.1:9222
   timeout?: number;          // Navigation timeout in ms
   retries?: number;          // Connection retry count
 }
@@ -105,7 +105,7 @@ import { ChromeRemoteDebugService } from './services/ChromeRemoteDebugService';
 
 // Create service
 const chromeService = new ChromeRemoteDebugService({
-  endpoint: 'http://192.168.8.24:9222',
+  endpoint: 'http://127.0.0.1:9222',
   timeout: 30000,
   retries: 3
 });
@@ -128,7 +128,7 @@ await chromeService.disconnect();
 import { createChromeRemoteDebugServiceFromEnv } from './services/ChromeRemoteDebugService';
 
 // Set environment variables:
-// CDP_ENDPOINT=http://192.168.8.24:9222
+// CDP_ENDPOINT=http://127.0.0.1:9222
 // CDP_TIMEOUT=30000
 // CDP_RETRIES=3
 
