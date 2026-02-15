@@ -913,7 +913,7 @@ export class DashboardRoutes {
           status = 'completed', // Default to completed articles
           dateFrom,
           dateTo,
-          orderBy = 'publishedAt',
+          orderBy = 'updatedAt',
           orderDirection = 'desc'
         } = req.query;
 
@@ -925,7 +925,7 @@ export class DashboardRoutes {
           status: status as any,
           dateFrom: dateFrom as string,
           dateTo: dateTo as string,
-          orderBy: orderBy as 'publishedAt' | 'createdAt' | 'title' | 'source',
+          orderBy: orderBy as 'publishedAt' | 'createdAt' | 'updatedAt' | 'title' | 'source',
           orderDirection: orderDirection as 'asc' | 'desc'
         });
 

@@ -145,7 +145,7 @@ export class ProcessedArticleService {
     status?: 'pending' | 'processing' | 'completed' | 'failed';
     dateFrom?: string;
     dateTo?: string;
-    orderBy?: 'publishedAt' | 'createdAt' | 'title' | 'source';
+    orderBy?: 'publishedAt' | 'createdAt' | 'updatedAt' | 'title' | 'source';
     orderDirection?: 'asc' | 'desc';
   } = {}): Promise<{ articles: ProcessedArticle[]; total: number; page: number; pages: number }> {
     try {
@@ -175,9 +175,9 @@ export class ProcessedArticleService {
         if (options.dateTo) where.publishedAt.lte = options.dateTo;
       }
 
-      // Determine ordering
+      // Determine ordering - default to updatedAt for proper date sorting
       const orderBy: any = {};
-      const orderField = options.orderBy || 'publishedAt';
+      const orderField = options.orderBy || 'updatedAt';
       const orderDir = options.orderDirection || 'desc';
       orderBy[orderField] = orderDir;
 

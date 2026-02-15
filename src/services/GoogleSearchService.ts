@@ -4,9 +4,9 @@ import { ProcessedArticleService } from './ProcessedArticleService';
 import { ArticleClassificationService, createArticleClassificationService } from './ArticleClassificationService';
 import { OpenAIService } from './OpenAIService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 
 export interface GoogleSearchConfig {
   apiKey: string;
