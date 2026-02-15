@@ -282,6 +282,80 @@ describe('ChromeRemoteDebugService', () => {
       await expect(service.navigateAndGetContent('https://example.com'))
         .rejects.toThrow('Navigation failed');
     });
+
+    it('should handle Google RSS URL redirect after first wait', async () => {
+      await service.connect();
+      
+      // Simulate URL changing after first wait
+      // First call returns Google RSS URL, subsequent calls return redirected URL
+      let callCount = 0;
+      mockPage.url.mockImplementation(() => {
+        callCount++;
+        // First call is during initial navigation check (still Google RSS)
+        if (callCount === 1) {
+          return 'https://news.google.com/rss/articles/CBMiiwFBVV95cUxNUXp5eGN4SGI3QVNs';
+        }
+        // After first wait, URL has changed to non-Google RSS
+        return 'https://example.com/redirected-article';
+      });
+      
+      const content = await service.navigateAndGetContent(
+        'https://news.google.com/rss/articles/CBMiiwFBVV95cUxNUXp5eGN4SGI3QVNs'
+      );
+      
+      // Should have called url() to check redirect status
+      expect(mockPage.url).toHaveBeenCalled();
+      expect(content.url).toBe('https://example.com/redirected-article');
+    });
+
+    it('should handle Google RSS URL redirect after second wait', async () => {
+      await service.connect();
+      
+      // Simulate URL staying as Google RSS after first wait, then redirecting after second
+      // The code calls page.url() multiple times:
+      // 1. After first delay - check if still Google RSS (returns Google RSS -> enter second wait)
+      // 2. After second delay - check if still Google RSS (returns redirected -> pass)
+      // 3. Final URL retrieval (returns redirected)
+      let callCount = 0;
+      mockPage.url.mockImplementation(() => {
+        callCount++;
+        // Only first call returns Google RSS URL (after first wait)
+        if (callCount === 1) {
+          return 'https://news.google.com/rss/articles/CBMiiwFBVV95cUxNUXp5eGN4SGI3QVNs';
+        }
+        // After second wait, URL has changed to non-Google RSS
+        return 'https://example.com/redirected-article';
+      });
+      
+      const content = await service.navigateAndGetContent(
+        'https://news.google.com/rss/articles/CBMiiwFBVV95cUxNUXp5eGN4SGI3QVNs'
+      );
+      
+      expect(content.url).toBe('https://example.com/redirected-article');
+    });
+
+    it('should throw when Google RSS URL does not redirect after both waits', async () => {
+      await service.connect();
+      
+      // URL stays as Google RSS after both waits
+      mockPage.url.mockReturnValue('https://news.google.com/rss/articles/CBMiiwFBVV95cUxNUXp5eGN4SGI3QVNs');
+      
+      await expect(service.navigateAndGetContent(
+        'https://news.google.com/rss/articles/CBMiiwFBVV95cUxNUXp5eGN4SGI3QVNs'
+      )).rejects.toThrow('Google RSS URL redirect failed');
+    });
+
+    it('should not add delays for non-Google RSS URLs', async () => {
+      await service.connect();
+      
+      const startTime = Date.now();
+      const content = await service.navigateAndGetContent('https://example.com');
+      const elapsed = Date.now() - startTime;
+      
+      // Should complete quickly without the 2-4 second delays
+      expect(elapsed).toBeLessThan(500);
+      expect(content.url).toBe('https://example.com');
+    });
   });
 
   describe('newPage', () => {

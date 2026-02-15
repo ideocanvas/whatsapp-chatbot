@@ -419,10 +419,31 @@ export class ChromeRemoteDebugService {
   }
 
   /**
+   * Check if a URL is a Google News RSS redirect URL
+   * 
+   * @param url - URL to check
+   * @returns true if the URL is a Google News RSS URL
+   */
+  private isGoogleRssUrl(url: string): boolean {
+    try {
+      const parsedUrl = new URL(url);
+      return parsedUrl.hostname === 'news.google.com' && 
+             parsedUrl.pathname.startsWith('/rss/articles/');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Navigate to a URL and get its content
    * 
    * Convenience method that combines navigate() and getHtmlContent().
    * Uses a single lock acquisition for the entire operation.
+   * 
+   * For Google News RSS URLs, this method adds delays to wait for redirects:
+   * - Waits 2 seconds after initial navigation
+   * - If still on Google RSS URL, waits another 2 seconds
+   * - If still on Google RSS URL after both waits, marks as failed
    * 
    * @param url - URL to navigate to
    * @param options - Navigation options
@@ -450,6 +471,34 @@ export class ChromeRemoteDebugService {
         throw new Error(`Navigation failed: ${errorMessage}`);
       }
       console.log(`Navigated to ${url} with status ${response?.status()}`);
+
+      // Handle Google News RSS URL redirects
+      const isGoogleRss = this.isGoogleRssUrl(url);
+      if (isGoogleRss) {
+        console.log('Detected Google News RSS URL, waiting for redirect...');
+        
+        // First wait: 2 seconds
+        await this.delay(2000);
+        let currentUrl = this.page.url();
+        
+        if (this.isGoogleRssUrl(currentUrl)) {
+          console.log('Still on Google RSS URL after first wait, waiting 2 more seconds...');
+          
+          // Second wait: 2 more seconds
+          await this.delay(2000);
+          currentUrl = this.page.url();
+          
+          if (this.isGoogleRssUrl(currentUrl)) {
+            // Still on Google RSS URL after both waits - mark as failed
+            throw new Error(
+              `Google RSS URL redirect failed: URL did not redirect after 4 seconds. ` +
+              `Original URL: ${url}, Final URL: ${currentUrl}`
+            );
+          }
+        }
+        
+        console.log(`Redirect successful: ${currentUrl}`);
+      }
 
       const finalUrl = this.page.url();
       const title = await this.page.title();
