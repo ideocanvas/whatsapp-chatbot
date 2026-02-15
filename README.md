@@ -320,38 +320,6 @@ Autonomous behavior is configured through **environment variables** and **hardco
 - `AUTONOMOUS_MAINTENANCE_INTERVAL_MS`: Maintenance interval (default: 300000ms)
 - `AUTONOMOUS_BATCH_FLUSH_INTERVAL`: News batch flush interval (default: 30 ticks)
 
-### News Fetching (Standalone Job)
-
-News fetching has been moved from the autonomous bot's scheduler to a standalone job for better separation of concerns. The news job uses the Desktop-to-Web API to fetch and process articles.
-
-**Manual Execution:**
-
-```bash
-# Fetch latest news articles
-pnpm run news:cli 100
-
-# Retry failed articles only
-pnpm run news:cli --retry-only
-
-# Sync completed articles to knowledge base
-pnpm run news:cli --sync-to-kb
-```
-
-**Scheduled Execution (Cron):**
-
-A cron configuration file is provided at [`deploy/news-fetch.cron`](deploy/news-fetch.cron). To install:
-
-```bash
-# Copy to cron.d (adjust paths in the file first)
-sudo cp deploy/news-fetch.cron /etc/cron.d/whatsapp-news-fetch
-
-# Or add to user crontab
-crontab -e
-# Add: 0 */6 * * * cd /path/to/whatsapp-chatbot && pnpm run news:cli 100 >> /var/log/news-fetch.log 2>&1
-```
-
-The default schedule runs every 6 hours (at 0:00, 6:00, 12:00, 18:00).
-
 **Service Constants:**
 
 - Browser limits: `MAX_PAGES_PER_HOUR = 20` in [`BrowserService`](src/services/BrowserService.ts)
@@ -417,11 +385,6 @@ npx prisma studio           # Open database GUI
 # See: prisma/PGVECTOR_MIGRATION.md
 npx prisma migrate resolve --applied "20260104145343_add_pgvector_embedding"
 npm run prisma:migrate
-
-# News Fetching (Standalone Job)
-pnpm run news:cli 100              # Fetch 100 news articles
-pnpm run news:cli --retry-only     # Retry failed articles only
-pnpm run news:cli --sync-to-kb     # Sync articles to knowledge base
 
 ## 🗃️ Database Tables
 

@@ -108,10 +108,12 @@ export class Scheduler {
       const activeUsers = this.contextMgr.getActiveUsers();
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // NOTE: News fetching has been moved to a standalone job (news-cli.ts)
-      // Run via cron: pnpm run news:cli 100
+      // 2. Check for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
+      if (this.shouldFetchNews()) {
+        await this.performNewsFetching();
+      }
 
-      // 2. IDLE MODE: Browse (legacy browsing)
+      // 3. IDLE MODE: Browse (legacy browsing)
       if (this.shouldBrowse(activeUsers.length)) {
           let browseIntent = undefined;
           if (activeUsers.length > 0) {
@@ -124,12 +126,12 @@ export class Scheduler {
           await this.idleMode(browseIntent);
       }
 
-      // 3. PROACTIVE MODE: Accumulate News
+      // 4. PROACTIVE MODE: Accumulate News
       if (activeUsers.length > 0) {
         await this.accumulateNews(activeUsers);
       }
 
-      // 4. Flush Batch based on configured interval
+      // 5. [NEW] Flush Batch based on configured interval
       if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
           await this.flushNewsBatches();
       }
@@ -291,8 +293,44 @@ export class Scheduler {
     return browserStats.pagesVisitedThisHour < 20; // MAX_PAGES_PER_HOUR
   }
 
-  // NOTE: News fetching methods (shouldFetchNews, performNewsFetching) have been moved to standalone job.
-  // Run news fetching via cron: pnpm run news:cli 100
+  /**
+   * Check if it's time for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
+   */
+  private shouldFetchNews(): boolean {
+    if (!this.googleSearchService) return false;
+
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+
+    // Check if it's approximately 6am, 12pm, 6pm, or 12am (within first 10 minutes)
+    return (currentHour === 0 || currentHour === 6 || currentHour === 12 || currentHour === 18) && currentMinute < 10;
+  }
+
+  /**
+   * Perform news fetching
+   */
+  private async performNewsFetching(): Promise<void> {
+    if (!this.googleSearchService) {
+      console.log('⚠️ Google Search service not available');
+      return;
+    }
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    console.log(`🌅 Starting news fetching (${timeStr})`);
+
+    try {
+      // Fetch latest news articles (up to 100) - only returns new articles
+      const articles = await this.googleSearchService.fetchLatestNews(100);
+      
+      console.log(`📰 Fetched ${articles.length} new news articles`);
+
+      console.log('✅ News fetching completed');
+    } catch (error) {
+      console.error('❌ Error during news fetching:', error);
+    }
+  }
 
   private async maintenance(): Promise<void> {
     console.log('🧹 Running maintenance tasks');
