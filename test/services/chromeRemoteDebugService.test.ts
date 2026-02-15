@@ -234,7 +234,10 @@ describe('ChromeRemoteDebugService', () => {
       expect(mockPage.content).toHaveBeenCalled();
     });
 
-    it('should throw when not connected', async () => {
+    it('should throw when not connected and connection fails', async () => {
+      // Mock connection failure
+      (chromium.connectOverCDP as jest.Mock).mockRejectedValue(new Error('Connection refused'));
+      
       await expect(service.getHtmlContent()).rejects.toThrow();
     });
   });
@@ -331,6 +334,60 @@ describe('ChromeRemoteDebugService', () => {
       await service.waitForSelector('.content');
       
       expect(mockPage.waitForSelector).toHaveBeenCalledWith('.content', expect.any(Object));
+    });
+  });
+
+  describe('locking', () => {
+    it('should report lock status', () => {
+      const status = service.getLockStatus();
+      
+      expect(status).toHaveProperty('isLocked');
+      expect(status).toHaveProperty('queueLength');
+      expect(status.isLocked).toBe(false);
+      expect(status.queueLength).toBe(0);
+    });
+
+    it('should serialize concurrent operations', async () => {
+      await service.connect();
+      
+      // Make navigate take some time
+      mockPage.goto.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 50)));
+      
+      // Start two concurrent navigations
+      const [result1, result2] = await Promise.all([
+        service.navigate('https://example1.com'),
+        service.navigate('https://example2.com'),
+      ]);
+      
+      // Both should succeed (they were serialized)
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+    });
+
+    it('should timeout on lock acquisition', async () => {
+      // Create service with very short lock timeout
+      const shortTimeoutService = new ChromeRemoteDebugService({
+        ...defaultConfig,
+        lockTimeout: 10, // 10ms timeout
+      });
+      
+      await shortTimeoutService.connect();
+      
+      // Make navigate take longer than lock timeout
+      mockPage.goto.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+      
+      // Start first navigation
+      const firstNav = shortTimeoutService.navigate('https://example1.com');
+      
+      // Wait a bit then try another operation - this should timeout
+      await new Promise(resolve => setTimeout(resolve, 5));
+      
+      // Second operation should fail with timeout
+      await expect(shortTimeoutService.navigate('https://example2.com'))
+        .rejects.toThrow('Lock acquisition timeout');
+      
+      // First should still complete
+      await firstNav;
     });
   });
 });

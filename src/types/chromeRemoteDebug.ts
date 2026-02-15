@@ -14,6 +14,8 @@ export interface ChromeRemoteDebugConfig {
   retries?: number;
   /** Retry delay in milliseconds (default: 1000) */
   retryDelay?: number;
+  /** Lock acquisition timeout in milliseconds (default: 60000) */
+  lockTimeout?: number;
 }
 
 /**
