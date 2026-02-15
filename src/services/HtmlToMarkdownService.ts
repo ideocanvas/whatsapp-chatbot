@@ -165,37 +165,75 @@ export class HtmlToMarkdownService {
    * Fetch HTML from URL using ChromeRemoteDebugService and save to file
    * This replaces the complex clipboard-based workflow with direct CDP navigation
    */
+  /**
+   * Delay helper for waiting
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   private async fetchHtmlToFile(url: string, htmlPath: string): Promise<void> {
     console.log(`[HtmlToMarkdown] Fetching HTML via CDP: ${url}`);
     
-    try {
-      // Connect to remote Chrome if not already connected
-      if (!this.chromeService.isConnected()) {
-        await this.chromeService.connect();
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Connect to remote Chrome if not already connected
+        if (!this.chromeService.isConnected()) {
+          await this.chromeService.connect();
+        }
+        
+        // Navigate and get content
+        // Use 'domcontentloaded' instead of 'networkidle' for more reliable navigation
+        // 'networkidle' can timeout on sites with continuous network activity (ads, analytics, etc.)
+        const content = await this.chromeService.navigateAndGetContent(url, {
+          timeout: 60000,
+          waitUntil: 'domcontentloaded', // Wait for DOM to be ready (more reliable than networkidle)
+        });
+        
+        // Add a small delay to allow JavaScript to render content
+        // This helps with JS-heavy pages that render content after DOMContentLoaded
+        await this.delay(2000);
+        
+        // Check for error page
+        if (this.isErrorPage(content.html)) {
+          throw new Error(
+            `Browser returned an error page. The site may be unreachable. URL: ${url}`
+          );
+        }
+        
+        // Check if content is too small (might indicate JS rendering issue)
+        if (content.html.length < 500) {
+          console.log(`[HtmlToMarkdown] Warning: Small content (${content.html.length} bytes), waiting for JS...`);
+          await this.delay(3000);
+        }
+        
+        // Save HTML to file
+        console.log(`[HtmlToMarkdown] Saving HTML to file: ${htmlPath} (${content.html.length} bytes)`);
+        fs.writeFileSync(htmlPath, content.html, 'utf-8');
+        
+        return; // Success, exit retry loop
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorMsg = lastError.message;
+        console.error(`[HtmlToMarkdown] Attempt ${attempt}/${maxRetries} failed: ${errorMsg}`);
+        
+        if (attempt < maxRetries) {
+          // Wait before retry with exponential backoff
+          const waitTime = attempt * 2000;
+          console.log(`[HtmlToMarkdown] Retrying in ${waitTime}ms...`);
+          await this.delay(waitTime);
+        }
       }
-      
-      // Navigate and get content
-      const content = await this.chromeService.navigateAndGetContent(url, {
-        timeout: 60000,
-        waitUntil: 'networkidle', // Wait for JavaScript to finish
-      });
-      
-      // Check for error page
-      if (this.isErrorPage(content.html)) {
-        throw new Error(
-          `Browser returned an error page. The site may be unreachable. URL: ${url}`
-        );
-      }
-      
-      // Save HTML to file
-      console.log(`[HtmlToMarkdown] Saving HTML to file: ${htmlPath} (${content.html.length} bytes)`);
-      fs.writeFileSync(htmlPath, content.html, 'utf-8');
-      
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`[HtmlToMarkdown] Failed to fetch HTML: ${errorMsg}`);
-      throw error;
     }
+    
+    // All retries failed
+    const errorMsg = lastError?.message || 'Unknown error';
+    console.error(`[HtmlToMarkdown] Failed to fetch HTML after ${maxRetries} attempts: ${errorMsg}`);
+    throw lastError || new Error('Failed to fetch HTML');
   }
 
   /**
