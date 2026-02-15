@@ -1,7 +1,7 @@
 import { ChromeRemoteDebugService, createChromeRemoteDebugServiceFromEnv } from './ChromeRemoteDebugService';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { JSDOM } from 'jsdom';
 
 export interface HtmlToMarkdownResult {
@@ -26,8 +26,8 @@ export interface HtmlToMarkdownResult {
  * - Accessing authenticated content
  */
 export class HtmlToMarkdownService {
-  private chromeService: ChromeRemoteDebugService;
-  private cacheDir: string;
+  private readonly chromeService: ChromeRemoteDebugService;
+  private readonly cacheDir: string;
 
   constructor(cacheDir: string = './data/html/cache') {
     this.chromeService = createChromeRemoteDebugServiceFromEnv();
@@ -245,7 +245,7 @@ export class HtmlToMarkdownService {
    * Download image using curl (streams directly to disk)
    */
   private async downloadImageWithCurl(url: string, filepath: string): Promise<void> {
-    const { spawn } = await import('child_process');
+    const { spawn } = await import('node:child_process');
     
     return new Promise((resolve, reject) => {
       const curl = spawn('curl', [
@@ -289,11 +289,11 @@ export class HtmlToMarkdownService {
     console.log(`[HtmlToMarkdown] Cleaning HTML...`);
     const originalSize = html.length;
     html = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
-      .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
-      .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '');
+      .replaceAll(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replaceAll(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replaceAll(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
+      .replaceAll(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
+      .replaceAll(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '');
     console.log(`[HtmlToMarkdown] HTML cleaned: ${originalSize} -> ${html.length} bytes (${((1 - html.length / originalSize) * 100).toFixed(1)}% reduction)`);
 
     console.log(`[HtmlToMarkdown] Creating JSDOM...`);
@@ -339,8 +339,8 @@ export class HtmlToMarkdownService {
         // Check if the class/id contains the pattern as a whole word
         const className = String(el.className || '');
         const id = String(el.id || '');
-        const classRegex = new RegExp(`\\b${pattern}\\b`, 'i');
-        const idRegex = new RegExp(`\\b${pattern}\\b`, 'i');
+        const classRegex = new RegExp(String.raw`\b${pattern}\b`, 'i');
+        const idRegex = new RegExp(String.raw`\b${pattern}\b`, 'i');
         if (classRegex.test(className) || idRegex.test(id)) {
           el.remove();
         }
@@ -354,14 +354,10 @@ export class HtmlToMarkdownService {
     articleElement = document.querySelector('article');
 
     // Strategy 2: Look for <main> tag
-    if (!articleElement) {
-      articleElement = document.querySelector('main');
-    }
+    articleElement ??= document.querySelector('main');
 
     // Strategy 3: Look for AP News specific class (RichTextStoryBody)
-    if (!articleElement) {
-      articleElement = document.querySelector('.RichTextStoryBody');
-    }
+    articleElement ??= document.querySelector('.RichTextStoryBody');
 
     // Strategy 4: Look for common article content class names
     if (!articleElement) {
@@ -377,9 +373,7 @@ export class HtmlToMarkdownService {
     }
 
     // Strategy 5: Look for <body> content as fallback
-    if (!articleElement) {
-      articleElement = document.body;
-    }
+    articleElement ??= document.body;
 
     // Create images directory
     const imagesDir = path.join(cacheFolder, 'images');
@@ -489,11 +483,11 @@ export class HtmlToMarkdownService {
           result = `###### ${getTextContent(el)}\n\n`;
           break;
         case 'p':
-          const pContent = processChildren(el, depth);
+          { const pContent = processChildren(el, depth);
           if (pContent.trim()) {
             result = `${pContent}\n\n`;
           }
-          break;
+          break; }
         case 'br':
           result = '\n';
           break;
@@ -501,39 +495,39 @@ export class HtmlToMarkdownService {
           result = '\n---\n\n';
           break;
         case 'a':
-          const href = el.getAttribute('href');
+          { const href = el.getAttribute('href');
           const linkText = getTextContent(el);
           if (href && linkText) {
             result = `[${linkText}](${href})`;
           } else {
             result = linkText;
           }
-          break;
+          break; }
         case 'img':
-          const src = el.getAttribute('src');
+          { const src = el.getAttribute('src');
           const alt = el.getAttribute('alt') || 'Image';
           if (src) {
             const mappedSrc = imageMap.get(src) || src;
             result = `![${alt}](${mappedSrc})\n\n`;
           }
-          break;
+          break; }
         case 'ul':
         case 'ol':
-          const listItems: string[] = [];
+          { const listItems: string[] = [];
           el.querySelectorAll(':scope > li').forEach((li, index) => {
             const liText = processChildren(li, depth + 1).trim();
             const prefix = tagName === 'ol' ? `${index + 1}. ` : '- ';
             listItems.push(`${'  '.repeat(depth)}${prefix}${liText}`);
           });
           result = listItems.join('\n') + '\n\n';
-          break;
+          break; }
         case 'blockquote':
-          const quoteContent = processChildren(el, depth);
+          { const quoteContent = processChildren(el, depth);
           const quotedLines = quoteContent.split('\n').map(line => `> ${line}`).join('\n');
           result = `${quotedLines}\n\n`;
-          break;
+          break; }
         case 'code':
-          if (el.parentElement && el.parentElement.tagName.toLowerCase() === 'pre') {
+          if (el.parentElement?.tagName.toLowerCase() === 'pre') {
             // Code block - already handled by pre
             result = getTextContent(el);
           } else {
@@ -542,10 +536,10 @@ export class HtmlToMarkdownService {
           }
           break;
         case 'pre':
-          const codeEl = el.querySelector('code');
+          { const codeEl = el.querySelector('code');
           const codeContent = codeEl ? getTextContent(codeEl) : getTextContent(el);
           result = `\`\`\`\n${codeContent}\n\`\`\`\n\n`;
-          break;
+          break; }
         case 'strong':
         case 'b':
           result = `**${getTextContent(el)}**`;
@@ -594,7 +588,7 @@ export class HtmlToMarkdownService {
     markdown = processNode(element);
     
     // Clean up excessive newlines
-    markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
+    markdown = markdown.replaceAll(/\n{3,}/g, '\n\n').trim();
     
     return markdown;
   }
