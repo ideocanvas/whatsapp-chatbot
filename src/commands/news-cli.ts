@@ -19,6 +19,10 @@ async function main() {
   const retryOnlyIndex = args.indexOf('--retry-only');
   const retryOnly = retryOnlyIndex !== -1;
   
+  // Check for --force flag (used with --retry-only to bypass cooldown)
+  const forceIndex = args.indexOf('--force');
+  const force = forceIndex !== -1;
+  
   // Check for --force-reprocess flag
   const forceReprocessIndex = args.indexOf('--force-reprocess');
   const forceReprocess = forceReprocessIndex !== -1;
@@ -50,7 +54,7 @@ async function main() {
   
   // Filter out flags for argument parsing
   const filteredArgs = args.filter((arg, idx) => {
-    if (arg === '--retry-only' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db' || arg === '--reclassify-null' || arg === '--rebuild-embeddings') {
+    if (arg === '--retry-only' || arg === '--force' || arg === '--force-reprocess' || arg === '--sync-to-kb' || arg === '--handle-failed' || arg === '--failed-apply' || arg === '--failed-skip-db' || arg === '--reclassify-null' || arg === '--rebuild-embeddings') {
       return false;
     }
     if (arg === '--failed-action') {
@@ -67,6 +71,7 @@ async function main() {
     console.error('Usage: pnpm run news:cli [numResults] [output.json]');
     console.error('  numResults: Number of news articles to fetch (default: 100)');
     console.error('  --retry-only: Only retry failed and stuck processing articles, do not fetch new articles');
+    console.error('     --force: Bypass cooldown period for failed articles (use with --retry-only)');
     console.error('  --force-reprocess: Force reprocess all articles in "processing" status');
     console.error('  --sync-to-kb: Sync all completed articles to knowledge base (deduplicates by content hash)');
     console.error('  --handle-failed: Mark/cache files with "This site can\'t be reached" as failed and remove or move them');
@@ -503,7 +508,10 @@ async function main() {
     } else if (retryOnly) {
       // Only retry failed and stuck processing articles
       console.log('🔄 Retry-only mode: Retrying failed and stuck processing articles...');
-      const retryResults = await svc.retryArticles();
+      const retryResults = await svc.retryArticles({
+        // If --force is specified, bypass cooldown period
+        failedCooldownMs: force ? 0 : undefined,
+      });
       console.log(`✅ Retry results: ${retryResults.failedSucceeded}/${retryResults.failedRetried} failed succeeded, ${retryResults.stuckSucceeded}/${retryResults.stuckRetried} stuck succeeded`);
       
       // Get all processed articles to show the current status

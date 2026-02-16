@@ -77,12 +77,19 @@ export class HtmlToMarkdownService {
   }
 
   /**
+   * Minimum content length for a cached article to be considered valid
+   * Articles with less content will be reprocessed
+   */
+  private static readonly MIN_VALID_CONTENT_LENGTH = 100;
+
+  /**
    * Find the cache folder for a URL across multiple date folders
    * @param url - The URL to search for
    * @param daysToSearch - Number of days back to search (default: 30)
+   * @param requireValidContent - If true, only return folder if article.md has valid content (default: true)
    * @returns The cache folder path if found, null otherwise
    */
-  private findCacheFolder(url: string, daysToSearch: number = 30): string | null {
+  private findCacheFolder(url: string, daysToSearch: number = 30, requireValidContent: boolean = true): string | null {
     const hash = this.getUrlHash(url);
     
     for (let i = 0; i < daysToSearch; i++) {
@@ -94,6 +101,16 @@ export class HtmlToMarkdownService {
       if (fs.existsSync(cacheFolder)) {
         const markdownPath = path.join(cacheFolder, 'article.md');
         if (fs.existsSync(markdownPath)) {
+          // Check if the content is valid (not empty or minimal)
+          if (requireValidContent) {
+            const content = fs.readFileSync(markdownPath, 'utf-8');
+            const trimmedContent = content.trim();
+            // Skip if file is empty or has very little content
+            if (trimmedContent.length < HtmlToMarkdownService.MIN_VALID_CONTENT_LENGTH) {
+              console.log(`[HtmlToMarkdown] Cache folder found but content is empty/minimal (${trimmedContent.length} chars), will reprocess: ${url}`);
+              continue; // Continue searching in other date folders
+            }
+          }
           return cacheFolder;
         }
       }
@@ -103,12 +120,301 @@ export class HtmlToMarkdownService {
   }
 
   /**
-   * Check if a URL has already been processed
+   * Check if images need to be re-downloaded for a cached article
+   * Returns true if any referenced image is missing from the images folder
+   * 
+   * @param cacheFolder - The cache folder path
+   * @returns true if images need to be re-downloaded
+   */
+  private needsImageRedownload(cacheFolder: string): boolean {
+    const markdownPath = path.join(cacheFolder, 'article.md');
+    const imagesDir = path.join(cacheFolder, 'images');
+    
+    if (!fs.existsSync(markdownPath)) {
+      return false;
+    }
+    
+    const content = fs.readFileSync(markdownPath, 'utf-8');
+    
+    // Check if markdown references any images
+    // Match pattern: ![alt text](images/filename.jpg)
+    const imageRefs = content.match(/!\[.*?\]\(images\/([^)]+)\)/g);
+    if (!imageRefs || imageRefs.length === 0) {
+      return false; // No images referenced, no need to re-download
+    }
+    
+    // Extract just the filenames from the references
+    const referencedFiles = new Set<string>();
+    imageRefs.forEach(ref => {
+      const match = ref.match(/images\/([^)]+)/);
+      if (match) {
+        referencedFiles.add(match[1]);
+      }
+    });
+    
+    // Check if images directory exists
+    if (!fs.existsSync(imagesDir)) {
+      console.log(`[HtmlToMarkdown] Images directory missing, need to re-download ${referencedFiles.size} images`);
+      return true;
+    }
+    
+    // Check each referenced image file
+    const missingImages: string[] = [];
+    for (const filename of referencedFiles) {
+      const filepath = path.join(imagesDir, filename);
+      if (!fs.existsSync(filepath)) {
+        missingImages.push(filename);
+      } else if (!this.isValidImageFile(filepath)) {
+        missingImages.push(filename);
+      }
+    }
+    
+    if (missingImages.length > 0) {
+      console.log(`[HtmlToMarkdown] Missing/invalid images: ${missingImages.slice(0, 5).join(', ')}${missingImages.length > 5 ? ` (and ${missingImages.length - 5} more)` : ''}`);
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Check if a file is a valid image by checking its magic bytes
+   * This detects files that are actually error responses or corrupted
+   * 
+   * @param filepath - Path to the file to check
+   * @returns true if the file appears to be a valid image
+   */
+  private isValidImageFile(filepath: string): boolean {
+    try {
+      const stats = fs.statSync(filepath);
+      
+      // Too small to be a valid image (most images are at least a few hundred bytes)
+      if (stats.size < 100) {
+        return false;
+      }
+      
+      // Read first few bytes to check magic numbers
+      const fd = fs.openSync(filepath, 'r');
+      const buffer = Buffer.alloc(16);
+      fs.readSync(fd, buffer, 0, 16, 0);
+      fs.closeSync(fd);
+      
+      // Check for common image format magic bytes
+      // JPEG: FF D8 FF
+      if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+        return true;
+      }
+      
+      // PNG: 89 50 4E 47 0D 0A 1A 0A
+      if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+        return true;
+      }
+      
+      // GIF: 47 49 46 38 (GIF8)
+      if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
+        return true;
+      }
+      
+      // WebP: 52 49 46 46 ... 57 45 42 50 (RIFF...WEBP)
+      if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+          buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+        return true;
+      }
+      
+      // BMP: 42 4D
+      if (buffer[0] === 0x42 && buffer[1] === 0x4D) {
+        return true;
+      }
+      
+      // SVG: starts with <?xml or <svg
+      const header = buffer.toString('utf8', 0, 16).trim();
+      if (header.startsWith('<?xml') || header.startsWith('<svg')) {
+        return true;
+      }
+      
+      // Not a recognized image format
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Re-download images for an existing cached article
+   * 
+   * @param cacheFolder - The cache folder path
+   * @param baseUrl - The base URL for resolving relative image URLs
+   * @returns Number of images downloaded
+   */
+  private async redownloadImages(cacheFolder: string, baseUrl: string): Promise<number> {
+    const htmlPath = path.join(cacheFolder, 'article.html');
+    const markdownPath = path.join(cacheFolder, 'article.md');
+    
+    if (!fs.existsSync(htmlPath)) {
+      console.log(`[HtmlToMarkdown] No HTML file found, cannot re-download images`);
+      return 0;
+    }
+    
+    console.log(`[HtmlToMarkdown] Re-downloading images for cached article...`);
+    
+    // Create images directory if it doesn't exist
+    const imagesDir = path.join(cacheFolder, 'images');
+    if (!fs.existsSync(imagesDir)) {
+      fs.mkdirSync(imagesDir, { recursive: true });
+    }
+    
+    // Delete ALL existing image files so they can be re-downloaded with correct URLs
+    const existingFiles = fs.readdirSync(imagesDir);
+    let deletedCount = 0;
+    for (const file of existingFiles) {
+      const filepath = path.join(imagesDir, file);
+      try {
+        fs.unlinkSync(filepath);
+        deletedCount++;
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+    if (deletedCount > 0) {
+      console.log(`[HtmlToMarkdown] Deleted ${deletedCount} existing image files for re-download`);
+    }
+    
+    // Read HTML and fix URLs that were resolved against Google's domain
+    let html = fs.readFileSync(htmlPath, 'utf-8');
+    html = this.fixGoogleResolvedUrls(html, baseUrl);
+    
+    // Write the fixed HTML back
+    fs.writeFileSync(htmlPath, html, 'utf-8');
+    
+    // Re-process the HTML to download images
+    const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder, baseUrl);
+    
+    return imageMap.size;
+  }
+
+  /**
+   * Fix URLs in HTML that were resolved against Google's domain instead of the actual site
+   * For example: https://news.google.com/hk/bkn/cnt/news/... should be https://hk.on.cc/hk/bkn/cnt/news/...
+   */
+  private fixGoogleResolvedUrls(html: string, baseUrl: string): string {
+    try {
+      const baseUrlObj = new URL(baseUrl);
+      const actualDomain = baseUrlObj.hostname;
+      
+      // Skip if the base URL is already a Google domain
+      if (actualDomain.includes('google.com')) {
+        return html;
+      }
+      
+      // Replace news.google.com URLs that should point to the actual domain
+      // Pattern: https://news.google.com/path/to/content -> https://actual-domain/path/to/content
+      const googleNewsPattern = /https?:\/\/news\.google\.com\//g;
+      
+      // Count matches for logging
+      const matches = html.match(googleNewsPattern);
+      if (matches && matches.length > 0) {
+        console.log(`[HtmlToMarkdown] Fixing ${matches.length} URLs resolved against news.google.com -> ${actualDomain}`);
+        html = html.replace(googleNewsPattern, `https://${actualDomain}/`);
+      }
+      
+      return html;
+    } catch {
+      return html;
+    }
+  }
+
+  /**
+   * Check if a URL has already been processed with valid content
    * @param url - The URL to check
    * @param daysToSearch - Number of days back to search (default: 30)
    */
   private isCached(url: string, daysToSearch: number = 30): boolean {
-    return this.findCacheFolder(url, daysToSearch) !== null;
+    return this.findCacheFolder(url, daysToSearch, true) !== null;
+  }
+
+  /**
+   * Save the final URL to a metadata file for future reference
+   * This is needed for re-downloading images with the correct base URL
+   */
+  private saveFinalUrlToCache(cacheFolder: string, finalUrl: string): void {
+    const metadataPath = path.join(cacheFolder, 'metadata.json');
+    try {
+      const metadata = { finalUrl, timestamp: new Date().toISOString() };
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    } catch (error) {
+      console.warn(`[HtmlToMarkdown] Failed to save metadata: ${error}`);
+    }
+  }
+
+  /**
+   * Get the final URL from the metadata file
+   * Returns null if the file doesn't exist or is invalid
+   */
+  private getFinalUrlFromCache(cacheFolder: string): string | null {
+    const metadataPath = path.join(cacheFolder, 'metadata.json');
+    if (!fs.existsSync(metadataPath)) {
+      // Try to extract base URL from HTML file as fallback
+      return this.extractBaseUrlFromHtml(cacheFolder);
+    }
+    try {
+      const data = fs.readFileSync(metadataPath, 'utf-8');
+      const metadata = JSON.parse(data);
+      return metadata.finalUrl || null;
+    } catch {
+      return this.extractBaseUrlFromHtml(cacheFolder);
+    }
+  }
+
+  /**
+   * Extract the base URL from the HTML file by looking at canonical URL, og:url, or links
+   * This is a fallback when metadata.json doesn't exist
+   */
+  private extractBaseUrlFromHtml(cacheFolder: string): string | null {
+    const htmlPath = path.join(cacheFolder, 'article.html');
+    if (!fs.existsSync(htmlPath)) {
+      return null;
+    }
+    
+    try {
+      const html = fs.readFileSync(htmlPath, 'utf-8');
+      
+      // Try to find canonical URL
+      const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
+      if (canonicalMatch) {
+        console.log(`[HtmlToMarkdown] Extracted base URL from canonical: ${canonicalMatch[1]}`);
+        return canonicalMatch[1];
+      }
+      
+      // Try to find og:url
+      const ogUrlMatch = html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i);
+      if (ogUrlMatch) {
+        console.log(`[HtmlToMarkdown] Extracted base URL from og:url: ${ogUrlMatch[1]}`);
+        return ogUrlMatch[1];
+      }
+      
+      // Look for actual article URLs in the HTML (not google.com or googleusercontent.com)
+      const urlMatch = html.match(/https?:\/\/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})[^"'\s]*/g);
+      if (urlMatch) {
+        // Find the first URL that's not from google.com or googleusercontent.com
+        for (const url of urlMatch) {
+          const hostMatch = url.match(/https?:\/\/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+          if (hostMatch) {
+            const host = hostMatch[1];
+            if (!host.includes('google.com') && 
+                !host.includes('googleusercontent.com') &&
+                !host.includes('gstatic.com') &&
+                !host.includes('googleapis.com')) {
+              console.log(`[HtmlToMarkdown] Extracted base URL from HTML content: ${url}`);
+              return url;
+            }
+          }
+        }
+      }
+      
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -172,7 +478,11 @@ export class HtmlToMarkdownService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private async fetchHtmlToFile(url: string, htmlPath: string): Promise<void> {
+  /**
+   * Fetch HTML from URL and save to file
+   * Returns the final URL after any redirects (important for resolving relative image URLs)
+   */
+  private async fetchHtmlToFile(url: string, htmlPath: string): Promise<{ finalUrl: string }> {
     console.log(`[HtmlToMarkdown] Fetching HTML via CDP: ${url}`);
     
     const maxRetries = 3;
@@ -210,11 +520,19 @@ export class HtmlToMarkdownService {
           await this.delay(3000);
         }
         
-        // Save HTML to file
-        console.log(`[HtmlToMarkdown] Saving HTML to file: ${htmlPath} (${content.html.length} bytes)`);
-        fs.writeFileSync(htmlPath, content.html, 'utf-8');
+        // Fix URLs that were resolved against Google's domain instead of the actual site
+        let html = content.html;
+        if (content.url && !content.url.includes('google.com')) {
+          html = this.fixGoogleResolvedUrls(content.html, content.url);
+        }
         
-        return; // Success, exit retry loop
+        // Save HTML to file
+        console.log(`[HtmlToMarkdown] Saving HTML to file: ${htmlPath} (${html.length} bytes)`);
+        fs.writeFileSync(htmlPath, html, 'utf-8');
+        
+        // Return the final URL after redirects (for resolving relative image URLs)
+        console.log(`[HtmlToMarkdown] Final URL after redirects: ${content.url}`);
+        return { finalUrl: content.url };
         
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -314,11 +632,41 @@ export class HtmlToMarkdownService {
   }
 
   /**
+   * Resolve a relative URL against a base URL
+   * Handles protocol-relative URLs (//example.com/img.jpg)
+   * and path-relative URLs (/img.jpg, img.jpg)
+   * 
+   * @param src - The relative or absolute URL
+   * @param baseUrl - The base URL to resolve against
+   * @returns The resolved absolute URL, or null if invalid
+   */
+  private resolveImageUrl(src: string, baseUrl: string): string | null {
+    try {
+      // Already an absolute URL
+      if (src.startsWith('http://') || src.startsWith('https://')) {
+        return src;
+      }
+      
+      // Protocol-relative URL: //example.com/img.jpg
+      if (src.startsWith('//')) {
+        const parsedBase = new URL(baseUrl);
+        return `${parsedBase.protocol}${src}`;
+      }
+      
+      // Path-relative URL: resolve against base URL
+      const resolved = new URL(src, baseUrl);
+      return resolved.href;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Convert HTML file to markdown file using jsdom
    * Also extracts and downloads images in a single pass (no duplicate JSDOM creation)
    * Returns the image map for backward compatibility
    */
-  private async convertHtmlToMarkdownFile(htmlPath: string, markdownPath: string, cacheFolder: string): Promise<Map<string, string>> {
+  private async convertHtmlToMarkdownFile(htmlPath: string, markdownPath: string, cacheFolder: string, baseUrl?: string): Promise<Map<string, string>> {
     console.log(`[HtmlToMarkdown] Reading HTML file: ${htmlPath}`);
     let html = fs.readFileSync(htmlPath, 'utf-8');
     console.log(`[HtmlToMarkdown] HTML file size: ${html.length} bytes`);
@@ -434,26 +782,45 @@ export class HtmlToMarkdownService {
           // These are typically tracking/ad URLs that don't point to actual images
           if (src.includes('Not)A') ||
               src.includes('activityi;') ||
-              src.includes('javascript:') ||
-              src.includes(')') ||  // Skip URLs with closing parenthesis (breaks curl)
-              src.includes(';') ||   // Skip URLs with semicolons (tracking URLs)
-              src.includes('?') && src.includes(';')) {  // Skip complex tracking URLs
+              src.includes('javascript:')) {
             continue;
           }
           
-          // Generate filename from URL
-          const urlHash = crypto.createHash('md5').update(src).digest('hex').substring(0, 16);
-          const ext = this.getImageExtension(src);
+          // Resolve relative URLs against base URL
+          let resolvedUrl = src;
+          if (baseUrl) {
+            const resolved = this.resolveImageUrl(src, baseUrl);
+            if (resolved) {
+              resolvedUrl = resolved;
+            } else {
+              console.warn(`[HtmlToMarkdown] Could not resolve relative URL: ${src}`);
+              continue;
+            }
+          }
+          
+          // Skip URLs that still don't have a valid protocol
+          if (!resolvedUrl.startsWith('http://') && !resolvedUrl.startsWith('https://')) {
+            console.warn(`[HtmlToMarkdown] Skipping invalid URL (no protocol): ${resolvedUrl}`);
+            continue;
+          }
+          
+          // Generate filename from the RESOLVED URL (not the original src)
+          // This ensures consistent filenames regardless of how the URL was represented in HTML
+          const urlHash = crypto.createHash('md5').update(resolvedUrl).digest('hex').substring(0, 16);
+          const ext = this.getImageExtension(resolvedUrl);
           const filename = `img_${urlHash}${ext}`;
           const filepath = path.join(imagesDir, filename);
           
           // Check if image already exists
           if (fs.existsSync(filepath)) {
+            // Still add to imageMap even if file exists (for markdown reference)
+            const relativePath = `images/${filename}`;
+            imageMap.set(src, relativePath);
             continue;
           } else {
             // Download image using curl (streams directly to disk)
-            console.log(`[HtmlToMarkdown] Downloading image ${downloadedCount + 1}/${images.length}: ${src}`);
-            await this.downloadImageWithCurl(src, filepath);
+            console.log(`[HtmlToMarkdown] Downloading image ${downloadedCount + 1}/${images.length}: ${resolvedUrl}`);
+            await this.downloadImageWithCurl(resolvedUrl, filepath);
             downloadedCount++;
             console.log(`[HtmlToMarkdown] Downloaded ${downloadedCount}/${images.length} images`);
           }
@@ -491,7 +858,11 @@ export class HtmlToMarkdownService {
     
     const processNode = (node: Node, depth: number = 0): string => {
       if (node.nodeType === 3) { // Text node
-        return node.textContent || '';
+        // Normalize whitespace: collapse multiple spaces/tabs/newlines into single space
+        const text = node.textContent || '';
+        const normalized = text.replaceAll(/[\t\n\r]+/g, ' ').replaceAll(/ {2,}/g, ' ');
+        // If the text node is only whitespace, return empty (ignore indentation)
+        return normalized.trim() === '' ? '' : normalized;
       }
       
       if (node.nodeType !== 1) return ''; // Not an element
@@ -625,8 +996,14 @@ export class HtmlToMarkdownService {
     
     markdown = processNode(element);
     
-    // Clean up excessive newlines
-    markdown = markdown.replaceAll(/\n{3,}/g, '\n\n').trim();
+    // Clean up excessive newlines and lines with only whitespace
+    markdown = markdown
+      .split('\n')
+      .map(line => line.trimEnd()) // Remove trailing whitespace
+      .filter(line => line.length > 0) // Remove empty lines (we'll restore paragraph spacing)
+      .join('\n')
+      .replaceAll(/\n{3,}/g, '\n\n') // Collapse multiple blank lines to double
+      .trim();
     
     return markdown;
   }
@@ -647,7 +1024,17 @@ export class HtmlToMarkdownService {
           const markdownPath = path.join(cacheFolder, 'article.md');
           const htmlPath = path.join(cacheFolder, 'article.html');
           
-          console.log(`[HtmlToMarkdown] Using cached result for: ${url}`);
+          // Check if images need to be re-downloaded
+          if (this.needsImageRedownload(cacheFolder)) {
+            console.log(`[HtmlToMarkdown] Cached article found but images need re-download: ${url}`);
+            // Read the final URL from the metadata file if it exists
+            const finalUrl = this.getFinalUrlFromCache(cacheFolder) || url;
+            const imagesDownloaded = await this.redownloadImages(cacheFolder, finalUrl);
+            console.log(`[HtmlToMarkdown] Re-downloaded ${imagesDownloaded} images`);
+          } else {
+            console.log(`[HtmlToMarkdown] Using cached result for: ${url}`);
+          }
+          
           return {
             success: true,
             cached: true,
@@ -667,13 +1054,16 @@ export class HtmlToMarkdownService {
       const htmlPath = path.join(cacheFolder, 'article.html');
       const markdownPath = path.join(cacheFolder, 'article.md');
 
-      // Fetch HTML
+      // Fetch HTML and get the final URL after redirects
       console.log(`[HtmlToMarkdown] Fetching HTML for: ${url}`);
-      await this.fetchHtmlToFile(url, htmlPath);
+      const { finalUrl } = await this.fetchHtmlToFile(url, htmlPath);
+      
+      // Save the final URL to a metadata file for future reference
+      this.saveFinalUrlToCache(cacheFolder, finalUrl);
 
-      // Convert to markdown and download images
+      // Convert to markdown and download images (use final URL for relative image resolution)
       console.log(`[HtmlToMarkdown] Converting to markdown...`);
-      const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder);
+      const imageMap = await this.convertHtmlToMarkdownFile(htmlPath, markdownPath, cacheFolder, finalUrl);
 
       console.log(`[HtmlToMarkdown] Successfully processed: ${url}`);
       return {
