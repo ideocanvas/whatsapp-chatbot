@@ -24,6 +24,7 @@ export interface TTSOptions {
   speed?: number;      // e.g., 1.0
   lang_code?: string;  // 'a' (US English), 'b' (UK English), 'z' (Chinese), etc.
   model_repo?: string; // e.g., 'prince-canuma/Kokoro-82M' or 'mlx-community/Spark-TTS...'
+  speaker?: string;    // e.g., 'speaker01', 'speaker02', etc. (if supported by the model)
 }
 
 export class MediaService {
@@ -319,10 +320,11 @@ export class MediaService {
       // Default Configuration
       const payload = {
         text: cleanedText,
-        model_repo: options.model_repo || 'prince-canuma/Kokoro-82M', // Default to Kokoro
+        model_repo: options.model_repo || 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16', // Default to Kokoro
         voice: options.voice || 'af_heart',
         speed: options.speed || 1.0,
-        lang_code: langCode
+        lang_code: langCode,
+        speaker: options.speaker || 'speaker01',
       };
 
       console.log(`Synthesizing audio: "${cleanedText.substring(0, 50)}..." with model ${payload.model_repo} (lang: ${payload.lang_code})`);
