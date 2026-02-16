@@ -5,7 +5,7 @@ import { cleanLLMResponse } from '../utils/responseCleaner';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { ToolRegistry } from '../core/ToolRegistry';
 import { AIConfig } from '../types/aiConfig';
-import { ConfigLoader } from '../utils/configLoader';
+import { ConfigLoader, createConfigLoaderFromEnv } from '../utils/configLoader';
 
 export interface OpenAIConfig {
   apiKey: string;
@@ -434,7 +434,8 @@ Include any text content exactly as it appears. Provide specific details that wo
 
 // Helper function to create OpenAIService instance from config file
 export async function createOpenAIServiceFromConfig(): Promise<OpenAIService> {
-  const configLoader = new ConfigLoader();
+  // Use createConfigLoaderFromEnv to respect AI_CONFIG_PATH and AI_CONFIG_FILE env variables
+  const configLoader = createConfigLoaderFromEnv();
 
   try {
     const config = await configLoader.loadConfig();
