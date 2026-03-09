@@ -1,11 +1,11 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import OpenAI from 'openai';
-import * as fs from 'fs';
-import * as path from 'path';
-import { cleanLLMResponse } from '../utils/responseCleaner';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { ToolRegistry } from '../core/ToolRegistry';
 import { AIConfig } from '../types/aiConfig';
-import { ConfigLoader, createConfigLoaderFromEnv } from '../utils/configLoader';
+import { createConfigLoaderFromEnv } from '../utils/configLoader';
+import { cleanLLMResponse } from '../utils/responseCleaner';
 
 export interface OpenAIConfig {
   apiKey: string;
@@ -19,10 +19,10 @@ export interface OpenAIConfig {
 }
 
 export class OpenAIService {
-  private openai: OpenAI;
-  private config: OpenAIConfig;
-  private chatbotName: string;
-  private prompts: AIConfig['prompts'];
+  private readonly openai: OpenAI;
+  private readonly config: OpenAIConfig;
+  private readonly chatbotName: string;
+  private readonly prompts: AIConfig['prompts'];
   private readonly MAX_RETRIES = 3;
   private readonly RETRY_DELAY_MS = 2000; // 2 seconds base delay
 
@@ -242,10 +242,6 @@ export class OpenAIService {
       // Safety check to prevent infinite loops
       if (toolCallRound >= maxToolRounds) {
         console.warn('⚠️ Maximum tool call rounds reached:', maxToolRounds);
-
-        // Get the last user message for context
-        const lastUserMessage = messages.slice().reverse().find(msg => msg.role === 'user');
-        const userQuery = lastUserMessage?.content;
 
         // Use custom search limit prompt from config if available, otherwise use default
         const toolLimitPrompt = this.prompts?.searchLimit || `I reached the maximum tool usage limit while processing your request. Please try a more specific query or ask me something else.`;
