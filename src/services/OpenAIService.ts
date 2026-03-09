@@ -387,13 +387,23 @@ Include any text content exactly as it appears. Provide specific details that wo
 
   /**
    * Create embeddings for text content
+   * Note: OpenAI embedding models have token limits:
+   * - text-embedding-ada-002: 8191 tokens
+   * - text-embedding-3-small: 8191 tokens
+   * - text-embedding-3-large: 3072 tokens
    */
   async createEmbedding(text: string): Promise<number[]> {
+    // Truncate text to avoid context length errors
+    // Approximate: 1 token ≈ 4 characters for English text
+    // Use conservative limit of 7000 tokens ≈ 28000 characters
+    const MAX_CHARS = 28000;
+    const truncatedText = text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) : text;
+    
     return this.retryWithBackoff(
       async () => {
         const response = await this.openai.embeddings.create({
         model: this.config.embeddingModel!,
-        input: text,
+        input: truncatedText,
         encoding_format: 'float',
       });
 
@@ -408,6 +418,76 @@ Include any text content exactly as it appears. Provide specific details that wo
       console.error('Error creating embedding:', error);
       throw new Error('Failed to create embedding with OpenAI');
     });
+  }
+
+  /**
+   * Create embeddings for large text content by chunking and averaging
+   * Returns a single averaged embedding vector
+   */
+  async createEmbeddingForLargeText(text: string, chunkSize: number = 6000): Promise<number[]> {
+    // If text is small enough, use regular embedding
+    const MAX_CHARS = 28000;
+    if (text.length <= MAX_CHARS) {
+      return this.createEmbedding(text);
+    }
+
+    console.log(`📊 Text too large (${text.length} chars), chunking for embeddings...`);
+    
+    // Split text into chunks
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += chunkSize) {
+      chunks.push(text.slice(i, i + chunkSize));
+    }
+
+    console.log(`📊 Created ${chunks.length} chunks for embedding`);
+
+    // Get embeddings for each chunk
+    const embeddings: number[][] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        const embedding = await this.createEmbedding(chunks[i]);
+        embeddings.push(embedding);
+        console.log(`📊 Embedded chunk ${i + 1}/${chunks.length}`);
+      } catch (error) {
+        console.error(`Failed to embed chunk ${i + 1}:`, error);
+        // Continue with other chunks
+      }
+    }
+
+    if (embeddings.length === 0) {
+      throw new Error('Failed to create any embeddings from chunks');
+    }
+
+    // Average the embeddings
+    const avgEmbedding = this.averageEmbeddings(embeddings);
+    console.log(`📊 Averaged ${embeddings.length} embeddings into single vector`);
+    
+    return avgEmbedding;
+  }
+
+  /**
+   * Average multiple embedding vectors
+   */
+  private averageEmbeddings(embeddings: number[][]): number[] {
+    if (embeddings.length === 0) {
+      throw new Error('No embeddings to average');
+    }
+
+    const dimensions = embeddings[0].length;
+    const result = new Array(dimensions).fill(0);
+
+    for (const embedding of embeddings) {
+      for (let i = 0; i < dimensions; i++) {
+        result[i] += embedding[i];
+      }
+    }
+
+    // Divide by count to get average
+    for (let i = 0; i < dimensions; i++) {
+      result[i] /= embeddings.length;
+    }
+
+    return result;
   }
 
   /**

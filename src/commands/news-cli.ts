@@ -272,8 +272,8 @@ async function main() {
       try {
         console.log(`🔄 Rebuilding embedding: ${knowledge.source?.substring(0, 50)}...`);
         
-        // Create new embedding using current model
-        const newEmbedding = await openaiService.createEmbedding(knowledge.content);
+        // Create new embedding using current model (use large text method for safety)
+        const newEmbedding = await openaiService.createEmbeddingForLargeText(knowledge.content);
         const embeddingSql = pgvector.toSql(newEmbedding);
         
         // Update knowledge with new embedding (using pgvector format)

@@ -81,7 +81,8 @@ export class KnowledgeBasePostgres {
     }
 
     try {
-      const embedding = await this.openaiService.createEmbedding(document.content);
+      // Use the large text embedding method which handles chunking automatically
+      const embedding = await this.openaiService.createEmbeddingForLargeText(document.content);
       const embeddingSql = pgvector.toSql(embedding);
       const id = uuidv4();
 
