@@ -12,9 +12,9 @@ const CONTENT_PREVIEW_LENGTH = 300;
  * Provides real-time access to autonomous agent data and chat testing
  */
 export class DashboardRoutes {
-  private router: Router;
+  private readonly router: Router;
   private activityLog: Array<{timestamp: string; message: string; type?: string}> = [];
-  private dashboardPassword: string;
+  private readonly dashboardPassword: string;
 
   constructor() {
     this.router = Router();
@@ -397,45 +397,9 @@ export class DashboardRoutes {
       }
     });
 
-    // Favorite websites browsing trigger endpoint
-    this.router.post('/api/browse/favorites', this.requireAuth.bind(this), async (req: Request, res: Response) => {
-      try {
-        const { intent, bypassLimit = true } = req.body; // Default to bypass limits for UI-triggered browsing
-        const agent = getAutonomousAgent();
-
-        this.logActivity(`Manual favorite websites browsing triggered with intent: ${intent || 'general'}, bypassLimit: ${bypassLimit}`);
-
-        // Get the browser service from the agent
-        const browserService = agent.getBrowserService();
-        if (!browserService) {
-          return res.status(500).json({ error: 'Browser service not available' });
-        }
-
-        // Use the surf method to browse favorite websites with bypass flag
-        const result = await browserService.surf(intent || 'general', bypassLimit);
-
-        this.logActivity(`Manual favorite websites browsing completed - visited ${result.urlsVisited.length} pages, gained ${result.knowledgeGained} knowledge items`);
-
-        res.json({
-          success: true,
-          message: `Favorite websites browsing completed${intent ? ` with intent: ${intent}` : ''}`,
-          pagesVisited: result.urlsVisited.length,
-          knowledgeGained: result.knowledgeGained,
-          estimatedTime: '3-10 minutes',
-          bypassLimit
-        });
-      } catch (error) {
-        console.error('Error triggering favorite websites browsing:', error);
-        res.status(500).json({ error: 'Failed to trigger favorite websites browsing session' });
-      }
-    });
-
-
     // Force knowledge update endpoint
     this.router.post('/api/knowledge/refresh', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const agent = getAutonomousAgent();
-
         this.logActivity('Manual knowledge refresh triggered');
 
         // This would force the agent to browse and update knowledge

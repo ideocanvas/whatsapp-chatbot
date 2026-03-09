@@ -1,4 +1,3 @@
-import { BrowserService } from '../services/BrowserService';
 import { ContextManager } from '../memory/ContextManager';
 import { WhatsAppService } from '../services/WhatsAppService';
 import { Agent } from './Agent';
@@ -9,14 +8,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * The Heartbeat of the autonomous agent system.
- * Manages the 1-minute tick cycle for idle browsing and proactive messaging.
+ * The Heartbeat of the news-focused agent system.
+ * Manages the periodic tick cycle for news fetching and proactive messaging.
  */
 export class Scheduler {
   private isRunning: boolean = false;
   private tickCount: number = 0;
 
-  // [NEW] Batching storage
+  // Batching storage
   // Map<UserId, Map<Url, ProcessedNewsResult>> to automatically handle URL duplicates
   private pendingNewsBatch: Map<string, Map<string, any>> = new Map();
   private readonly BATCH_FLUSH_INTERVAL: number;
@@ -24,10 +23,8 @@ export class Scheduler {
   private readonly MAINTENANCE_INTERVAL_MS: number;
 
   private stats = {
-    browsingSessions: 0,
     proactiveChecks: 0,
     messagesSent: 0,
-    knowledgeLearned: 0,
     lastTick: new Date()
   };
 
@@ -36,7 +33,6 @@ export class Scheduler {
   private readonly STATE_FILE = path.join(this.DATA_DIR, 'scheduler_state.json');
 
   constructor(
-    private browser: BrowserService,
     private contextMgr: ContextManager,
     private whatsapp: WhatsAppService,
     private agent: Agent,
@@ -87,12 +83,11 @@ export class Scheduler {
   interrupt(): void {
     if (this.isRunning) {
       console.log('🚦 Scheduler interrupting background tasks...');
-      this.browser.stopBrowsing();
     }
   }
 
   /**
-   * Main tick function - decides between idle browsing and proactive messaging
+   * Main tick function - handles news fetching and proactive messaging
    */
   private async tick(): Promise<void> {
     if (!this.isRunning) return;
@@ -113,25 +108,12 @@ export class Scheduler {
         await this.performNewsFetching();
       }
 
-      // 3. IDLE MODE: Browse (legacy browsing)
-      if (this.shouldBrowse(activeUsers.length)) {
-          let browseIntent = undefined;
-          if (activeUsers.length > 0) {
-              const randomUser = activeUsers[Math.floor(Math.random() * activeUsers.length)];
-              const interests = this.contextMgr.getUserInterests(randomUser);
-              if (interests.length > 0) {
-                  browseIntent = interests[Math.floor(Math.random() * interests.length)];
-              }
-          }
-          await this.idleMode(browseIntent);
-      }
-
-      // 4. PROACTIVE MODE: Accumulate News
+      // 3. PROACTIVE MODE: Accumulate News
       if (activeUsers.length > 0) {
         await this.accumulateNews(activeUsers);
       }
 
-      // 5. [NEW] Flush Batch based on configured interval
+      // 4. Flush Batch based on configured interval
       if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
           await this.flushNewsBatches();
       }
@@ -141,13 +123,6 @@ export class Scheduler {
     } catch (error) {
       console.error('❌ Scheduler tick error:', error);
     }
-  }
-
-  private async idleMode(intent?: string): Promise<void> {
-    console.log('🌐 Entering Idle Mode: Autonomous Browsing');
-    this.stats.browsingSessions++;
-    const result = await this.browser.surf(intent);
-    this.stats.knowledgeLearned += result.knowledgeGained;
   }
 
   /**
@@ -287,12 +262,6 @@ export class Scheduler {
       return false;
   }
 
-  private shouldBrowse(activeUserCount: number): boolean {
-    // Check if browser has reached its hourly limit
-    const browserStats = this.browser.getStats();
-    return browserStats.pagesVisitedThisHour < 20; // MAX_PAGES_PER_HOUR
-  }
-
   /**
    * Check if it's time for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
    */
@@ -367,9 +336,7 @@ export class Scheduler {
     if (this.tickCount % 10 === 0) {
       console.log('📊 Scheduler Statistics:', {
         ticks: this.tickCount,
-        browsingSessions: this.stats.browsingSessions,
         messagesSent: this.stats.messagesSent,
-        knowledgeLearned: this.stats.knowledgeLearned,
         queueStats: this.actionQueue.getQueueStats(),
         pendingBatches: this.pendingNewsBatch.size
       });

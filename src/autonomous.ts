@@ -7,59 +7,46 @@ import { ToolRegistry } from './core/ToolRegistry';
 import { ContextManager } from './memory/ContextManager';
 import { SummaryStore } from './memory/SummaryStore';
 import { ActionQueueService } from './services/ActionQueueService';
-import { BrowserService } from './services/BrowserService';
-import { ChromeProcessService, createChromeProcessServiceFromEnv } from './services/ChromeProcessService';
 import { UserProfileService } from './services/UserProfileService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/GoogleSearchService';
 import { MediaService } from './services/MediaService';
 import { OpenAIService, createOpenAIServiceFromConfig } from './services/OpenAIService';
-import { createWebScrapeService } from './services/WebScrapeService';
 import { WhatsAppService } from './services/WhatsAppService';
 import { ConversationAnalyticsTool } from './tools/ConversationAnalyticsTool';
-import { DeepResearchTool } from './tools/DeepResearchTool';
 import { RecallHistoryTool } from './tools/RecallHistoryTool';
 import { SetReminderTool } from './tools/SetReminderTool';
 import { WebSearchTool } from './tools/WebSearchTool';
 
 /**
- * Autonomous WhatsApp Agent Main Entry Point
+ * News WhatsApp Agent Main Entry Point
  *
- * This is the complete replacement for the reactive bot architecture.
- * Features autonomous browsing, proactive messaging, and intelligent memory management.
+ * Features periodic news fetching and proactive messaging with intelligent memory management.
  */
-class AutonomousWhatsAppAgent {
+class NewsWhatsAppAgent {
   private scheduler?: Scheduler;
   private agent?: Agent;
   private contextMgr?: ContextManager;
   private kb?: any; // KnowledgeBase or KnowledgeBasePostgres
   private tools?: ToolRegistry;
-  private browser?: BrowserService;
   private actionQueue?: ActionQueueService;
   private whatsapp?: WhatsAppService;
-  private mediaService?: MediaService; // Add MediaService
+  private mediaService?: MediaService;
   private openai?: OpenAIService;
   private historyStore?: any; // HistoryStore or HistoryStorePostgres
   private summaryStore?: SummaryStore;
   private userProfileService?: UserProfileService;
   private googleSearchService?: GoogleSearchService;
-  private chromeProcessService?: ChromeProcessService; // Chrome process manager
   private isInitialized: boolean = false;
 
   constructor() {
-    console.log('🚀 Initializing Autonomous WhatsApp Agent...');
+    console.log('🚀 Initializing News WhatsApp Agent...');
   }
 
   /**
-   * Initialize all components of the autonomous system
+   * Initialize all components of the news agent system
    */
   async initialize(): Promise<void> {
     try {
-      // 0. Start Chrome browser process with remote debugging
-      console.log('🌐 Initializing Chrome browser process...');
-      this.chromeProcessService = createChromeProcessServiceFromEnv();
-      await this.chromeProcessService.start();
-      console.log('✅ Chrome browser process started');
-
       // 1. Initialize Core Services
       this.openai = await createOpenAIServiceFromConfig();
       this.contextMgr = new ContextManager();
@@ -85,18 +72,14 @@ class AutonomousWhatsAppAgent {
       };
 
       this.whatsapp = new WhatsAppService(whatsappConfig, process.env.DEV_MODE === 'true');
-      this.mediaService = new MediaService(whatsappConfig); // Initialize MediaService
+      this.mediaService = new MediaService(whatsappConfig);
 
       // CRITICAL FIX: Link ActionQueue to WhatsApp Service
       this.actionQueue.registerMessageSender(async (userId, content) => {
         return this.whatsapp!.sendMessage(userId, content);
       });
 
-      // 2. Initialize Browser & News Services
-      const scraper = createWebScrapeService();
-      this.browser = new BrowserService(scraper, this.kb);
-
-      // Initialize Google Search Service (with OpenAI for article processing and KB for knowledge)
+      // 2. Initialize Google Search Service for news fetching
       this.googleSearchService = createGoogleSearchServiceFromEnv(this.openai, this.kb);
 
       // 3. Initialize Tool Registry
@@ -107,24 +90,16 @@ class AutonomousWhatsAppAgent {
         this.tools.registerTool(new WebSearchTool(this.googleSearchService));
       }
 
-      // Register NEW Tools
+      // Register Tools
       this.tools.registerTool(new RecallHistoryTool(this.historyStore));
       this.tools.registerTool(new ConversationAnalyticsTool(this.historyStore));
-
-      // Register Deep Research Tool
-      if (this.browser) {
-          this.tools.registerTool(new DeepResearchTool(this.browser));
-      }
-
-      // Register Set Reminder Tool
       this.tools.registerTool(new SetReminderTool());
 
       // 4. Initialize Agent (pass UserProfileService)
       this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue, this.userProfileService);
 
-      // 5. Initialize Scheduler
+      // 5. Initialize Scheduler (without browser)
       this.scheduler = new Scheduler(
-        this.browser,
         this.contextMgr,
         this.whatsapp,
         this.agent,
@@ -134,16 +109,16 @@ class AutonomousWhatsAppAgent {
       );
 
       this.isInitialized = true;
-      console.log('✅ Autonomous WhatsApp Agent Initialized Successfully');
+      console.log('✅ News WhatsApp Agent Initialized Successfully');
 
     } catch (error) {
-      console.error('❌ Failed to initialize Autonomous Agent:', error);
+      console.error('❌ Failed to initialize News Agent:', error);
       throw error;
     }
   }
 
   /**
-   * Start the autonomous agent system
+   * Start the news agent system
    */
   start(): void {
     if (!this.isInitialized || !this.scheduler) {
@@ -151,14 +126,14 @@ class AutonomousWhatsAppAgent {
     }
 
     console.log('\n' + '='.repeat(60));
-    console.log('🤖 AUTONOMOUS WHATSAPP AGENT STARTING');
+    console.log('📰 NEWS WHATSAPP AGENT STARTING');
     console.log('='.repeat(60));
 
     // Start the scheduler (1-minute ticks)
     this.scheduler.start();
 
-    console.log('📍 Scheduler: 1-minute autonomous tick cycle started');
-    console.log('🌐 Browser: Autonomous surfing enabled');
+    console.log('📍 Scheduler: Periodic news fetching cycle started');
+    console.log('📰 News: Periodic news fetching enabled (every 6 hours)');
     console.log('💬 Agent: Proactive messaging capabilities active');
     console.log('🧠 Memory: 3-tier memory system operational');
     console.log('📬 Queue: Rate-limited action queue running');
@@ -533,7 +508,7 @@ class AutonomousWhatsAppAgent {
    * Get system status and statistics
    */
   async getStatus() {
-    if (!this.isInitialized || !this.agent || !this.scheduler || !this.contextMgr || !this.kb || !this.browser || !this.actionQueue || !this.tools) {
+    if (!this.isInitialized || !this.agent || !this.scheduler || !this.contextMgr || !this.kb || !this.actionQueue || !this.tools) {
       return { status: 'Not initialized' };
     }
 
@@ -548,13 +523,11 @@ class AutonomousWhatsAppAgent {
         context: this.contextMgr.getStats(),
         knowledge: await (this.kb as any).getStats()
       },
-      browser: this.browser.getStats(),
       queue: this.actionQueue.getQueueStats(),
       tools: {
         available: this.tools.getAvailableTools(),
         count: this.tools.getAvailableTools().length
-      },
-      chrome: this.chromeProcessService?.getStatus() ?? { isRunning: false, pid: null, port: 9222, startedAt: null, restartCount: 0, lastError: 'Not initialized' }
+      }
     };
   }
 
@@ -614,31 +587,13 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
-   * Get the browser service for external access
-   */
-  getBrowserService(): BrowserService | undefined {
-    return this.browser;
-  }
-
-  /**
-   * Get the Chrome process service for external access
-   */
-  getChromeProcessService(): ChromeProcessService | undefined {
-    return this.chromeProcessService;
-  }
-
-  /**
-   * Stop the autonomous system
+   * Stop the news agent system
    */
   async stop(): Promise<void> {
     if (this.scheduler) {
       this.scheduler.stop();
     }
-    // Stop Chrome process
-    if (this.chromeProcessService) {
-      await this.chromeProcessService.stop();
-    }
-    console.log('🛑 Autonomous WhatsApp Agent Stopped');
+    console.log('🛑 News WhatsApp Agent Stopped');
   }
 
   /**
@@ -647,30 +602,29 @@ class AutonomousWhatsAppAgent {
   private logInitialStats(): void {
     console.log('📊 Initial System Stats:');
     console.log('- Memory: 3-tier architecture (1h context, vector KB, SQL history)');
-    console.log('- Browser: Autonomous surfing with 10 pages/hour limit');
-    console.log('- Scheduler: 1-minute ticks with intelligent mode switching');
+    console.log('- Scheduler: Periodic news fetching with proactive messaging');
     console.log('- Agent: LLM orchestration with tool calling');
     console.log('- Queue: Rate-limited messaging with proactive cooldowns');
   }
 }
 
 // Singleton instance
-let autonomousAgent: AutonomousWhatsAppAgent;
+let newsAgent: NewsWhatsAppAgent;
 
 /**
- * Get or create the autonomous agent instance
+ * Get or create the news agent instance
  */
-export function getAutonomousAgent(): AutonomousWhatsAppAgent {
-  if (!autonomousAgent) {
-    autonomousAgent = new AutonomousWhatsAppAgent();
+export function getAutonomousAgent(): NewsWhatsAppAgent {
+  if (!newsAgent) {
+    newsAgent = new NewsWhatsAppAgent();
   }
-  return autonomousAgent;
+  return newsAgent;
 }
 
 /**
- * Initialize and start the autonomous agent
+ * Initialize and start the news agent
  */
-export async function startAutonomousAgent(): Promise<AutonomousWhatsAppAgent> {
+export async function startAutonomousAgent(): Promise<NewsWhatsAppAgent> {
   const agent = getAutonomousAgent();
   await agent.initialize();
   agent.start();
@@ -678,4 +632,4 @@ export async function startAutonomousAgent(): Promise<AutonomousWhatsAppAgent> {
 }
 
 // Export for testing and manual control
-export { AutonomousWhatsAppAgent };
+export { NewsWhatsAppAgent };
