@@ -1,4 +1,5 @@
 import { ChromeRemoteDebugService, createChromeRemoteDebugServiceFromEnv } from './ChromeRemoteDebugService';
+import { getChromeProcessService } from './ChromeProcessService';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -1096,7 +1097,20 @@ export class HtmlToMarkdownService {
 
 /**
  * Helper function to create HtmlToMarkdownService instance
+ * This creates a ChromeProcessService singleton to enable auto-starting Chrome
  */
 export function createHtmlToMarkdownServiceFromEnv(cacheDir?: string): HtmlToMarkdownService {
-  return new HtmlToMarkdownService(cacheDir);
+  // Get or create the ChromeProcessService singleton for auto-starting Chrome
+  const chromeProcessService = getChromeProcessService();
+  
+  // Create ChromeRemoteDebugService with ChromeProcessService for auto-start
+  const chromeRemoteDebugService = createChromeRemoteDebugServiceFromEnv(chromeProcessService);
+  
+  // Create HtmlToMarkdownService with the configured ChromeRemoteDebugService
+  const service = new HtmlToMarkdownService(cacheDir);
+  
+  // Replace the chromeService with our configured one that has ChromeProcessService
+  (service as any).chromeService = chromeRemoteDebugService;
+  
+  return service;
 }
