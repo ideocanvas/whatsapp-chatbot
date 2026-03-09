@@ -1,14 +1,18 @@
 /**
  * ChromeRemoteDebugService
- * 
+ *
  * A service to control a Chrome browser via Chrome DevTools Protocol (CDP).
  * This allows using manually configured browser sessions (cookies, logins, etc.)
  * while automating navigation and content extraction.
- * 
+ *
  * IMPORTANT: This service implements exclusive locking to ensure only one caller
  * can use the Chrome instance at a time. Multiple concurrent callers will be
  * queued and processed sequentially.
- * 
+ *
+ * This service integrates with ChromeProcessService to ensure the Chrome browser
+ * is running before attempting to connect. If the browser is not running, it will
+ * be auto-started.
+ *
  * @example
  * ```typescript
  * const service = new ChromeRemoteDebugService({ endpoint: 'http://127.0.0.1:9222' });
@@ -29,6 +33,7 @@ import {
   ConnectionState,
   ConnectionStatus,
 } from '../types/chromeRemoteDebug';
+import { ChromeProcessService, getChromeProcessService } from './ChromeProcessService';
 
 /**
  * Default configuration values
@@ -128,13 +133,17 @@ export class ChromeRemoteDebugService {
   
   /** Lock for exclusive access to the Chrome instance */
   private readonly lock = new AsyncLock();
+  
+  /** Reference to ChromeProcessService for ensuring browser is running */
+  private chromeProcessService?: ChromeProcessService;
 
   /**
    * Create a new ChromeRemoteDebugService instance
-   * 
+   *
    * @param config - Configuration for the service
+   * @param chromeProcessService - Optional ChromeProcessService instance for auto-starting Chrome
    */
-  constructor(config: ChromeRemoteDebugConfig & { lockTimeout?: number }) {
+  constructor(config: ChromeRemoteDebugConfig & { lockTimeout?: number }, chromeProcessService?: ChromeProcessService) {
     this.config = {
       endpoint: config.endpoint,
       timeout: config.timeout ?? DEFAULT_CONFIG.timeout,
@@ -142,6 +151,16 @@ export class ChromeRemoteDebugService {
       retryDelay: config.retryDelay ?? DEFAULT_CONFIG.retryDelay,
       lockTimeout: config.lockTimeout ?? DEFAULT_CONFIG.lockTimeout,
     };
+    this.chromeProcessService = chromeProcessService;
+  }
+  
+  /**
+   * Set the ChromeProcessService instance
+   *
+   * @param chromeProcessService - The ChromeProcessService instance
+   */
+  setChromeProcessService(chromeProcessService: ChromeProcessService): void {
+    this.chromeProcessService = chromeProcessService;
   }
   
   /**
@@ -174,10 +193,11 @@ export class ChromeRemoteDebugService {
 
   /**
    * Connect to the remote Chrome browser
-   * 
+   *
    * This method acquires an exclusive lock to ensure only one caller
-   * can connect at a time.
-   * 
+   * can connect at a time. If ChromeProcessService is available, it will
+   * ensure Chrome is running before attempting to connect.
+   *
    * @returns Promise that resolves when connected
    * @throws Error if connection fails after all retries
    */
@@ -185,6 +205,15 @@ export class ChromeRemoteDebugService {
     return this.withLock(async () => {
       if (this.browser?.isConnected()) {
         return; // Already connected
+      }
+
+      // Ensure Chrome process is running if ChromeProcessService is available
+      if (this.chromeProcessService) {
+        const status = this.chromeProcessService.getStatus();
+        if (!status.isRunning) {
+          console.log('🔄 Chrome process not running, starting...');
+          await this.chromeProcessService.start();
+        }
       }
 
       this.connectionState = 'connecting';
@@ -220,6 +249,17 @@ export class ChromeRemoteDebugService {
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
           this.lastError = lastError.message;
+          
+          // If ChromeProcessService is available, try to restart Chrome on connection failure
+          if (this.chromeProcessService && attempt === 1) {
+            console.log('⚠️ Connection failed, attempting to restart Chrome process...');
+            try {
+              await this.chromeProcessService.stop();
+              await this.chromeProcessService.start();
+            } catch (restartError) {
+              console.error('❌ Failed to restart Chrome:', restartError);
+            }
+          }
           
           if (attempt < this.config.retries) {
             await this.delay(this.config.retryDelay * attempt); // Exponential backoff
@@ -751,18 +791,20 @@ export class ChromeRemoteDebugService {
 
 /**
  * Create a ChromeRemoteDebugService from environment variables
- * 
+ *
  * Environment variables:
  * - CDP_ENDPOINT: CDP endpoint URL (default: http://127.0.0.1:9222)
  * - CDP_TIMEOUT: Navigation timeout in ms (default: 30000)
  * - CDP_RETRIES: Connection retry count (default: 3)
  * - CDP_LOCK_TIMEOUT: Lock acquisition timeout in ms (default: 60000)
+ *
+ * @param chromeProcessService - Optional ChromeProcessService for auto-starting Chrome
  */
-export function createChromeRemoteDebugServiceFromEnv(): ChromeRemoteDebugService {
+export function createChromeRemoteDebugServiceFromEnv(chromeProcessService?: ChromeProcessService): ChromeRemoteDebugService {
   return new ChromeRemoteDebugService({
     endpoint: process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222',
     timeout: process.env.CDP_TIMEOUT ? Number.parseInt(process.env.CDP_TIMEOUT, 10) : undefined,
     retries: process.env.CDP_RETRIES ? Number.parseInt(process.env.CDP_RETRIES, 10) : undefined,
     lockTimeout: process.env.CDP_LOCK_TIMEOUT ? Number.parseInt(process.env.CDP_LOCK_TIMEOUT, 10) : undefined,
-  });
+  }, chromeProcessService);
 }

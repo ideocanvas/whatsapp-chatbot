@@ -8,6 +8,7 @@ import { ContextManager } from './memory/ContextManager';
 import { SummaryStore } from './memory/SummaryStore';
 import { ActionQueueService } from './services/ActionQueueService';
 import { BrowserService } from './services/BrowserService';
+import { ChromeProcessService, createChromeProcessServiceFromEnv } from './services/ChromeProcessService';
 import { UserProfileService } from './services/UserProfileService';
 import { GoogleSearchService, createGoogleSearchServiceFromEnv } from './services/GoogleSearchService';
 import { MediaService } from './services/MediaService';
@@ -41,6 +42,7 @@ class AutonomousWhatsAppAgent {
   private summaryStore?: SummaryStore;
   private userProfileService?: UserProfileService;
   private googleSearchService?: GoogleSearchService;
+  private chromeProcessService?: ChromeProcessService; // Chrome process manager
   private isInitialized: boolean = false;
 
   constructor() {
@@ -52,6 +54,12 @@ class AutonomousWhatsAppAgent {
    */
   async initialize(): Promise<void> {
     try {
+      // 0. Start Chrome browser process with remote debugging
+      console.log('🌐 Initializing Chrome browser process...');
+      this.chromeProcessService = createChromeProcessServiceFromEnv();
+      await this.chromeProcessService.start();
+      console.log('✅ Chrome browser process started');
+
       // 1. Initialize Core Services
       this.openai = await createOpenAIServiceFromConfig();
       this.contextMgr = new ContextManager();
@@ -545,7 +553,8 @@ class AutonomousWhatsAppAgent {
       tools: {
         available: this.tools.getAvailableTools(),
         count: this.tools.getAvailableTools().length
-      }
+      },
+      chrome: this.chromeProcessService?.getStatus() ?? { isRunning: false, pid: null, port: 9222, startedAt: null, restartCount: 0, lastError: 'Not initialized' }
     };
   }
 
@@ -612,11 +621,22 @@ class AutonomousWhatsAppAgent {
   }
 
   /**
+   * Get the Chrome process service for external access
+   */
+  getChromeProcessService(): ChromeProcessService | undefined {
+    return this.chromeProcessService;
+  }
+
+  /**
    * Stop the autonomous system
    */
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.scheduler) {
       this.scheduler.stop();
+    }
+    // Stop Chrome process
+    if (this.chromeProcessService) {
+      await this.chromeProcessService.stop();
     }
     console.log('🛑 Autonomous WhatsApp Agent Stopped');
   }
