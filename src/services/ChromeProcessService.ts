@@ -32,6 +32,8 @@ export interface ChromeProcessConfig {
   maxRestartAttempts?: number;
   /** Delay between restart attempts in ms (default: 5000) */
   restartDelay?: number;
+  /** Run in headless mode (default: false - browser will be visible) */
+  headless?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ const DEFAULT_CONFIG: Required<ChromeProcessConfig> = {
   autoRestart: true,
   maxRestartAttempts: 5,
   restartDelay: 5000,
+  headless: false, // Default to visible browser
 };
 
 /**
@@ -118,8 +121,12 @@ export class ChromeProcessService {
         '--metrics-recording-only',
         '--no-sandbox',
         '--disable-gpu',
-        '--headless=new', // Run in headless mode for server environment
       ];
+
+      // Add headless mode if configured (default: false = visible browser)
+      if (this.config.headless) {
+        args.push('--headless=new');
+      }
 
       this.chromeProcess = spawn(this.config.chromePath, args, {
         detached: false,
@@ -404,15 +411,16 @@ export function createChromeProcessServiceFromEnv(): ChromeProcessService {
     chromePath: process.env.CHROME_PATH || DEFAULT_CONFIG.chromePath,
     port: process.env.CHROME_DEBUG_PORT ? parseInt(process.env.CHROME_DEBUG_PORT, 10) : DEFAULT_CONFIG.port,
     userDataDir: process.env.CHROME_USER_DATA_DIR || DEFAULT_CONFIG.userDataDir,
-    healthCheckInterval: process.env.CHROME_HEALTH_CHECK_INTERVAL 
-      ? parseInt(process.env.CHROME_HEALTH_CHECK_INTERVAL, 10) 
+    healthCheckInterval: process.env.CHROME_HEALTH_CHECK_INTERVAL
+      ? parseInt(process.env.CHROME_HEALTH_CHECK_INTERVAL, 10)
       : DEFAULT_CONFIG.healthCheckInterval,
     autoRestart: process.env.CHROME_AUTO_RESTART !== 'false',
-    maxRestartAttempts: process.env.CHROME_MAX_RESTART_ATTEMPTS 
-      ? parseInt(process.env.CHROME_MAX_RESTART_ATTEMPTS, 10) 
+    maxRestartAttempts: process.env.CHROME_MAX_RESTART_ATTEMPTS
+      ? parseInt(process.env.CHROME_MAX_RESTART_ATTEMPTS, 10)
       : DEFAULT_CONFIG.maxRestartAttempts,
-    restartDelay: process.env.CHROME_RESTART_DELAY 
-      ? parseInt(process.env.CHROME_RESTART_DELAY, 10) 
+    restartDelay: process.env.CHROME_RESTART_DELAY
+      ? parseInt(process.env.CHROME_RESTART_DELAY, 10)
       : DEFAULT_CONFIG.restartDelay,
+    headless: process.env.CHROME_HEADLESS === 'true', // Default: false (visible browser)
   });
 }
