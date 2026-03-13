@@ -121,7 +121,7 @@ class NewsWhatsAppAgent {
    * Start the news agent system
    */
   start(): void {
-    if (!this.isInitialized || !this.scheduler) {
+    if (!this.isInitialized) {
       throw new Error('Agent must be initialized before starting');
     }
 
@@ -129,12 +129,21 @@ class NewsWhatsAppAgent {
     console.log('📰 NEWS WHATSAPP AGENT STARTING');
     console.log('='.repeat(60));
 
-    // Start the scheduler (1-minute ticks)
-    this.scheduler.start();
+    // Check if news scheduler is enabled (default: disabled for lightweight mode)
+    const enableNewsScheduler = process.env.ENABLE_NEWS_SCHEDULER === 'true';
 
-    console.log('📍 Scheduler: Periodic news fetching cycle started');
-    console.log('📰 News: Periodic news fetching enabled (every 6 hours)');
-    console.log('💬 Agent: Proactive messaging capabilities active');
+    if (enableNewsScheduler && this.scheduler) {
+      // Start the scheduler (1-minute ticks) - only if explicitly enabled
+      this.scheduler.start();
+      console.log('📍 Scheduler: Periodic news fetching cycle started');
+      console.log('📰 News: Periodic news fetching enabled (every 6 hours)');
+      console.log('💬 Agent: Proactive messaging capabilities active');
+    } else {
+      console.log('📍 Scheduler: DISABLED (running in lightweight mode)');
+      console.log('📰 News: Manual fetching only (use news-cli or external worker)');
+      console.log('💡 Set ENABLE_NEWS_SCHEDULER=true to enable periodic news fetching');
+    }
+
     console.log('🧠 Memory: 3-tier memory system operational');
     console.log('📬 Queue: Rate-limited action queue running');
 
@@ -633,3 +642,4 @@ export async function startAutonomousAgent(): Promise<NewsWhatsAppAgent> {
 
 // Export for testing and manual control
 export { NewsWhatsAppAgent };
+

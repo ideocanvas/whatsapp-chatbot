@@ -30,6 +30,9 @@ build/
 logs
 *.log
 
+# PM2
+.pm2/
+
 # Editor directories and files
 .vscode/
 .idea/
