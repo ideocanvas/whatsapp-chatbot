@@ -18,7 +18,7 @@ module.exports = {
   apps: [
     {
       name: 'chatbot',
-      script: 'dist/index.js',
+      script: 'dist/src/server.js',
       instances: 1,
       autorestart: true,
       watch: false,
@@ -39,12 +39,13 @@ module.exports = {
     },
     {
       name: 'news-worker',
-      script: 'dist/commands/news-cli.js',
+      script: 'dist/src/commands/news-cli.js',
       instances: 1,
       autorestart: false, // Don't auto-restart, let cron schedule handle it
       watch: false,
       max_memory_restart: '4G', // News scraping needs more memory
       cron_restart: '0 */6 * * *', // Run every 6 hours (0:00, 6:00, 12:00, 18:00)
+      args: '100', // Number of articles to fetch
       env: {
         NODE_ENV: 'production',
         NEWS_WORKER_MODE: 'true'
