@@ -4,7 +4,10 @@ import express from 'express';
 import { startAutonomousAgent } from './autonomous';
 import { DashboardRoutes } from './routes/dashboard';
 import { WebhookRoutes } from './routes/webhook';
+import { UserAuthRoutes } from './routes/userAuth';
+import { UserDataRoutes } from './routes/userData';
 import { WhatsAppService } from './services/WhatsAppService';
+import { initUserAuthMiddleware } from './middleware/userAuth';
 
 /**
  * Main server that integrates both autonomous agent and web dashboard
@@ -14,11 +17,15 @@ class AutonomousServer {
   private port: number;
   private dashboardRoutes: DashboardRoutes;
   private webhookRoutes?: WebhookRoutes;
+  private userAuthRoutes: UserAuthRoutes;
+  private userDataRoutes: UserDataRoutes;
 
   constructor() {
     this.app = express();
     this.port = parseInt(process.env.PORT || '3000');
     this.dashboardRoutes = new DashboardRoutes();
+    this.userAuthRoutes = new UserAuthRoutes();
+    this.userDataRoutes = new UserDataRoutes();
 
     this.setupMiddleware();
     // Note: setupRoutes() will be called after agent initialization in start() method
@@ -79,7 +86,16 @@ class AutonomousServer {
       console.log(`✅ WhatsApp webhook routes enabled`);
     }
 
-    // 2. Setup Dashboard Routes (Web Interface) - Acts as catch-all for '/'
+    // 2. Initialize user auth middleware with AuthService
+    initUserAuthMiddleware(this.userAuthRoutes.getAuthService());
+
+    // 3. Setup User Authentication Routes (for OTP-based user login)
+    this.app.use('/', this.userAuthRoutes.getRouter());
+
+    // 4. Setup User Data Routes (reminders, notes, expenses - requires user auth)
+    this.app.use('/', this.userDataRoutes.getRouter());
+
+    // 5. Setup Dashboard Routes (Web Interface) - Acts as catch-all for '/'
     this.app.use('/', this.dashboardRoutes.getRouter());
 
     // Health check endpoint

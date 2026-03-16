@@ -215,3 +215,108 @@ enum ProcessedArticleStatus {
   completed
   failed
 }
+
+// ============================================
+// User Authentication (OTP-based)
+// ============================================
+
+model UserSession {
+  id           String    @id @default(uuid())
+  phoneNumber  String    // WhatsApp phone number
+  otpCode      String    // 6-digit OTP (hashed)
+  otpExpires   DateTime  // OTP expiration time (5 minutes)
+  token        String?   // JWT token after verification
+  tokenExpires DateTime? // Token expiration (24 hours)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([phoneNumber])
+  @@index([otpCode])
+  @@index([token])
+}
+
+// ============================================
+// Reminder Feature
+// ============================================
+
+model Reminder {
+  id              String         @id @default(uuid())
+  userId          String         // WhatsApp phone number
+  title           String         // Brief reminder title
+  description     String?        // Optional detailed description
+  scheduledAt     DateTime       // When to send the reminder
+  recurrence      RecurrenceType @default(none)
+  recurrenceConfig Json?          // For complex recurrence rules
+  status          ReminderStatus @default(pending)
+  lastSentAt      DateTime?      // Last time reminder was sent
+  nextSendAt      DateTime?      // Next scheduled time for recurring
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([nextSendAt])
+}
+
+enum RecurrenceType {
+  none      // One-time reminder
+  daily     // Every day
+  weekly    // Every week on same day
+  monthly   // Every month on same date
+  custom    // Custom recurrence rule in recurrenceConfig
+}
+
+enum ReminderStatus {
+  pending   // Waiting to be sent
+  sent      // One-time reminder sent
+  active    // Recurring reminder active
+  paused    // Recurring reminder paused
+  cancelled // Reminder cancelled
+}
+
+// ============================================
+// Note Feature
+// ============================================
+
+model Note {
+  id        String   @id @default(uuid())
+  userId    String   // WhatsApp phone number
+  title     String   // Note title
+  content   String   // Note content (text)
+  category  String?  // Optional category
+  tags      String[] // Array of tags
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([category])
+  @@index([isPinned])
+}
+
+// ============================================
+// Expense Feature
+// ============================================
+
+model Expense {
+  id          String      @id @default(uuid())
+  userId      String      // WhatsApp phone number
+  type        ExpenseType // income or expense
+  amount      Float       // Amount in default currency
+  description String?     // Optional description
+  category    String?     // Category (food, transport, etc.)
+  date        DateTime    // Transaction date
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([type])
+  @@index([category])
+  @@index([date])
+}
+
+enum ExpenseType {
+  income
+  expense
+}

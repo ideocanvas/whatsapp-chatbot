@@ -4,6 +4,7 @@ import { Agent } from './Agent';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { GoogleSearchService } from '../services/GoogleSearchService';
+import { ReminderService } from '../services/ReminderService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -25,12 +26,16 @@ export class Scheduler {
   private stats = {
     proactiveChecks: 0,
     messagesSent: 0,
+    remindersSent: 0,
     lastTick: new Date()
   };
 
   // Persistence settings
   private readonly DATA_DIR = path.join(process.cwd(), 'data');
   private readonly STATE_FILE = path.join(this.DATA_DIR, 'scheduler_state.json');
+
+  // Reminder service instance
+  private reminderService: ReminderService;
 
   constructor(
     private contextMgr: ContextManager,
@@ -44,6 +49,9 @@ export class Scheduler {
     this.TICK_INTERVAL_MS = parseInt(process.env.AUTONOMOUS_TICK_INTERVAL_MS || '60000');
     this.MAINTENANCE_INTERVAL_MS = parseInt(process.env.AUTONOMOUS_MAINTENANCE_INTERVAL_MS || '300000');
     this.BATCH_FLUSH_INTERVAL = parseInt(process.env.AUTONOMOUS_BATCH_FLUSH_INTERVAL || '30');
+
+    // Initialize reminder service
+    this.reminderService = new ReminderService();
 
     this.loadState();
   }
@@ -103,17 +111,20 @@ export class Scheduler {
       const activeUsers = this.contextMgr.getActiveUsers();
       console.log(`⏰ Tick #${this.tickCount} - Active users: ${activeUsers.length}`);
 
-      // 2. Check for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
+      // 2. Process due reminders (every tick)
+      await this.processDueReminders();
+
+      // 3. Check for news fetching (every 6 hours: 6am, 12pm, 6pm, 12am)
       if (this.shouldFetchNews()) {
         await this.performNewsFetching();
       }
 
-      // 3. PROACTIVE MODE: Accumulate News
+      // 4. PROACTIVE MODE: Accumulate News
       if (activeUsers.length > 0) {
         await this.accumulateNews(activeUsers);
       }
 
-      // 4. Flush Batch based on configured interval
+      // 5. Flush Batch based on configured interval
       if (this.tickCount % this.BATCH_FLUSH_INTERVAL === 0) {
           await this.flushNewsBatches();
       }
@@ -123,6 +134,72 @@ export class Scheduler {
     } catch (error) {
       console.error('❌ Scheduler tick error:', error);
     }
+  }
+
+  /**
+   * Process due reminders and send notifications via WhatsApp
+   */
+  private async processDueReminders(): Promise<void> {
+    try {
+      const dueReminders = await this.reminderService.getDueReminders();
+
+      if (dueReminders.length === 0) {
+        return; // No due reminders
+      }
+
+      console.log(`🔔 Processing ${dueReminders.length} due reminder(s)`);
+
+      for (const reminder of dueReminders) {
+        try {
+          // Format the reminder message
+          const message = this.formatReminderMessage(reminder);
+
+          // Send via WhatsApp using ActionQueue
+          this.actionQueue.queueMessage(reminder.userId, message, {
+            isProactive: true,
+            priority: 9, // High priority for reminders
+          });
+
+          // Mark as sent (handles both one-time and recurring)
+          await this.reminderService.markAsSent(reminder.id);
+
+          this.stats.remindersSent++;
+          console.log(`✅ Reminder sent to ${reminder.userId}: "${reminder.title}"`);
+        } catch (error) {
+          console.error(`❌ Failed to send reminder ${reminder.id}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error processing due reminders:', error);
+    }
+  }
+
+  /**
+   * Format a reminder message for WhatsApp
+   */
+  private formatReminderMessage(reminder: any): string {
+    const emoji = '🔔';
+    let message = `${emoji} *Reminder: ${reminder.title}*\n\n`;
+
+    if (reminder.description) {
+      message += `${reminder.description}\n\n`;
+    }
+
+    // Add recurrence info if applicable
+    if (reminder.recurrence && reminder.recurrence !== 'none') {
+      const recurrenceText = {
+        daily: '📅 This is a daily reminder.',
+        weekly: '📅 This is a weekly reminder.',
+        monthly: '📅 This is a monthly reminder.',
+        yearly: '📅 This is a yearly reminder.',
+        custom: '📅 This is a recurring reminder.',
+      };
+      message += recurrenceText[reminder.recurrence as keyof typeof recurrenceText] || '';
+    } else {
+      message += '_This is a one-time reminder._';
+    }
+
+    return message;
   }
 
   /**
@@ -337,6 +414,7 @@ export class Scheduler {
       console.log('📊 Scheduler Statistics:', {
         ticks: this.tickCount,
         messagesSent: this.stats.messagesSent,
+        remindersSent: this.stats.remindersSent,
         queueStats: this.actionQueue.getQueueStats(),
         pendingBatches: this.pendingNewsBatch.size
       });
