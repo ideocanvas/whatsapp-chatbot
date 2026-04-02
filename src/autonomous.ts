@@ -224,7 +224,7 @@ class NewsWhatsAppAgent {
     try {
       const prompt = `Analyze this user message and determine if the user wants a voice/audio response.
 
-Return ONLY a JSON object with this exact format:
+Return ONLY a JSON object (no markdown, no code blocks) with this exact format:
 {"wantsVoice": true/false, "cleanMessage": "extracted question or request without the voice part"}
 
 Examples:
@@ -233,11 +233,18 @@ Examples:
 - "用语音告诉我今天天气" → {"wantsVoice": true, "cleanMessage": "今天天气"}
 - "What is the capital of France?" → {"wantsVoice": false, "cleanMessage": "What is the capital of France?"}
 - "I need to voice my concerns" → {"wantsVoice": false, "cleanMessage": "I need to voice my concerns"}
+- "Tell me a Chinese story in voice" → {"wantsVoice": true, "cleanMessage": "Tell me a Chinese story"}
 
 User message: "${message}"`;
 
+      console.log(`🔍 Voice intent: regex matched, sending to LLM for classification...`);
       const response = await this.openai!.generateTextResponse(prompt);
-      const parsed = JSON.parse(response);
+      console.log(`🔍 Voice intent LLM response: ${response}`);
+
+      // Strip markdown code blocks if LLM wraps the response
+      const jsonStr = response.replace(/```(?:json)?\s*/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(jsonStr);
+      console.log(`🔍 Voice intent parsed: wantsVoice=${parsed.wantsVoice}, cleanMessage="${parsed.cleanMessage}"`);
 
       return {
         wantsVoice: parsed.wantsVoice === true,
@@ -268,6 +275,7 @@ User message: "${message}"`;
       // Classify voice intent before processing
       const voiceIntent = await this.classifyVoiceIntent(message);
       const messageForAgent = voiceIntent.cleanMessage;
+      console.log(`🔍 Voice intent result: wantsVoice=${voiceIntent.wantsVoice}, cleanMessage="${messageForAgent}"`);
 
       // LOG USER MESSAGE TO HISTORY
       if (this.historyStore) {
