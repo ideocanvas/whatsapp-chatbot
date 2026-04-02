@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { useApi } from '../hooks/useApi'
-import { useApiMutation } from '../hooks/useApi'
+import { useApi } from '../../hooks/useApi'
+import { useApiMutation } from '../../hooks/useApi'
 
 const ReminderTab = ({ showToast }) => {
   const [reminders, setReminders] = useState([])

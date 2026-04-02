@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { useApi } from '../hooks/useApi'
-import { useApiMutation } from '../hooks/useApi'
+import { useApi } from '../../hooks/useApi'
+import { useApiMutation } from '../../hooks/useApi'
 
 const ExpenseTab = ({ showToast }) => {
   const [expenses, setExpenses] = useState([])
