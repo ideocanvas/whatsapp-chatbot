@@ -156,6 +156,100 @@ class NewsWhatsAppAgent {
   }
 
   /**
+   * Send a voice response using the TTS pipeline.
+   * Extracted from handleAudioMessage() to be reusable.
+   * @returns true if voice sent successfully, false if fell back to text
+   */
+  private async sendVoiceResponse(userId: string, textResponse: string): Promise<boolean> {
+    if (!this.mediaService || !this.whatsapp) return false;
+
+    // Synthesize TTS
+    console.log(`🗣️ Synthesizing voice response...`);
+    const audioResponse = await this.mediaService.synthesizeAudio(textResponse, {
+      voice: 'af_heart',
+      speed: 1.0
+    });
+
+    // Convert to WhatsApp-compatible format (OGG)
+    console.log(`🔄 Converting audio to WhatsApp-compatible format...`);
+    const convertedAudio = await this.mediaService.convertAudioToWhatsAppFormat(audioResponse.filepath, 'ogg');
+
+    // Upload to WhatsApp
+    const uploadedMediaId = await this.whatsapp.uploadMedia(convertedAudio.filepath, convertedAudio.mimeType);
+
+    if (uploadedMediaId) {
+      // Send audio message
+      await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
+
+      // Check for URLs and send them as text if present
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const links = textResponse.match(urlRegex);
+
+      if (links && links.length > 0) {
+        const uniqueLinks = [...new Set(links)];
+        const linkMessage = `🔗 *Links mentioned:*\n${uniqueLinks.join('\n')}`;
+
+        console.log(`🔗 Link(s) detected, sending text fallback to ${userId}`);
+
+        // Short delay to ensure audio arrives first on client
+        await new Promise(resolve => setTimeout(resolve, 800));
+        await this.whatsapp.sendMessage(userId, linkMessage);
+      }
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Classify whether a text message is requesting a voice response.
+   * Stage 1: Fast regex pre-filter (no LLM call).
+   * Stage 2: LLM confirmation + clean message extraction (only when regex matches).
+   */
+  private async classifyVoiceIntent(message: string): Promise<{ wantsVoice: boolean; cleanMessage: string }> {
+    // Stage 1: Regex pre-filter
+    const voicePatterns = [
+      /\bvoice\b/i, /\bspeak\b/i, /\baudio\b/i, /\bsay\b/i, /\bvocal\b/i,
+      /\bread aloud\b/i, /\bout loud\b/i, /\bread it\b/i, /\btell me\b/i,
+      /语音/, /说话/, /念/, /读出来/, /声音/
+    ];
+
+    const matchesVoicePattern = voicePatterns.some(pattern => pattern.test(message));
+    if (!matchesVoicePattern) {
+      return { wantsVoice: false, cleanMessage: message };
+    }
+
+    // Stage 2: LLM classification
+    try {
+      const prompt = `Analyze this user message and determine if the user wants a voice/audio response.
+
+Return ONLY a JSON object with this exact format:
+{"wantsVoice": true/false, "cleanMessage": "extracted question or request without the voice part"}
+
+Examples:
+- "reply with voice, what's 2+2?" → {"wantsVoice": true, "cleanMessage": "what's 2+2?"}
+- "speak your answer" → {"wantsVoice": true, "cleanMessage": ""}
+- "用语音告诉我今天天气" → {"wantsVoice": true, "cleanMessage": "今天天气"}
+- "What is the capital of France?" → {"wantsVoice": false, "cleanMessage": "What is the capital of France?"}
+- "I need to voice my concerns" → {"wantsVoice": false, "cleanMessage": "I need to voice my concerns"}
+
+User message: "${message}"`;
+
+      const response = await this.openai!.generateTextResponse(prompt);
+      const parsed = JSON.parse(response);
+
+      return {
+        wantsVoice: parsed.wantsVoice === true,
+        cleanMessage: parsed.cleanMessage || message
+      };
+    } catch (error) {
+      console.error('⚠️ Voice intent classification failed, defaulting to text:', error);
+      return { wantsVoice: false, cleanMessage: message };
+    }
+  }
+
+  /**
    * Handle incoming WhatsApp messages (webhook integration)
    */
   async handleIncomingMessage(userId: string, message: string, messageId: string): Promise<void> {
@@ -171,6 +265,10 @@ class NewsWhatsAppAgent {
     console.log(`📱 Incoming message from ${userId}: ${message.substring(0, 50)}...`);
 
     try {
+      // Classify voice intent before processing
+      const voiceIntent = await this.classifyVoiceIntent(message);
+      const messageForAgent = voiceIntent.cleanMessage;
+
       // LOG USER MESSAGE TO HISTORY
       if (this.historyStore) {
         await this.historyStore.storeMessage({
@@ -179,12 +277,12 @@ class NewsWhatsAppAgent {
           role: 'user',
           timestamp: new Date().toISOString(),
           messageType: 'text',
-          metadata: { messageId }
+          metadata: { messageId, wantsVoice: voiceIntent.wantsVoice }
         });
       }
 
       // Process through the agent
-      const response = await this.agent.handleUserMessage(userId, message);
+      const response = await this.agent.handleUserMessage(userId, messageForAgent);
 
       // LOG AGENT RESPONSE TO HISTORY
       if (this.historyStore) {
@@ -197,9 +295,15 @@ class NewsWhatsAppAgent {
         });
       }
 
-      // Send response via WhatsApp (or log in dev mode)
+      // Send response via WhatsApp
       if (process.env.DEV_MODE === 'true') {
         console.log(`💬 Response to ${userId}: ${response}`);
+      } else if (voiceIntent.wantsVoice) {
+        // Try voice response, fall back to text if TTS fails
+        const voiceSent = await this.sendVoiceResponse(userId, response);
+        if (!voiceSent) {
+          await this.whatsapp.sendMessage(userId, response);
+        }
       } else {
         await this.whatsapp.sendMessage(userId, response);
       }
@@ -356,41 +460,9 @@ class NewsWhatsAppAgent {
         });
       }
 
-      // 5. Synthesize Response (Text-to-Speech)
-      console.log(`🗣️ Synthesizing voice response...`);
-      const audioResponse = await this.mediaService.synthesizeAudio(textResponse, {
-        voice: 'af_heart', // You can change the voice here
-        speed: 1.0
-      });
-
-      // 6. Convert WAV to WhatsApp-compatible format (OGG)
-      console.log(`🔄 Converting audio to WhatsApp-compatible format...`);
-      const convertedAudio = await this.mediaService.convertAudioToWhatsAppFormat(audioResponse.filepath, 'ogg');
-
-      // 7. Upload Converted Audio to WhatsApp
-      const uploadedMediaId = await this.whatsapp.uploadMedia(convertedAudio.filepath, convertedAudio.mimeType);
-
-      if (uploadedMediaId) {
-        // 8. Send Audio Message
-        await this.whatsapp.sendAudioMessage(userId, uploadedMediaId);
-
-        // 9. Check for URLs and send them as text if present
-        const urlRegex = /(https?:\/\/[^\s]+)/g;
-        const links = textResponse.match(urlRegex);
-
-        if (links && links.length > 0) {
-            // Deduplicate links
-            const uniqueLinks = [...new Set(links)];
-            const linkMessage = `🔗 *Links mentioned:*\n${uniqueLinks.join('\n')}`;
-
-            console.log(`🔗 Link(s) detected, sending text fallback to ${userId}`);
-
-            // Short delay to ensure audio arrives first on client
-            await new Promise(resolve => setTimeout(resolve, 800));
-            await this.whatsapp.sendMessage(userId, linkMessage);
-        }
-      } else {
-        // Fallback to text if upload fails
+      // 5-9. Send voice response via shared TTS pipeline, fall back to text if TTS fails
+      const voiceSent = await this.sendVoiceResponse(userId, textResponse);
+      if (!voiceSent) {
         await this.whatsapp.sendMessage(userId, textResponse);
       }
 
