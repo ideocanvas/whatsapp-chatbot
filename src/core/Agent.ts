@@ -4,8 +4,11 @@ import { ToolRegistry } from './ToolRegistry';
 import { KnowledgeBasePostgres } from '../memory/KnowledgeBasePostgres';
 import { ActionQueueService } from '../services/ActionQueueService';
 import { UserProfileService } from '../services/UserProfileService';
+import { MediaService } from '../services/MediaService';
+import { WhatsAppService } from '../services/WhatsAppService';
 import { UpdateProfileTool } from '../tools/UpdateProfileTool';
 import { SetReminderTool } from '../tools/SetReminderTool';
+import { SendVoiceTool } from '../tools/SendVoiceTool';
 
 /**
  * The Brain of the autonomous agent system.
@@ -20,7 +23,9 @@ export class Agent {
     private kb: KnowledgeBasePostgres,
     private tools: ToolRegistry,
     private actionQueue: ActionQueueService,
-    private profileService: UserProfileService // Injected dependency
+    private profileService: UserProfileService,
+    private mediaService?: MediaService,
+    private whatsappService?: WhatsAppService
   ) {
     this.chatbotName = process.env.CHATBOT_NAME || 'Lucy';
   }
@@ -50,11 +55,17 @@ export class Agent {
     reminderTool.setUserId(userId);
     reminderTool.setActionQueue(this.actionQueue);
 
+    const sendVoiceTool = new SendVoiceTool();
+    sendVoiceTool.setUserId(userId);
+    if (this.mediaService) sendVoiceTool.setMediaService(this.mediaService);
+    if (this.whatsappService) sendVoiceTool.setWhatsApp(this.whatsappService);
+
     // Create a temporary registry for this request that includes the base tools + context-aware tools
     const requestTools = [
       ...this.tools.getOpenAITools(),
       profileTool.toOpenAISchema(),
-      reminderTool.toOpenAISchema()
+      reminderTool.toOpenAISchema(),
+      sendVoiceTool.toOpenAISchema()
     ];
 
     // We need a way to execute these tools since they're not in the global registry
@@ -67,6 +78,7 @@ export class Agent {
     // Add our specific tools
     tempRegistry.registerTool(profileTool);
     tempRegistry.registerTool(reminderTool);
+    tempRegistry.registerTool(sendVoiceTool);
 
     // 6. Generate Response
     const history = this.contextMgr.getHistory(userId);
@@ -150,7 +162,9 @@ ${profileContext || ''}
 3. Use 'web_search' for quick lookups of current information.
 4. **IMPORTANT**: If 'search_knowledge' and 'web_search' yield no results, YOU MUST use 'deep_research' to find the answer. Do not give up without trying deep research.
 
-**CRITICAL: When using 'deep_research', you MUST first respond to the user with a natural message like "Let me research that for you" or "I'll search for more information about that" BEFORE calling the tool. This ensures the user knows you're working on their request.**
+**VOICE RESPONSES:**
+When the user explicitly asks for a voice/audio response (e.g., "reply with voice", "speak", "send a voice note"), use the 'send_voice' tool with your full answer as the message parameter. After the tool succeeds, your final response MUST be exactly: [VOICE_RESPONSE_SENT]
+Do NOT use send_voice for normal text conversations.
 
 **Current Time**: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })}`;
 

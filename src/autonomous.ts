@@ -96,7 +96,7 @@ class NewsWhatsAppAgent {
       this.tools.registerTool(new SetReminderTool());
 
       // 4. Initialize Agent (pass UserProfileService)
-      this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue, this.userProfileService);
+      this.agent = new Agent(this.openai, this.contextMgr, this.kb, this.tools, this.actionQueue, this.userProfileService, this.mediaService, this.whatsapp);
 
       // 5. Initialize Scheduler (without browser)
       this.scheduler = new Scheduler(
@@ -198,7 +198,10 @@ class NewsWhatsAppAgent {
       }
 
       // Send response via WhatsApp (or log in dev mode)
-      if (process.env.DEV_MODE === 'true') {
+      const isVoiceResponse = response.trim() === '[VOICE_RESPONSE_SENT]';
+      if (isVoiceResponse) {
+        console.log(`🗣️ Voice response was sent by agent, skipping text message`);
+      } else if (process.env.DEV_MODE === 'true') {
         console.log(`💬 Response to ${userId}: ${response}`);
       } else {
         await this.whatsapp.sendMessage(userId, response);
